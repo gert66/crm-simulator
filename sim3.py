@@ -254,7 +254,8 @@ if run:
     ax1.set_xlabel("Final recommended dose level")
     ax1.set_ylabel("Proportion of trials")
     ax1.set_title("Final recommendation distribution")
-    st.pyplot(fig1)
+    st.pyplot(fig1, use_container_width=False)
+    fig2.set_dpi(120)
 
     # 2) Mean allocation per dose
     fig2, ax2 = plt.subplots(figsize=(6,4))
@@ -262,6 +263,6 @@ if run:
     ax2.set_xlabel("Dose level")
     ax2.set_ylabel("Mean # patients per trial")
     ax2.set_title("Mean allocation per dose")
-    st.pyplot(fig2)
-
+    st.pyplot(fig2, use_container_width=False)
+    fig2.set_dpi(120)
     st.caption("Tip: for quick tests, set trials to 200. For final reporting, 2000–10000 is typical.")
