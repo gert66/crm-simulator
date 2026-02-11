@@ -247,7 +247,8 @@ if run:
     K = len(parse_list(true_text))
 
     # 1) Final recommendation distribution
-    fig1, ax1 = plt.subplots()
+    fig1, ax1 = plt.subplots(figsize=(6,4))
+
     x = np.arange(1, K+1)
     ax1.bar(x, res["final_recommendation_dist"])
     ax1.set_xlabel("Final recommended dose level")
@@ -256,7 +257,7 @@ if run:
     st.pyplot(fig1)
 
     # 2) Mean allocation per dose
-    fig2, ax2 = plt.subplots()
+    fig2, ax2 = plt.subplots(figsize=(6,4))
     ax2.bar(x, res["mean_alloc_per_dose"])
     ax2.set_xlabel("Dose level")
     ax2.set_ylabel("Mean # patients per trial")
