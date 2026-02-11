@@ -255,7 +255,7 @@ if run:
     ax1.set_ylabel("Proportion of trials")
     ax1.set_title("Final recommendation distribution")
     st.pyplot(fig1, use_container_width=False)
-    fig2.set_dpi(120)
+    fig1.set_dpi(120)
 
     # 2) Mean allocation per dose
     fig2, ax2 = plt.subplots(figsize=(6,4))
