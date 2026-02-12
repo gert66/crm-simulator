@@ -6,29 +6,63 @@ import matplotlib.pyplot as plt
 # Utilities
 # ============================================================
 
-def find_true_mtd(true_p, target):
-    true_p = np.array(true_p, dtype=float)
-    return int(np.argmin(np.abs(true_p - target)))
+def safe_probs(x):
+    x = np.array(x, dtype=float)
+    return np.clip(x, 1e-6, 1 - 1e-6)
 
 def simulate_bernoulli(n, p, rng):
     return rng.binomial(1, p, size=n)
+
+def find_true_mtd(true_p, target):
+    true_p = np.array(true_p, dtype=float)
+    return int(np.argmin(np.abs(true_p - target)))
 
 def compact_style(ax):
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
     ax.grid(axis="y", linewidth=0.5, alpha=0.25)
 
+def logsumexp(x):
+    m = np.max(x)
+    return m + np.log(np.sum(np.exp(x - m)))
+
 # ============================================================
-# 6+3 design
+# Ping-pong / oscillation metrics
+# ============================================================
+
+def switch_rate(path):
+    if path is None or len(path) < 2:
+        return 0.0
+    path = np.asarray(path, dtype=int)
+    return float(np.mean(path[1:] != path[:-1]))
+
+def mean_step_size(path):
+    if path is None or len(path) < 2:
+        return 0.0
+    path = np.asarray(path, dtype=int)
+    return float(np.mean(np.abs(path[1:] - path[:-1])))
+
+def oscillation_index(path):
+    if path is None or len(path) < 3:
+        return 0.0
+    path = np.asarray(path, dtype=int)
+    a = path[:-2]
+    b = path[1:-1]
+    c = path[2:]
+    osc = (a == c) & (a != b)
+    return float(np.mean(osc))
+
+# ============================================================
+# 6+3 Design
 # ============================================================
 
 def run_6plus3(true_p, start_level=0, max_n=36, accept_max_dlt=1, rng=None):
     """
-    Cohorts of 6. If 0/6 DLT -> escalate.
-    If 1/6 DLT -> add 3 at same dose (total 9 in that cycle).
-        If DLTs among those 9 <= accept_max_dlt -> escalate else stop/de-escalate.
-    If >=2/6 DLT -> stop/de-escalate.
-    Select MTD as last acceptable dose visited.
+    Cohorts of 6.
+    - 0/6 DLT -> escalate
+    - 1/6 DLT -> expand by 3 at same level; escalate if DLTs among those 9 <= accept_max_dlt
+    - >=2/6 DLT -> stop/de-escalate (simple stop rule)
+    Returns: selected, n_per_level, total_dlts, dose_path
     """
     if rng is None:
         rng = np.random.default_rng()
@@ -38,13 +72,13 @@ def run_6plus3(true_p, start_level=0, max_n=36, accept_max_dlt=1, rng=None):
 
     n_per_level = np.zeros(n_levels, dtype=int)
     dlt_per_level = np.zeros(n_levels, dtype=int)
-
     total_n = 0
     last_acceptable = None
+    dose_path = []
 
     while total_n < max_n:
-        # Treat 6 at current level
         n_add = min(6, max_n - total_n)
+        dose_path.extend([level] * n_add)
         out6 = simulate_bernoulli(n_add, true_p[level], rng)
 
         n_per_level[level] += n_add
@@ -64,8 +98,8 @@ def run_6plus3(true_p, start_level=0, max_n=36, accept_max_dlt=1, rng=None):
             break
 
         if d6 == 1:
-            # expand by 3 at same dose
             n_add2 = min(3, max_n - total_n)
+            dose_path.extend([level] * n_add2)
             out3 = simulate_bernoulli(n_add2, true_p[level], rng)
 
             n_per_level[level] += n_add2
@@ -83,87 +117,60 @@ def run_6plus3(true_p, start_level=0, max_n=36, accept_max_dlt=1, rng=None):
                     continue
                 break
             else:
-                # too toxic
                 if level > 0:
                     level -= 1
                 break
 
-        # d6 >= 2
         if level > 0:
             level -= 1
         break
 
     selected = 0 if last_acceptable is None else int(last_acceptable)
-    return selected, n_per_level, int(dlt_per_level.sum())
+    total_dlts = int(dlt_per_level.sum())
+    return selected, n_per_level, total_dlts, dose_path
 
 # ============================================================
-# CRM: 1-parameter power model (O'Quigley style)
+# CRM: 1-parameter power model
 # p_k(theta) = skeleton_k ^ exp(theta)
 # theta ~ Normal(0, sigma^2)
-# Posterior computed on a grid.
+# Posterior computed on grid
 # ============================================================
 
 def crm_power_probs(theta_grid, skeleton):
-    """
-    Returns matrix P of shape (len(theta_grid), K) with p_k(theta).
-    """
-    sk = np.array(skeleton, dtype=float)
-    # Ensure skeleton in (0,1)
-    sk = np.clip(sk, 1e-6, 1 - 1e-6)
-    a = np.exp(theta_grid)[:, None]  # (G,1)
-    return sk[None, :] ** a          # (G,K)
+    sk = safe_probs(skeleton)
+    a = np.exp(theta_grid)[:, None]
+    return sk[None, :] ** a
 
 def normal_prior_logpdf(theta_grid, sigma):
     return -0.5 * (theta_grid / sigma) ** 2 - np.log(sigma * np.sqrt(2 * np.pi))
 
-def logsumexp(x):
-    m = np.max(x)
-    return m + np.log(np.sum(np.exp(x - m)))
-
 def posterior_on_grid(theta_grid, sigma, skeleton, n_per_level, dlt_per_level):
-    """
-    Computes posterior weights on theta_grid given binomial likelihood across levels.
-    """
     n = np.array(n_per_level, dtype=float)
     y = np.array(dlt_per_level, dtype=float)
 
     P = crm_power_probs(theta_grid, skeleton)  # (G,K)
-    # Binomial log-likelihood up to an additive constant:
-    # sum_k [ y_k log p_k + (n_k - y_k) log(1 - p_k) ]
     ll = (y[None, :] * np.log(P) + (n[None, :] - y[None, :]) * np.log(1 - P)).sum(axis=1)
 
     lp = normal_prior_logpdf(theta_grid, sigma)
-    log_post_unnorm = lp + ll
+    log_post = lp + ll
 
-    lse = logsumexp(log_post_unnorm)
-    w = np.exp(log_post_unnorm - lse)  # normalized weights
+    lse = logsumexp(log_post)
+    w = np.exp(log_post - lse)
     return w, P
 
-def crm_choose_dose(theta_grid, sigma, skeleton, n_per_level, dlt_per_level,
+def crm_choose_next(theta_grid, sigma, skeleton, n_per_level, dlt_per_level,
                     current_level, target, alpha_overdose, max_step=1):
-    """
-    Choose next dose:
-    - compute posterior mean toxicity per dose
-    - apply overdose control: Pr(p_k > target) < alpha_overdose
-    - among allowed, pick dose with posterior mean closest to target
-    - restrict step size to +- max_step
-    """
     w, P = posterior_on_grid(theta_grid, sigma, skeleton, n_per_level, dlt_per_level)
-    post_mean = (w[:, None] * P).sum(axis=0)
 
-    # overdose probability per level
+    post_mean = (w[:, None] * P).sum(axis=0)
     overdose_prob = (w[:, None] * (P > target)).sum(axis=0)
 
     allowed = np.where(overdose_prob < alpha_overdose)[0]
     if allowed.size == 0:
-        # fall back to lowest dose
-        chosen = 0
-        return chosen, post_mean, overdose_prob
+        return 0, post_mean, overdose_prob
 
-    # choose closest to target among allowed
     k_star = int(allowed[np.argmin(np.abs(post_mean[allowed] - target))])
 
-    # restrict step size
     if k_star > current_level + max_step:
         k_star = current_level + max_step
     if k_star < current_level - max_step:
@@ -172,13 +179,7 @@ def crm_choose_dose(theta_grid, sigma, skeleton, n_per_level, dlt_per_level,
     k_star = int(np.clip(k_star, 0, len(skeleton) - 1))
     return k_star, post_mean, overdose_prob
 
-def crm_select_mtd(theta_grid, sigma, skeleton, n_per_level, dlt_per_level,
-                   target, alpha_overdose):
-    """
-    Final MTD selection using the same posterior:
-    - apply overdose control
-    - among allowed, pick closest posterior mean to target
-    """
+def crm_select_mtd(theta_grid, sigma, skeleton, n_per_level, dlt_per_level, target, alpha_overdose):
     w, P = posterior_on_grid(theta_grid, sigma, skeleton, n_per_level, dlt_per_level)
     post_mean = (w[:, None] * P).sum(axis=0)
     overdose_prob = (w[:, None] * (P > target)).sum(axis=0)
@@ -186,18 +187,13 @@ def crm_select_mtd(theta_grid, sigma, skeleton, n_per_level, dlt_per_level,
     allowed = np.where(overdose_prob < alpha_overdose)[0]
     if allowed.size == 0:
         return 0
-
-    chosen = int(allowed[np.argmin(np.abs(post_mean[allowed] - target))])
-    return chosen
+    return int(allowed[np.argmin(np.abs(post_mean[allowed] - target))])
 
 def run_crm(true_p, target, skeleton, sigma=1.0, start_level=0, max_n=36,
-            cohort_size=6, alpha_overdose=0.25, theta_min=-4.0, theta_max=4.0, theta_grid_n=401,
-            max_step=1, rng=None):
+            cohort_size=6, alpha_overdose=0.25, theta_min=-4.0, theta_max=4.0,
+            theta_grid_n=401, max_step=1, rng=None):
     """
-    Simulate CRM trial:
-    - treat cohorts
-    - update posterior on theta grid
-    - choose next dose based on overdose control and closeness to target
+    Returns: selected, n_per_level, total_dlts, dose_path
     """
     if rng is None:
         rng = np.random.default_rng()
@@ -208,13 +204,15 @@ def run_crm(true_p, target, skeleton, sigma=1.0, start_level=0, max_n=36,
     n_per_level = np.zeros(n_levels, dtype=int)
     dlt_per_level = np.zeros(n_levels, dtype=int)
     total_n = 0
+    dose_path = []
 
     theta_grid = np.linspace(theta_min, theta_max, int(theta_grid_n))
 
     while total_n < max_n:
-        n_add = min(cohort_size, max_n - total_n)
-        out = simulate_bernoulli(n_add, true_p[level], rng)
+        n_add = min(int(cohort_size), max_n - total_n)
+        dose_path.extend([level] * n_add)
 
+        out = simulate_bernoulli(n_add, true_p[level], rng)
         n_per_level[level] += n_add
         dlt_per_level[level] += int(out.sum())
         total_n += n_add
@@ -222,7 +220,7 @@ def run_crm(true_p, target, skeleton, sigma=1.0, start_level=0, max_n=36,
         if n_add < cohort_size:
             break
 
-        next_level, _, _ = crm_choose_dose(
+        next_level, _, _ = crm_choose_next(
             theta_grid, sigma, skeleton,
             n_per_level, dlt_per_level,
             current_level=level,
@@ -239,7 +237,25 @@ def run_crm(true_p, target, skeleton, sigma=1.0, start_level=0, max_n=36,
         alpha_overdose=alpha_overdose
     )
 
-    return selected, n_per_level, int(dlt_per_level.sum())
+    total_dlts = int(dlt_per_level.sum())
+    return selected, n_per_level, total_dlts, dose_path
+
+# ============================================================
+# DLT burden metrics per trial
+# ============================================================
+
+def observed_dlt_rate(total_dlts, n_total):
+    if n_total <= 0:
+        return 0.0
+    return float(total_dlts) / float(n_total)
+
+def expected_dlt_risk(n_per_level, true_p):
+    n_per_level = np.asarray(n_per_level, dtype=float)
+    true_p = np.asarray(true_p, dtype=float)
+    n_total = float(n_per_level.sum())
+    if n_total <= 0:
+        return 0.0
+    return float(np.sum(n_per_level * true_p) / n_total)
 
 # ============================================================
 # Streamlit App
@@ -249,110 +265,253 @@ st.set_page_config(page_title="Dose Escalation Simulator: 6+3 vs CRM", layout="w
 st.title("Dose Escalation Simulator: 6+3 vs CRM")
 
 dose_labels = ["5×4 Gy", "5×5 Gy", "5×6 Gy", "5×7 Gy", "5×8 Gy"]
-level_labels = [f"L{i}" for i in range(5)]
 
-col1, col2 = st.columns([1.05, 1.0])
+scenario_library = {
+    "Default (MTD around level 2)": [0.05, 0.10, 0.20, 0.35, 0.55],
+    "Safer overall (pushes higher)": [0.03, 0.06, 0.12, 0.20, 0.30],
+    "More toxic overall (lands lower)": [0.08, 0.16, 0.28, 0.42, 0.60],
+    "MTD around level 1": [0.05, 0.22, 0.35, 0.50, 0.65],
+    "MTD around level 3": [0.03, 0.06, 0.12, 0.24, 0.40],
+    "Sharp jump after level 2": [0.05, 0.08, 0.18, 0.40, 0.65],
+}
 
-with col1:
+skeleton_presets = {
+    "Match default scenario": [0.05, 0.10, 0.20, 0.35, 0.55],
+    "More conservative skeleton": [0.07, 0.12, 0.22, 0.38, 0.58],
+    "More optimistic skeleton": [0.03, 0.07, 0.16, 0.30, 0.48],
+}
+
+# ------------------------------------------------------------
+# Study setup
+# ------------------------------------------------------------
+
+colA, colB = st.columns([1.05, 1.0])
+
+with colA:
     st.subheader("Study setup")
-    target = st.number_input("Target DLT probability", min_value=0.05, max_value=0.50, value=0.25, step=0.01)
-    max_n = st.number_input("Max sample size", min_value=12, max_value=90, value=36, step=3)
+
+    target = st.number_input(
+        "Target DLT probability",
+        min_value=0.05, max_value=0.50, value=0.25, step=0.01,
+        help="Target toxicity level for the MTD."
+    )
+
     start_level = st.selectbox(
         "Start dose level",
         options=list(range(0, 5)),
+        index=0,
         format_func=lambda i: f"Level {i} ({dose_labels[i]})",
-        index=0
+        help="Starting dose for both designs."
     )
-    n_sims = st.number_input("Number of simulated trials", min_value=200, max_value=20000, value=2000, step=200)
-    seed = st.number_input("Random seed", min_value=1, max_value=10_000_000, value=12345, step=1)
 
-with col2:
-    st.subheader("True scenario (ware DLT-kansen)")
-    default_true = [0.05, 0.10, 0.20, 0.35, 0.55]
+    n_sims = st.number_input(
+        "Number of simulated trials",
+        min_value=200, max_value=20000, value=2000, step=200,
+        help="How many virtual trials to run."
+    )
+
+    seed = st.number_input(
+        "Random seed",
+        min_value=1, max_value=10_000_000, value=12345, step=1,
+        help="Fix randomness so results are reproducible."
+    )
+
+with colB:
+    st.subheader("True scenario (ground truth)")
+
+    scenario_name = st.selectbox(
+        "Scenario library",
+        options=list(scenario_library.keys()),
+        index=0,
+        help="Pick a predefined true dose-toxicity scenario."
+    )
+    scenario_vals = scenario_library[scenario_name]
+
+    manual_true = st.toggle(
+        "Manually edit the true DLT probabilities",
+        value=True,
+        help="If on, you can tweak the true probabilities below."
+    )
+
     true_p = []
     for i, lab in enumerate(dose_labels):
-        true_p.append(
-            st.number_input(
+        default_val = float(scenario_vals[i])
+        if manual_true:
+            val = st.number_input(
                 f"True P(DLT) at {lab}",
                 min_value=0.0, max_value=1.0,
-                value=float(default_true[i]),
-                step=0.01,
-                key=f"true_{i}"
+                value=default_val, step=0.01,
+                key=f"true_{i}",
+                help="Assumed true DLT probability at this dose level."
             )
-        )
+        else:
+            st.write(f"{lab}: {default_val:.2f}")
+            val = default_val
+        true_p.append(val)
+
     true_mtd = find_true_mtd(true_p, target)
     st.write(f"True MTD (closest to target {target:.2f}) = Level {true_mtd} ({dose_labels[true_mtd]})")
 
 st.divider()
 
-c3, c4 = st.columns([1.0, 1.0])
+# ------------------------------------------------------------
+# Design settings
+# ------------------------------------------------------------
 
-with c3:
+c1, c2 = st.columns([1.0, 1.0])
+
+with c1:
     st.subheader("6+3 settings")
+
+    max_n_6 = st.number_input(
+        "Max sample size (6+3)",
+        min_value=12, max_value=120, value=36, step=3,
+        help="Maximum number of patients in each simulated 6+3 trial."
+    )
+
     accept_rule = st.selectbox(
         "Acceptance rule after expansion to 9",
         options=[1, 2],
         index=0,
-        help="Accept dose if DLTs among the 9 patients in that cycle are <= this number."
+        help="After 1/6 DLT, expand by 3. Escalate only if DLTs among those 9 are <= this number."
     )
 
-with c4:
+    st.info(
+        f"""**6+3 decision rules**  
+- Treat 6 patients at the current dose.  
+- If 0/6 DLT, go up one level.  
+- If 1/6 DLT, treat 3 more at the same dose. Escalate only if DLTs among those 9 <= {accept_rule}/9.  
+- If 2+ DLT among the first 6, stop escalation (simple rule)."""
+    )
+
+with c2:
     st.subheader("CRM settings")
-    default_skeleton = [0.05, 0.10, 0.20, 0.35, 0.55]
+
+    max_n_crm = st.number_input(
+        "Max sample size (CRM)",
+        min_value=12, max_value=120, value=36, step=3,
+        help="Maximum number of patients in each simulated CRM trial."
+    )
+
+    cohort_size = st.number_input(
+        "Cohort size (CRM)",
+        min_value=1, max_value=12, value=6, step=1,
+        help="Patients treated before CRM updates and selects the next dose."
+    )
+
+    skeleton_preset = st.selectbox(
+        "Skeleton preset",
+        options=list(skeleton_presets.keys()),
+        index=0,
+        help="Prior dose-toxicity shape used by CRM."
+    )
+
+    manual_skeleton = st.toggle(
+        "Manually edit the skeleton",
+        value=True,
+        help="If on, you can tweak the skeleton values below."
+    )
+
+    sk_vals = skeleton_presets[skeleton_preset]
     skeleton = []
     for i, lab in enumerate(dose_labels):
-        skeleton.append(
-            st.number_input(
+        default_val = float(sk_vals[i])
+        if manual_skeleton:
+            val = st.number_input(
                 f"Skeleton prior mean at {lab}",
                 min_value=0.01, max_value=0.99,
-                value=float(default_skeleton[i]),
-                step=0.01,
-                key=f"sk_{i}"
+                value=default_val, step=0.01,
+                key=f"sk_{i}",
+                help="Prior mean DLT probability at this dose level. Typically increasing with dose."
             )
-        )
+        else:
+            st.write(f"{lab}: {default_val:.2f}")
+            val = default_val
+        skeleton.append(val)
 
     sigma = st.number_input(
-        "Prior sigma on theta (larger = more uncertainty)",
-        min_value=0.2, max_value=5.0, value=1.0, step=0.1
+        "Prior sigma on theta",
+        min_value=0.2, max_value=5.0, value=1.0, step=0.1,
+        help="Higher sigma means more prior uncertainty and more learning from data."
     )
 
     alpha_overdose = st.number_input(
         "Overdose control alpha",
-        min_value=0.05, max_value=0.50, value=0.25, step=0.01
+        min_value=0.05, max_value=0.50, value=0.25, step=0.01,
+        help="Allow dose k only if P(DLT > target) < alpha under the posterior."
     )
 
-    max_step = st.selectbox("Max dose step per cohort", options=[1, 2], index=0)
+    max_step = st.selectbox(
+        "Max dose step per update",
+        options=[1, 2],
+        index=0,
+        help="Limits how far CRM can move between updates."
+    )
+
+    st.info(
+        f"""**CRM decision rules**  
+- Treat {cohort_size} patients at the current dose, then update the model.  
+- Among doses that pass overdose control, pick the dose whose estimated DLT probability is closest to {target:.2f}.  
+- Overdose control: allow dose k only if P(DLT > {target:.2f}) < {alpha_overdose:.2f}.  
+- Next dose can move at most ±{max_step} level(s)."""
+    )
+
+show_ping_plot = st.toggle(
+    "Show ping-pong distribution plot",
+    value=True,
+    help="Shows a compact histogram of the oscillation index across simulated trials."
+)
 
 run = st.button("Run simulations")
 
+# ============================================================
+# Run simulations
+# ============================================================
+
 if run:
     rng = np.random.default_rng(int(seed))
+    ns = int(n_sims)
 
     sel_6 = np.zeros(5, dtype=int)
     sel_c = np.zeros(5, dtype=int)
 
-    tot_dlt_6 = np.zeros(int(n_sims), dtype=int)
-    tot_dlt_c = np.zeros(int(n_sims), dtype=int)
+    tot_dlt_6 = np.zeros(ns, dtype=int)
+    tot_dlt_c = np.zeros(ns, dtype=int)
 
-    nmat_6 = np.zeros((int(n_sims), 5), dtype=int)
-    nmat_c = np.zeros((int(n_sims), 5), dtype=int)
+    nmat_6 = np.zeros((ns, 5), dtype=int)
+    nmat_c = np.zeros((ns, 5), dtype=int)
 
-    for s in range(int(n_sims)):
-        chosen6, n6, d6 = run_6plus3(
-            true_p,
+    ping_sw_6 = np.zeros(ns, dtype=float)
+    ping_osc_6 = np.zeros(ns, dtype=float)
+    ping_step_6 = np.zeros(ns, dtype=float)
+
+    ping_sw_c = np.zeros(ns, dtype=float)
+    ping_osc_c = np.zeros(ns, dtype=float)
+    ping_step_c = np.zeros(ns, dtype=float)
+
+    obs_rate_6 = np.zeros(ns, dtype=float)
+    obs_rate_c = np.zeros(ns, dtype=float)
+
+    exp_risk_6 = np.zeros(ns, dtype=float)
+    exp_risk_c = np.zeros(ns, dtype=float)
+
+    for s in range(ns):
+        chosen6, n6, d6, path6 = run_6plus3(
+            true_p=true_p,
             start_level=int(start_level),
-            max_n=int(max_n),
+            max_n=int(max_n_6),
             accept_max_dlt=int(accept_rule),
             rng=rng
         )
-        chosenc, nc, dc = run_crm(
-            true_p,
+
+        chosenc, nc, dc, pathc = run_crm(
+            true_p=true_p,
             target=float(target),
             skeleton=skeleton,
             sigma=float(sigma),
             start_level=int(start_level),
-            max_n=int(max_n),
-            cohort_size=6,
+            max_n=int(max_n_crm),
+            cohort_size=int(cohort_size),
             alpha_overdose=float(alpha_overdose),
             max_step=int(max_step),
             rng=rng
@@ -367,14 +526,48 @@ if run:
         nmat_6[s, :] = n6
         nmat_c[s, :] = nc
 
-    p_sel_6 = sel_6 / float(n_sims)
-    p_sel_c = sel_c / float(n_sims)
+        ping_sw_6[s] = switch_rate(path6)
+        ping_osc_6[s] = oscillation_index(path6)
+        ping_step_6[s] = mean_step_size(path6)
+
+        ping_sw_c[s] = switch_rate(pathc)
+        ping_osc_c[s] = oscillation_index(pathc)
+        ping_step_c[s] = mean_step_size(pathc)
+
+        n6_total = int(np.sum(n6))
+        nc_total = int(np.sum(nc))
+
+        obs_rate_6[s] = observed_dlt_rate(d6, n6_total)
+        obs_rate_c[s] = observed_dlt_rate(dc, nc_total)
+
+        exp_risk_6[s] = expected_dlt_risk(n6, true_p)
+        exp_risk_c[s] = expected_dlt_risk(nc, true_p)
+
+    # Aggregates
+    p_sel_6 = sel_6 / float(ns)
+    p_sel_c = sel_c / float(ns)
 
     avg_n6 = np.mean(nmat_6, axis=0)
     avg_nc = np.mean(nmat_c, axis=0)
 
-    overshoot6 = float(np.mean((nmat_6[:, true_mtd+1:].sum(axis=1)) > 0)) if true_mtd < 4 else 0.0
-    overshootc = float(np.mean((nmat_c[:, true_mtd+1:].sum(axis=1)) > 0)) if true_mtd < 4 else 0.0
+    overshoot6 = float(np.mean((nmat_6[:, true_mtd + 1:].sum(axis=1)) > 0)) if true_mtd < 4 else 0.0
+    overshootc = float(np.mean((nmat_c[:, true_mtd + 1:].sum(axis=1)) > 0)) if true_mtd < 4 else 0.0
+
+    mean_total_dlt_6 = float(np.mean(tot_dlt_6))
+    mean_total_dlt_c = float(np.mean(tot_dlt_c))
+
+    mean_n_6 = float(np.mean(nmat_6.sum(axis=1)))
+    mean_n_c = float(np.mean(nmat_c.sum(axis=1)))
+
+    mean_obs_6 = float(np.mean(obs_rate_6))
+    mean_obs_c = float(np.mean(obs_rate_c))
+
+    mean_exp_6 = float(np.mean(exp_risk_6))
+    mean_exp_c = float(np.mean(exp_risk_c))
+
+    # ------------------------------------------------------------
+    # Plots
+    # ------------------------------------------------------------
 
     st.subheader("Results")
 
@@ -389,7 +582,7 @@ if run:
         ax.bar(x + width/2, p_sel_c, width, label="CRM")
         ax.set_title("Probability of selecting each dose as MTD", fontsize=10)
         ax.set_xticks(x)
-        ax.set_xticklabels([f"{level_labels[i]}\n{dose_labels[i]}" for i in range(5)], fontsize=8)
+        ax.set_xticklabels([f"L{i}\n{dose_labels[i]}" for i in range(5)], fontsize=8)
         ax.set_ylabel("Probability", fontsize=9)
         ax.set_ylim(0, max(p_sel_6.max(), p_sel_c.max()) * 1.15 + 1e-6)
         compact_style(ax)
@@ -404,32 +597,66 @@ if run:
         ax.bar(x + width/2, avg_nc, width, label="CRM")
         ax.set_title("Average number treated per dose level", fontsize=10)
         ax.set_xticks(x)
-        ax.set_xticklabels([f"{level_labels[i]}\n{dose_labels[i]}" for i in range(5)], fontsize=8)
+        ax.set_xticklabels([f"L{i}\n{dose_labels[i]}" for i in range(5)], fontsize=8)
         ax.set_ylabel("Patients", fontsize=9)
         compact_style(ax)
         ax.legend(fontsize=8, frameon=False, loc="upper right")
         st.pyplot(fig, clear_figure=True)
 
+    # New compact plot: observed vs expected DLT rate
     r3, r4 = st.columns(2)
 
     with r3:
-        st.markdown("**Trial summary (averages)**")
-        st.write(f"Mean total DLTs: 6+3 = {np.mean(tot_dlt_6):.2f} | CRM = {np.mean(tot_dlt_c):.2f}")
-        st.write(f"Mean sample size: 6+3 = {np.mean(nmat_6.sum(axis=1)):.1f} | CRM = {np.mean(nmat_c.sum(axis=1)):.1f}")
-        st.write(f"True MTD: Level {true_mtd} ({dose_labels[true_mtd]})")
+        fig, ax = plt.subplots(figsize=(5.6, 2.6), dpi=140)
+        labels = ["6+3", "CRM"]
+        obs = [mean_obs_6, mean_obs_c]
+        exp = [mean_exp_6, mean_exp_c]
 
-    with r4:
-        st.markdown("**Safety signal**")
-        st.write(f"P(overshoot above true MTD): 6+3 = {overshoot6:.3f} | CRM = {overshootc:.3f}")
-
-    with st.expander("Optional: counts of selected MTD across simulations"):
-        fig, ax = plt.subplots(figsize=(6.2, 2.5), dpi=140)
-        ax.bar(x - width/2, sel_6, width, label="6+3")
-        ax.bar(x + width/2, sel_c, width, label="CRM")
-        ax.set_title("Counts of selected MTD across simulations", fontsize=10)
-        ax.set_xticks(x)
-        ax.set_xticklabels([f"{level_labels[i]}\n{dose_labels[i]}" for i in range(5)], fontsize=8)
-        ax.set_ylabel("Count", fontsize=9)
+        xi = np.arange(len(labels))
+        w = 0.38
+        ax.bar(xi - w/2, obs, w, label="Observed DLT rate")
+        ax.bar(xi + w/2, exp, w, label="Expected DLT risk")
+        ax.set_title("Average DLT burden per patient", fontsize=10)
+        ax.set_xticks(xi)
+        ax.set_xticklabels(labels, fontsize=9)
+        ax.set_ylabel("Rate", fontsize=9)
+        ax.set_ylim(0, max(max(obs), max(exp)) * 1.20 + 1e-6)
         compact_style(ax)
         ax.legend(fontsize=8, frameon=False, loc="upper right")
         st.pyplot(fig, clear_figure=True)
+
+    with r4:
+        st.markdown("**Summary (averages over simulated trials)**")
+        st.write(f"Mean sample size: 6+3 = {mean_n_6:.1f} | CRM = {mean_n_c:.1f}")
+        st.write(f"Mean total DLTs: 6+3 = {mean_total_dlt_6:.2f} | CRM = {mean_total_dlt_c:.2f}")
+        st.write(f"Mean observed DLT rate: 6+3 = {mean_obs_6:.3f} | CRM = {mean_obs_c:.3f}")
+        st.write(f"Mean expected DLT risk: 6+3 = {mean_exp_6:.3f} | CRM = {mean_exp_c:.3f}")
+        st.write(f"P(overshoot above true MTD): 6+3 = {overshoot6:.3f} | CRM = {overshootc:.3f}")
+        st.write("")
+        st.write(f"Switch rate: 6+3 = {np.mean(ping_sw_6):.3f} | CRM = {np.mean(ping_sw_c):.3f}")
+        st.write(f"Oscillation index (A→B→A): 6+3 = {np.mean(ping_osc_6):.3f} | CRM = {np.mean(ping_osc_c):.3f}")
+        st.write(f"Mean step size: 6+3 = {np.mean(ping_step_6):.3f} | CRM = {np.mean(ping_step_c):.3f}")
+
+    if show_ping_plot:
+        st.subheader("Ping-pong distribution (oscillation index)")
+
+        cA, cB = st.columns(2)
+        bins = np.linspace(0, 1, 21)
+
+        with cA:
+            fig, ax = plt.subplots(figsize=(5.6, 2.4), dpi=140)
+            ax.hist(ping_osc_6, bins=bins, alpha=0.9)
+            ax.set_title("6+3 oscillation index", fontsize=10)
+            ax.set_xlabel("Oscillation index", fontsize=9)
+            ax.set_ylabel("Count", fontsize=9)
+            compact_style(ax)
+            st.pyplot(fig, clear_figure=True)
+
+        with cB:
+            fig, ax = plt.subplots(figsize=(5.6, 2.4), dpi=140)
+            ax.hist(ping_osc_c, bins=bins, alpha=0.9)
+            ax.set_title("CRM oscillation index", fontsize=10)
+            ax.set_xlabel("Oscillation index", fontsize=9)
+            ax.set_ylabel("Count", fontsize=9)
+            compact_style(ax)
+            st.pyplot(fig, clear_figure=True)
