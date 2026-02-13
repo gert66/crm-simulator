@@ -22,10 +22,6 @@ def compact_style(ax):
     ax.spines["right"].set_visible(False)
     ax.grid(axis="y", linewidth=0.5, alpha=0.25)
 
-def logsumexp(x):
-    m = np.max(x)
-    return m + np.log(np.sum(np.exp(x - m)))
-
 # ============================================================
 # dfcrm-style skeleton calibration (getprior) | 1:1 translation
 # ============================================================
@@ -76,7 +72,7 @@ def dfcrm_getprior(halfwidth, target, nu, nlevel, model="empiric", intcpt=3.0):
     if model == "empiric":
         dosescaled[nu - 1] = target
 
-        # k = nu, nu-1, ..., 2  (1-based k)
+        # k = nu, nu-1, ..., 2 (1-based)
         for k in range(nu, 1, -1):
             b_k = np.log(np.log(target + halfwidth) / np.log(dosescaled[k - 1]))
             if nu > 1:
@@ -134,7 +130,7 @@ def oscillation_index(path):
     return float(np.mean(osc))
 
 # ============================================================
-# 6+3 Design (unchanged except carry-in)
+# 6+3 Design (acute-only, with carry-in)
 # ============================================================
 
 def run_6plus3(true_p, start_level=0, max_n=36, accept_max_dlt=1, already_n0=0, rng=None):
@@ -160,7 +156,7 @@ def run_6plus3(true_p, start_level=0, max_n=36, accept_max_dlt=1, already_n0=0, 
     last_acceptable = None
     dose_path = []
 
-    # Carry-in (0 DLT at start level)
+    # Carry-in
     if already_n0 > 0:
         add = int(already_n0)
         n_per_level[level] += add
@@ -221,40 +217,55 @@ def run_6plus3(true_p, start_level=0, max_n=36, accept_max_dlt=1, already_n0=0, 
     return selected, n_per_level, total_dlts, dose_path
 
 # ============================================================
-# CRM: 1-parameter power model
-# p_k(theta) = skeleton_k ^ exp(theta)
-# theta ~ Normal(0, sigma^2)
-# Posterior computed on grid
+# CRM (acute-only, no TITE): dfcrm-like numerical integration
+# Using Gauss–Hermite quadrature for posterior summaries
 # ============================================================
 
-def crm_power_probs(theta_grid, skeleton):
+def posterior_via_gh(sigma, skeleton, n_per_level, dlt_per_level, gh_n=61):
+    """
+    Posterior weights and dose probabilities using Gauss–Hermite quadrature.
+
+    Model:
+      p_k(theta) = skeleton_k ^ exp(theta)
+      theta ~ Normal(0, sigma^2)
+
+    Returns
+    -------
+    post_w : (G,) posterior weights over quadrature nodes (normalized)
+    P      : (G,K) p_k(theta_g) for each node and dose
+    """
     sk = safe_probs(skeleton)
-    a = np.exp(theta_grid)[:, None]
-    return sk[None, :] ** a
+    n = np.asarray(n_per_level, dtype=float)
+    y = np.asarray(dlt_per_level, dtype=float)
 
-def normal_prior_logpdf(theta_grid, sigma):
-    return -0.5 * (theta_grid / sigma) ** 2 - np.log(sigma * np.sqrt(2 * np.pi))
+    # Integrate under exp(-x^2): ∫ exp(-x^2) f(x) dx ≈ Σ w_i f(x_i)
+    x, w = np.polynomial.hermite.hermgauss(int(gh_n))
 
-def posterior_on_grid(theta_grid, sigma, skeleton, n_per_level, dlt_per_level):
-    n = np.array(n_per_level, dtype=float)
-    y = np.array(dlt_per_level, dtype=float)
+    # Transform to theta for N(0, sigma^2)
+    theta = float(sigma) * np.sqrt(2.0) * x
 
-    P = crm_power_probs(theta_grid, skeleton)  # (G,K)
+    P = sk[None, :] ** np.exp(theta)[:, None]
+
     ll = (y[None, :] * np.log(P) + (n[None, :] - y[None, :]) * np.log(1 - P)).sum(axis=1)
 
-    lp = normal_prior_logpdf(theta_grid, sigma)
-    log_post = lp + ll
+    log_unnorm = np.log(w) + ll
+    m = np.max(log_unnorm)
+    unnorm = np.exp(log_unnorm - m)
+    post_w = unnorm / np.sum(unnorm)
 
-    lse = logsumexp(log_post)
-    w = np.exp(log_post - lse)
-    return w, P
+    return post_w, P
 
-def crm_choose_next(theta_grid, sigma, skeleton, n_per_level, dlt_per_level,
-                    current_level, target, alpha_overdose, max_step=1):
-    w, P = posterior_on_grid(theta_grid, sigma, skeleton, n_per_level, dlt_per_level)
+def crm_posterior_summaries(sigma, skeleton, n_per_level, dlt_per_level, target, gh_n=61):
+    post_w, P = posterior_via_gh(sigma, skeleton, n_per_level, dlt_per_level, gh_n=gh_n)
+    post_mean = (post_w[:, None] * P).sum(axis=0)
+    overdose_prob = (post_w[:, None] * (P > target)).sum(axis=0)
+    return post_mean, overdose_prob
 
-    post_mean = (w[:, None] * P).sum(axis=0)
-    overdose_prob = (w[:, None] * (P > target)).sum(axis=0)
+def crm_choose_next(sigma, skeleton, n_per_level, dlt_per_level,
+                    current_level, target, alpha_overdose, max_step=1, gh_n=61):
+    post_mean, overdose_prob = crm_posterior_summaries(
+        sigma, skeleton, n_per_level, dlt_per_level, target, gh_n=gh_n
+    )
 
     allowed = np.where(overdose_prob < alpha_overdose)[0]
     if allowed.size == 0:
@@ -270,10 +281,10 @@ def crm_choose_next(theta_grid, sigma, skeleton, n_per_level, dlt_per_level,
     k_star = int(np.clip(k_star, 0, len(skeleton) - 1))
     return k_star, post_mean, overdose_prob
 
-def crm_select_mtd(theta_grid, sigma, skeleton, n_per_level, dlt_per_level, target, alpha_overdose):
-    w, P = posterior_on_grid(theta_grid, sigma, skeleton, n_per_level, dlt_per_level)
-    post_mean = (w[:, None] * P).sum(axis=0)
-    overdose_prob = (w[:, None] * (P > target)).sum(axis=0)
+def crm_select_mtd(sigma, skeleton, n_per_level, dlt_per_level, target, alpha_overdose, gh_n=61):
+    post_mean, overdose_prob = crm_posterior_summaries(
+        sigma, skeleton, n_per_level, dlt_per_level, target, gh_n=gh_n
+    )
 
     allowed = np.where(overdose_prob < alpha_overdose)[0]
     if allowed.size == 0:
@@ -281,14 +292,37 @@ def crm_select_mtd(theta_grid, sigma, skeleton, n_per_level, dlt_per_level, targ
     return int(allowed[np.argmin(np.abs(post_mean[allowed] - target))])
 
 def run_crm(true_p, target, skeleton, sigma=1.0, start_level=0, max_n=36,
-            cohort_size=6, alpha_overdose=0.25, theta_min=-4.0, theta_max=4.0,
-            theta_grid_n=401, max_step=1, already_n0=0, rng=None):
+            cohort_size=6, alpha_overdose=0.25, max_step=1, already_n0=0,
+            gh_n=61, rng=None):
     """
-    CRM simulation (acute-only, no TITE).
+    CRM simulation (acute-only, no TITE, no subacute).
 
-    already_n0:
-        Number of patients already treated at the start level with 0 acute DLT (carry-in).
-        These count toward sample size and inform the posterior before the first cohort.
+    Parameters
+    ----------
+    true_p : list[float]
+        True acute DLT probability per dose level (ground truth) used for simulation.
+    target : float
+        Target DLT probability for MTD definition.
+    skeleton : list[float]
+        Prior mean DLT per dose (CRM skeleton).
+    sigma : float
+        Prior SD for theta in Normal(0, sigma^2). Higher sigma => weaker prior.
+    start_level : int
+        0-based dose index to start treatment.
+    max_n : int
+        Max sample size (includes carry-in).
+    cohort_size : int
+        Patients per CRM update.
+    alpha_overdose : float
+        Overdose control threshold. Allow dose k only if posterior P(p_k > target) < alpha.
+    max_step : int
+        Max dose level movement per update (1 or 2).
+    already_n0 : int
+        Carry-in patients already treated at start dose with 0 DLT.
+    gh_n : int
+        Number of Gauss–Hermite nodes. Higher => more accurate, slower.
+    rng : np.random.Generator
+        Random number generator.
     """
     if rng is None:
         rng = np.random.default_rng()
@@ -301,9 +335,7 @@ def run_crm(true_p, target, skeleton, sigma=1.0, start_level=0, max_n=36,
     total_n = 0
     dose_path = []
 
-    theta_grid = np.linspace(theta_min, theta_max, int(theta_grid_n))
-
-    # Carry-in (0 DLT at start level)
+    # Carry-in
     if already_n0 > 0:
         add = int(already_n0)
         n_per_level[level] += add
@@ -323,20 +355,26 @@ def run_crm(true_p, target, skeleton, sigma=1.0, start_level=0, max_n=36,
             break
 
         next_level, _, _ = crm_choose_next(
-            theta_grid, sigma, skeleton,
-            n_per_level, dlt_per_level,
+            sigma=sigma,
+            skeleton=skeleton,
+            n_per_level=n_per_level,
+            dlt_per_level=dlt_per_level,
             current_level=level,
             target=target,
             alpha_overdose=alpha_overdose,
-            max_step=max_step
+            max_step=max_step,
+            gh_n=gh_n
         )
         level = next_level
 
     selected = crm_select_mtd(
-        theta_grid, sigma, skeleton,
-        n_per_level, dlt_per_level,
+        sigma=sigma,
+        skeleton=skeleton,
+        n_per_level=n_per_level,
+        dlt_per_level=dlt_per_level,
         target=target,
-        alpha_overdose=alpha_overdose
+        alpha_overdose=alpha_overdose,
+        gh_n=gh_n
     )
 
     total_dlts = int(dlt_per_level.sum())
@@ -363,8 +401,9 @@ def expected_dlt_risk(n_per_level, true_p):
 # Streamlit App
 # ============================================================
 
-st.set_page_config(page_title="Dose Escalation Simulator: 6+3 vs CRM", layout="wide")
-st.title("Dose Escalation Simulator: 6+3 vs CRM (acute-only CRM, dfcrm-matched prior option)")
+st.set_page_config(page_title="Dose Escalation Simulator: 6+3 vs CRM", layout="centered")
+st.title("Dose Escalation Simulator: 6+3 vs CRM")
+st.caption("Acute-only CRM. No TITE. No subacute.")
 
 dose_labels = ["5×4 Gy", "5×5 Gy", "5×6 Gy", "5×7 Gy", "5×8 Gy"]
 
@@ -389,7 +428,7 @@ with colA:
     target = st.number_input(
         "Target DLT probability",
         min_value=0.05, max_value=0.50, value=0.25, step=0.01,
-        help="Target toxicity level for defining the MTD (dose whose DLT probability is closest to this target)."
+        help="Target toxicity level used to define the MTD."
     )
 
     start_level = st.selectbox(
@@ -403,8 +442,7 @@ with colA:
     already_n0 = st.number_input(
         "Already treated at start dose with 0 acute DLT (carry-in)",
         min_value=0, max_value=20, value=0, step=1,
-        help="Adds these patients at the starting dose with 0 DLT before the simulation begins. "
-             "They count toward sample size and inform decisions."
+        help="Adds these patients at the starting dose with 0 DLT before the simulation begins."
     )
 
     n_sims = st.number_input(
@@ -469,7 +507,7 @@ with c1:
     max_n_6 = st.number_input(
         "Max sample size (6+3)",
         min_value=12, max_value=120, value=36, step=3,
-        help="Maximum number of patients in each simulated 6+3 trial. Includes carry-in patients."
+        help="Maximum number of patients in each simulated 6+3 trial (includes carry-in)."
     )
 
     accept_rule = st.selectbox(
@@ -493,7 +531,7 @@ with c2:
     max_n_crm = st.number_input(
         "Max sample size (CRM)",
         min_value=12, max_value=120, value=36, step=3,
-        help="Maximum number of patients in each simulated CRM trial. Includes carry-in patients."
+        help="Maximum number of patients in each simulated CRM trial (includes carry-in)."
     )
 
     cohort_size = st.number_input(
@@ -507,21 +545,21 @@ with c2:
         "Skeleton mode",
         options=["Auto (dfcrm getprior)", "Manual (edit each dose)"],
         index=0,
-        help="Auto uses dfcrm-style getprior calibration (matches Sama). Manual lets you set the skeleton directly."
+        help="Auto uses dfcrm-style getprior calibration. Manual lets you set the skeleton directly."
     )
 
-    prior_mtd_idx = None  # for optional annotation in the plot
+    prior_mtd_idx = None  # for plot annotation
 
     if prior_mode == "Auto (dfcrm getprior)":
         prior_target = st.number_input(
             "Prior target (used to calibrate the skeleton)",
             min_value=0.05, max_value=0.50, value=float(target), step=0.01,
-            help="Used only for generating the skeleton. The trial target above still drives CRM dose selection."
+            help="Used only for generating the skeleton."
         )
         prior_halfwidth = st.number_input(
             "Halfwidth (delta)",
             min_value=0.01, max_value=0.30, value=0.10, step=0.01,
-            help="Indifference interval is [target - delta, target + delta]. Smaller delta means tighter spacing."
+            help="Indifference interval is [target - delta, target + delta]."
         )
         prior_nu = st.selectbox(
             "Prior MTD dose level (nu, 1-based)",
@@ -533,7 +571,7 @@ with c2:
             "Working model for getprior",
             options=["empiric", "logistic"],
             index=0,
-            help='Empiric corresponds to the power CRM skeleton calibration. Logistic is another supported calibration.'
+            help="Empiric corresponds to the power CRM skeleton calibration."
         )
         prior_intcpt = st.number_input(
             "Logistic intercept (intcpt)",
@@ -561,29 +599,34 @@ with c2:
                 min_value=0.01, max_value=0.99,
                 value=float(scenario_vals[i]), step=0.01,
                 key=f"sk_{i}",
-                help="Prior mean DLT probability at this dose level (skeleton). Typically increasing with dose."
+                help="Prior mean DLT probability at this dose level (skeleton)."
             )
             skeleton.append(val)
 
     sigma = st.number_input(
         "Prior sigma on theta",
         min_value=0.2, max_value=5.0, value=float(np.sqrt(1.34)), step=0.1,
-        help="Standard deviation of Normal(0, sigma²) prior on the CRM parameter. "
-             "Higher sigma weakens the prior and lets data dominate sooner. "
-             "dfcrm commonly uses scale = sqrt(1.34) as a default."
+        help="SD of Normal(0, sigma²) prior on theta. Higher sigma weakens the prior."
     )
 
     alpha_overdose = st.number_input(
         "Overdose control alpha",
         min_value=0.05, max_value=0.50, value=0.25, step=0.01,
-        help="Allow dose k only if posterior P(DLT > target) < alpha. Smaller alpha is more conservative."
+        help="Allow dose k only if posterior P(DLT > target) < alpha."
     )
 
     max_step = st.selectbox(
         "Max dose step per update",
         options=[1, 2],
         index=0,
-        help="Limits how far CRM can move between updates (prevents large jumps)."
+        help="Limits how far CRM can move between updates."
+    )
+
+    gh_n = st.selectbox(
+        "Posterior integration accuracy (Gauss–Hermite points)",
+        options=[31, 41, 61, 81],
+        index=2,
+        help="Higher values are more accurate but slower. 61 is a good default."
     )
 
     st.info(
@@ -600,20 +643,20 @@ with c2:
 
 st.subheader("Input curves (True vs Prior)")
 
-fig, ax = plt.subplots(figsize=(4.9, 2.6), dpi=140)
+fig, ax = plt.subplots(figsize=(3.8, 2.0), dpi=160)
 x = np.arange(5)
 
-ax.plot(x, true_p, marker="o", linewidth=1.5, label="True P(DLT)")
-ax.plot(x, skeleton, marker="o", linewidth=1.5, label="Prior (skeleton)")
+ax.plot(x, true_p, marker="o", linewidth=1.4, label="True P(DLT)")
+ax.plot(x, skeleton, marker="o", linewidth=1.4, label="Prior (skeleton)")
 
 ax.axhline(float(target), linewidth=1, alpha=0.6)
 ax.text(0.05, float(target) + 0.01, f"Target = {float(target):.2f}", fontsize=8)
 
-ax.axvline(true_mtd, linewidth=1, alpha=0.30)
+ax.axvline(true_mtd, linewidth=1, alpha=0.25)
 ax.text(true_mtd + 0.05, 0.90, "True MTD", fontsize=8, transform=ax.get_xaxis_transform())
 
 if prior_mtd_idx is not None:
-    ax.axvline(prior_mtd_idx, linewidth=1, alpha=0.30)
+    ax.axvline(prior_mtd_idx, linewidth=1, alpha=0.25)
     ax.text(prior_mtd_idx + 0.05, 0.82, "Prior MTD", fontsize=8, transform=ax.get_xaxis_transform())
 
 ax.set_xticks(x)
@@ -626,6 +669,8 @@ ax.set_ylim(0, min(1.0, ymax * 1.25 + 0.02))
 compact_style(ax)
 ax.legend(fontsize=8, frameon=False, loc="upper left")
 st.pyplot(fig, clear_figure=True)
+
+st.divider()
 
 # ------------------------------------------------------------
 # Run controls
@@ -691,6 +736,7 @@ if run:
             alpha_overdose=float(alpha_overdose),
             max_step=int(max_step),
             already_n0=int(already_n0),
+            gh_n=int(gh_n),
             rng=rng
         )
 
@@ -742,10 +788,6 @@ if run:
     mean_exp_6 = float(np.mean(exp_risk_6))
     mean_exp_c = float(np.mean(exp_risk_c))
 
-    # ------------------------------------------------------------
-    # Plots
-    # ------------------------------------------------------------
-
     st.subheader("Results")
 
     x = np.arange(5)
@@ -754,7 +796,7 @@ if run:
     r1, r2 = st.columns(2)
 
     with r1:
-        fig, ax = plt.subplots(figsize=(4.9, 2.6), dpi=140)
+        fig, ax = plt.subplots(figsize=(4.2, 2.2), dpi=160)
         ax.bar(x - width/2, p_sel_6, width, label="6+3")
         ax.bar(x + width/2, p_sel_c, width, label="CRM")
         ax.set_title("Probability of selecting each dose as MTD", fontsize=10)
@@ -769,7 +811,7 @@ if run:
         st.pyplot(fig, clear_figure=True)
 
     with r2:
-        fig, ax = plt.subplots(figsize=(4.9, 2.6), dpi=140)
+        fig, ax = plt.subplots(figsize=(4.2, 2.2), dpi=160)
         ax.bar(x - width/2, avg_n6, width, label="6+3")
         ax.bar(x + width/2, avg_nc, width, label="CRM")
         ax.set_title("Average number treated per dose level", fontsize=10)
@@ -780,15 +822,13 @@ if run:
         ax.legend(fontsize=8, frameon=False, loc="upper right")
         st.pyplot(fig, clear_figure=True)
 
-    # Observed vs expected DLT burden
     r3, r4 = st.columns(2)
 
     with r3:
-        fig, ax = plt.subplots(figsize=(4.9, 2.4), dpi=140)
+        fig, ax = plt.subplots(figsize=(4.2, 2.1), dpi=160)
         labels = ["6+3", "CRM"]
         obs = [mean_obs_6, mean_obs_c]
         exp = [mean_exp_6, mean_exp_c]
-
         xi = np.arange(len(labels))
         w = 0.38
         ax.bar(xi - w/2, obs, w, label="Observed DLT rate")
@@ -822,7 +862,7 @@ if run:
         bins = np.linspace(0, 1, 21)
 
         with cA:
-            fig, ax = plt.subplots(figsize=(4.9, 2.2), dpi=140)
+            fig, ax = plt.subplots(figsize=(4.2, 2.0), dpi=160)
             ax.hist(ping_osc_6, bins=bins, alpha=0.9)
             ax.set_title("6+3 oscillation index", fontsize=10)
             ax.set_xlabel("Oscillation index", fontsize=9)
@@ -831,7 +871,7 @@ if run:
             st.pyplot(fig, clear_figure=True)
 
         with cB:
-            fig, ax = plt.subplots(figsize=(4.9, 2.2), dpi=140)
+            fig, ax = plt.subplots(figsize=(4.2, 2.0), dpi=160)
             ax.hist(ping_osc_c, bins=bins, alpha=0.9)
             ax.set_title("CRM oscillation index", fontsize=10)
             ax.set_xlabel("Oscillation index", fontsize=9)
