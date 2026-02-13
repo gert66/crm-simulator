@@ -1,81 +1,75 @@
-"""
-crm_tite_simulator.py
-
-GitHub-ready Python implementation of:
-- Classic CRM (binary DLT)
-- Optional TITE-CRM (time-to-event weighted likelihood)
-- Overdose Control
-- Startup escape rule to avoid getting stuck at dose level 0
-- Gauss-Hermite quadrature for robust posterior integration (no MCMC needed)
-
-Dependencies:
-    pip install numpy scipy
-
-Run:
-    python crm_tite_simulator.py
-
-You can also import and use `run_simulation(...)` from another script.
-"""
+# sim_sana.py
+# Streamlit-ready Classic CRM simulator (no SciPy needed)
+# Dependencies: streamlit, numpy
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Optional, Tuple, Dict
+from typing import List, Dict, Tuple
 import math
 import numpy as np
-from scipy.special import expit  # sigmoid
+import streamlit as st
 
 
 # -----------------------------
-# Utilities
+# Helpers
 # -----------------------------
 
 def clamp(x: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, x))
 
 
-def safe_log(x: float, eps: float = 1e-15) -> float:
-    return math.log(max(eps, min(1 - eps, x)))
+def parse_floats_csv(s: str) -> List[float]:
+    parts = [p.strip() for p in s.replace(";", ",").split(",") if p.strip() != ""]
+    return [float(p) for p in parts]
 
 
 # -----------------------------
-# Model and Config
+# Gauss-Hermite quadrature (no SciPy)
+# -----------------------------
+# We need nodes/weights for ∫ f(x) e^{-x^2} dx.
+# We implement a stable-ish GH generator using the Golub-Welsch method.
+# Reference: GH via eigen-decomposition of Jacobi matrix.
+
+def hermgauss(n: int) -> Tuple[np.ndarray, np.ndarray]:
+    if n <= 0:
+        raise ValueError("n must be positive")
+    i = np.arange(1, n, dtype=float)
+    a = np.zeros(n, dtype=float)
+    b = np.sqrt(i / 2.0)
+
+    # Jacobi matrix for Hermite polynomials
+    J = np.diag(a) + np.diag(b, 1) + np.diag(b, -1)
+    vals, vecs = np.linalg.eigh(J)
+
+    x = vals
+    # weights: w_k = sqrt(pi) * (v_0k)^2
+    w = math.sqrt(math.pi) * (vecs[0, :] ** 2)
+    return x, w
+
+
+# -----------------------------
+# CRM config
 # -----------------------------
 
 @dataclass
 class CRMConfig:
-    # Dose skeleton (monotone increasing "prior guesses")
     skeleton: List[float]
-
-    # Target toxicity probability
     target: float = 0.25
-
-    # Prior on alpha for the power model p_i(alpha) = skeleton_i ^ exp(alpha)
-    # We'll use alpha ~ Normal(mu, sigma^2)
     prior_mu: float = 0.0
     prior_sigma: float = 1.0
 
-    # Dose transition constraints
-    max_step: int = 1  # 1 = only move 1 level up/down per cohort
+    max_step: int = 1
 
-    # Overdose control
     use_overdose_control: bool = True
-    overdose_cutoff: float = 0.25  # e.g. 0.25 means require P(p_i > target) < 0.25
+    overdose_cutoff: float = 0.25  # require P(p > target) < cutoff
 
-    # Posterior integration
-    gh_n: int = 61  # 41/61/81 typical; higher is slower but more stable
+    gh_n: int = 61  # 41/61/81 typical
 
-    # Startup escape: prevents being stuck at dose 0 due to early conservative posterior
+    # Startup escape: avoids "stuck at level 0"
     startup_escalate_if_zero: bool = True
-    startup_margin: float = 0.90  # escalate if current dose estimated tox < target*margin and last cohort had <= cohort_dlt_threshold
-
-    # TITE options
-    use_tite: bool = False
-    tite_assessment_window: float = 1.0  # normalized window length (e.g. 1.0 means full window)
-    tite_weight_power: float = 1.0       # w = (t / window)^power, clamp [0,1]
-
-    # Random seed for reproducibility (simulation)
-    seed: int = 7
+    startup_margin: float = 0.90
+    cohort_dlt_threshold: int = 1  # allow escalate if last cohort DLTs <= threshold
 
 
 @dataclass
@@ -86,440 +80,312 @@ class TrialConfig:
 
 
 # -----------------------------
-# CRM Core: likelihood and posterior via Gauss-Hermite
+# CRM posterior (power model)
+# p_i(alpha) = skeleton_i ^ exp(alpha)
+# alpha ~ Normal(mu, sigma^2)
+# Posterior via GH nodes/weights
 # -----------------------------
 
 class CRMPosterior:
-    """
-    Power model:
-        p_i(alpha) = skeleton_i ** exp(alpha)
-    with alpha ~ Normal(mu, sigma^2).
-    """
-
     def __init__(self, cfg: CRMConfig):
         self.cfg = cfg
         self.skeleton = np.array(cfg.skeleton, dtype=float)
         if np.any(self.skeleton <= 0) or np.any(self.skeleton >= 1):
             raise ValueError("All skeleton values must be strictly between 0 and 1.")
 
-        # Precompute GH nodes/weights (for standard normal integral)
-        self.gh_x, self.gh_w = np.polynomial.hermite.hermgauss(cfg.gh_n)
-        # Transform for N(mu, sigma^2): alpha = mu + sqrt(2)*sigma*x
-        self.alpha_nodes = cfg.prior_mu + math.sqrt(2.0) * cfg.prior_sigma * self.gh_x
-        # Standard normal weight factor
-        self.gh_weights = self.gh_w / math.sqrt(math.pi)
+        x, w = hermgauss(cfg.gh_n)
+        # Transform for normal prior using:
+        # ∫ f(alpha) φ((alpha-mu)/sigma) d alpha
+        # with alpha = mu + sqrt(2)*sigma*x, and weight factor w / sqrt(pi)
+        self.alpha_nodes = cfg.prior_mu + math.sqrt(2.0) * cfg.prior_sigma * x
+        self.base_weights = w / math.sqrt(math.pi)  # sums to 1 for f=1 under normal
 
     def p_tox(self, alpha: np.ndarray) -> np.ndarray:
-        """
-        Returns matrix of p_i(alpha) with shape (len(alpha), n_doses)
-        """
         a = np.exp(alpha).reshape(-1, 1)  # exp(alpha) positive
-        # skeleton ** exp(alpha)
         return np.power(self.skeleton.reshape(1, -1), a)
 
-    def log_likelihood_classic(self, alpha: np.ndarray, n: np.ndarray, y: np.ndarray) -> np.ndarray:
-        """
-        Classic CRM likelihood with binomial data at each dose i:
-            y_i ~ Binomial(n_i, p_i(alpha))
-        Return log L(alpha) for each alpha node, shape (len(alpha),)
-        """
+    def log_likelihood(self, alpha: np.ndarray, n: np.ndarray, y: np.ndarray) -> np.ndarray:
         p = self.p_tox(alpha)  # (A, D)
-        # log L = sum_i [ y_i log p_i + (n_i - y_i) log(1-p_i) ]
-        ll = (y.reshape(1, -1) * np.log(np.clip(p, 1e-15, 1 - 1e-15)) +
-              (n.reshape(1, -1) - y.reshape(1, -1)) * np.log(np.clip(1 - p, 1e-15, 1 - 1e-15))).sum(axis=1)
-        return ll
-
-    def log_likelihood_tite(self, alpha: np.ndarray, n_eff: np.ndarray, y_eff: np.ndarray) -> np.ndarray:
-        """
-        TITE approximation as weighted Bernoulli/binomial:
-            contribution per patient: w * y * log p + w * (1-y) * log(1-p)
-        Aggregated as:
-            y_eff_i = sum(w_j * y_j), n_eff_i = sum(w_j)
-        """
-        p = self.p_tox(alpha)  # (A, D)
-        ll = (y_eff.reshape(1, -1) * np.log(np.clip(p, 1e-15, 1 - 1e-15)) +
-              (n_eff.reshape(1, -1) - y_eff.reshape(1, -1)) * np.log(np.clip(1 - p, 1e-15, 1 - 1e-15))).sum(axis=1)
+        p = np.clip(p, 1e-15, 1 - 1e-15)
+        ll = (y.reshape(1, -1) * np.log(p) + (n.reshape(1, -1) - y.reshape(1, -1)) * np.log(1 - p)).sum(axis=1)
         return ll
 
     def posterior_weights(self, log_like: np.ndarray) -> np.ndarray:
-        """
-        Returns normalized posterior weights over GH nodes.
-        Prior is already built into GH integration via nodes/weights.
-        """
-        # unnormalized posterior mass at each node: w_k * exp(log_like_k)
-        m = np.max(log_like)
-        unnorm = self.gh_weights * np.exp(log_like - m)
-        s = np.sum(unnorm)
+        m = float(np.max(log_like))
+        unnorm = self.base_weights * np.exp(log_like - m)
+        s = float(np.sum(unnorm))
         if s <= 0 or not np.isfinite(s):
-            # fallback to prior if numerically broken
-            return self.gh_weights / np.sum(self.gh_weights)
+            return self.base_weights / float(np.sum(self.base_weights))
         return unnorm / s
 
     def posterior_mean_p(self, post_w: np.ndarray) -> np.ndarray:
-        """
-        Posterior mean of toxicity probability for each dose level.
-        """
         p = self.p_tox(self.alpha_nodes)  # (A, D)
         return (post_w.reshape(-1, 1) * p).sum(axis=0)
 
     def posterior_prob_over_target(self, post_w: np.ndarray, target: float) -> np.ndarray:
-        """
-        For each dose i, compute P(p_i(alpha) > target | data).
-        """
         p = self.p_tox(self.alpha_nodes)  # (A, D)
         ind = (p > target).astype(float)
         return (post_w.reshape(-1, 1) * ind).sum(axis=0)
 
 
 # -----------------------------
-# Dose selection rules
+# Dose selection
 # -----------------------------
 
-def select_dose_level(
+def select_next_level(
     cfg: CRMConfig,
     current_level: int,
     post_mean_p: np.ndarray,
     post_prob_over_target: np.ndarray,
 ) -> int:
-    """
-    Select next level based on:
-    - Pick dose with posterior mean closest to target
-    - Apply overdose control by excluding doses where P(p > target) >= cutoff
-    - Enforce max_step from current_level
-    """
     n_levels = len(post_mean_p)
     candidates = list(range(n_levels))
 
     if cfg.use_overdose_control:
         candidates = [i for i in candidates if post_prob_over_target[i] < cfg.overdose_cutoff]
-        if len(candidates) == 0:
-            # If everything is "too risky", de-escalate to lowest available
+        if not candidates:
             candidates = [0]
 
-    # Choose closest to target among candidates
-    distances = [(i, abs(post_mean_p[i] - cfg.target)) for i in candidates]
-    best_i = min(distances, key=lambda t: t[1])[0]
+    # closest posterior mean to target
+    best = min(candidates, key=lambda i: abs(float(post_mean_p[i]) - cfg.target))
 
-    # Enforce max step
+    # enforce max step
     lo = max(0, current_level - cfg.max_step)
     hi = min(n_levels - 1, current_level + cfg.max_step)
-    best_i = int(clamp(best_i, lo, hi))
-
-    return best_i
+    return int(clamp(best, lo, hi))
 
 
-def startup_escape_rule(
+def apply_startup_escape(
     cfg: CRMConfig,
     current_level: int,
-    next_level: int,
+    proposed_level: int,
     post_mean_p: np.ndarray,
     last_cohort_dlts: int,
-    cohort_dlt_threshold: int = 1,
 ) -> int:
-    """
-    If we're stuck at level 0 due to conservative overdose control, give a controlled push:
-    - Only triggers when current level is 0 and next_level is 0.
-    - Escalate to 1 if posterior mean at level 0 looks sufficiently below target,
-      and last cohort at level 0 was not alarming (<= threshold DLTs).
-    """
     if not cfg.startup_escalate_if_zero:
-        return next_level
-    if current_level != 0 or next_level != 0:
-        return next_level
+        return proposed_level
+    if current_level != 0 or proposed_level != 0:
+        return proposed_level
+    if len(post_mean_p) < 2:
+        return proposed_level
 
-    safe_enough = post_mean_p[0] < (cfg.target * cfg.startup_margin)
-    not_too_toxic_recently = last_cohort_dlts <= cohort_dlt_threshold
-
-    if safe_enough and not_too_toxic_recently and len(post_mean_p) > 1:
+    safe_enough = float(post_mean_p[0]) < (cfg.target * cfg.startup_margin)
+    ok_recent = last_cohort_dlts <= cfg.cohort_dlt_threshold
+    if safe_enough and ok_recent:
         return 1
-    return next_level
+    return proposed_level
 
 
 # -----------------------------
-# Data structures for running a trial
+# Simulation
 # -----------------------------
 
-@dataclass
-class CohortOutcome:
-    dose_level: int
-    n: int
-    dlts: int
-    # TITE fields
-    followup_times: Optional[List[float]] = None
-    window: Optional[float] = None
-
-
-@dataclass
-class TrialState:
-    level: int
-    cohorts: List[CohortOutcome]
-
-
-# -----------------------------
-# Simulation: generating outcomes
-# -----------------------------
-
-def simulate_classic_cohort(rng: np.random.Generator, true_p: float, n: int) -> int:
-    """
-    Simulate DLT count for a cohort of size n with probability true_p.
-    """
-    return int(rng.binomial(n, true_p))
-
-
-def simulate_tite_cohort(
-    rng: np.random.Generator,
-    true_p: float,
-    n: int,
-    window: float = 1.0,
-) -> Tuple[int, List[float]]:
-    """
-    Simple TITE simulator:
-    - DLT occurs with probability true_p during the window.
-    - If DLT occurs, event time ~ Uniform(0, window)
-    - If no DLT, observed followup time ~ Uniform(0, window) (censoring at random)
-    Returns: (dlts_count, followup_times)
-    """
-    dlts = 0
-    times: List[float] = []
-    for _ in range(n):
-        dlt = rng.random() < true_p
-        if dlt:
-            dlts += 1
-            t = rng.random() * window
-            times.append(float(t))
-        else:
-            # censored followup
-            t = rng.random() * window
-            times.append(float(t))
-    return dlts, times
-
-
-def tite_weights(times: List[float], window: float, power: float) -> List[float]:
-    w = []
-    for t in times:
-        frac = 0.0 if window <= 0 else t / window
-        frac = clamp(frac, 0.0, 1.0)
-        w.append(float(frac ** power))
-    return w
-
-
-# -----------------------------
-# Running a trial
-# -----------------------------
-
-def build_aggregated_data(
-    cfg: CRMConfig,
-    cohorts: List[CohortOutcome],
-    n_levels: int,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """
-    Returns:
-        classic: n, y
-        tite: n_eff, y_eff
-    If cfg.use_tite is False, tite arrays still returned but unused.
-    """
-    n = np.zeros(n_levels, dtype=float)
-    y = np.zeros(n_levels, dtype=float)
-
-    n_eff = np.zeros(n_levels, dtype=float)
-    y_eff = np.zeros(n_levels, dtype=float)
-
-    for c in cohorts:
-        i = c.dose_level
-        n[i] += c.n
-        y[i] += c.dlts
-
-        if cfg.use_tite:
-            if c.followup_times is None or c.window is None:
-                raise ValueError("TITE enabled but cohort missing followup_times/window.")
-            w = tite_weights(c.followup_times, c.window, cfg.tite_weight_power)
-            # For simplicity: assume dlts are the first `dlts` patients in this cohort for weighting.
-            # If you track individual event indicators, replace this block with patient-level aggregation.
-            indicators = [1.0] * c.dlts + [0.0] * (c.n - c.dlts)
-            indicators = indicators[: c.n]
-            if len(indicators) != len(w):
-                # If mismatch due to the simplification, fall back to unweighted count
-                w = [1.0] * c.n
-                indicators = [1.0] * c.dlts + [0.0] * (c.n - c.dlts)
-
-            n_eff[i] += sum(w)
-            y_eff[i] += sum(w_j * y_j for w_j, y_j in zip(w, indicators))
-
-    return n, y, n_eff, y_eff
-
-
-def run_one_trial(
+def simulate_one_trial(
     crm_cfg: CRMConfig,
     trial_cfg: TrialConfig,
     true_tox: List[float],
+    seed: int,
 ) -> Dict[str, object]:
-    """
-    Runs one simulated trial and returns a dictionary with trajectory and final recommendation.
-    """
-    rng = np.random.default_rng(crm_cfg.seed)
+    rng = np.random.default_rng(seed)
     post = CRMPosterior(crm_cfg)
 
     n_levels = len(crm_cfg.skeleton)
     if len(true_tox) != n_levels:
-        raise ValueError("true_tox must have same length as skeleton.")
+        raise ValueError("true_tox must have same length as skeleton")
 
-    state = TrialState(level=trial_cfg.start_level, cohorts=[])
+    level = trial_cfg.start_level
+    cohorts_level: List[int] = []
+    cohorts_dlts: List[int] = []
 
-    for k in range(trial_cfg.n_cohorts):
-        level = state.level
-        p_true = true_tox[level]
+    # aggregated counts per level
+    n = np.zeros(n_levels, dtype=int)
+    y = np.zeros(n_levels, dtype=int)
 
-        if crm_cfg.use_tite:
-            dlts, times = simulate_tite_cohort(
-                rng, p_true, trial_cfg.cohort_size, window=crm_cfg.tite_assessment_window
-            )
-            cohort = CohortOutcome(
-                dose_level=level,
-                n=trial_cfg.cohort_size,
-                dlts=dlts,
-                followup_times=times,
-                window=crm_cfg.tite_assessment_window,
-            )
-        else:
-            dlts = simulate_classic_cohort(rng, p_true, trial_cfg.cohort_size)
-            cohort = CohortOutcome(dose_level=level, n=trial_cfg.cohort_size, dlts=dlts)
+    for _ in range(trial_cfg.n_cohorts):
+        p_true = float(true_tox[level])
+        dlts = int(rng.binomial(trial_cfg.cohort_size, p_true))
 
-        state.cohorts.append(cohort)
+        cohorts_level.append(level)
+        cohorts_dlts.append(dlts)
 
-        # Aggregate data and update posterior
-        n, y, n_eff, y_eff = build_aggregated_data(crm_cfg, state.cohorts, n_levels)
+        n[level] += trial_cfg.cohort_size
+        y[level] += dlts
 
-        if crm_cfg.use_tite:
-            ll = post.log_likelihood_tite(post.alpha_nodes, n_eff, y_eff)
-        else:
-            ll = post.log_likelihood_classic(post.alpha_nodes, n.astype(int), y.astype(int))
+        ll = post.log_likelihood(post.alpha_nodes, n.astype(float), y.astype(float))
+        w = post.posterior_weights(ll)
+        mean_p = post.posterior_mean_p(w)
+        prob_over = post.posterior_prob_over_target(w, crm_cfg.target)
 
-        post_w = post.posterior_weights(ll)
-        post_mean_p = post.posterior_mean_p(post_w)
-        post_prob_over_target = post.posterior_prob_over_target(post_w, crm_cfg.target)
+        proposed = select_next_level(crm_cfg, level, mean_p, prob_over)
+        proposed = apply_startup_escape(crm_cfg, level, proposed, mean_p, dlts)
 
-        # Dose selection
-        next_level = select_dose_level(crm_cfg, level, post_mean_p, post_prob_over_target)
+        level = proposed
 
-        # Startup escape if stuck at level 0
-        last_cohort_dlts = cohort.dlts
-        next_level = startup_escape_rule(
-            crm_cfg,
-            current_level=level,
-            next_level=next_level,
-            post_mean_p=post_mean_p,
-            last_cohort_dlts=last_cohort_dlts,
-            cohort_dlt_threshold=1,
-        )
-
-        state.level = next_level
-
-    # Final recommendation after last cohort, use the same selection logic one more time
-    n, y, n_eff, y_eff = build_aggregated_data(crm_cfg, state.cohorts, n_levels)
-    if crm_cfg.use_tite:
-        ll = post.log_likelihood_tite(post.alpha_nodes, n_eff, y_eff)
-    else:
-        ll = post.log_likelihood_classic(post.alpha_nodes, n.astype(int), y.astype(int))
-
-    post_w = post.posterior_weights(ll)
-    post_mean_p = post.posterior_mean_p(post_w)
-    post_prob_over_target = post.posterior_prob_over_target(post_w, crm_cfg.target)
-    final_level = select_dose_level(crm_cfg, state.level, post_mean_p, post_prob_over_target)
+    # final recommendation based on final posterior
+    ll = post.log_likelihood(post.alpha_nodes, n.astype(float), y.astype(float))
+    w = post.posterior_weights(ll)
+    mean_p = post.posterior_mean_p(w)
+    prob_over = post.posterior_prob_over_target(w, crm_cfg.target)
+    final = select_next_level(crm_cfg, level, mean_p, prob_over)
 
     return {
-        "final_recommended_level": int(final_level),
-        "final_post_mean_p": post_mean_p.tolist(),
-        "final_post_prob_over_target": post_prob_over_target.tolist(),
-        "trajectory_levels": [c.dose_level for c in state.cohorts],
-        "trajectory_dlts": [c.dlts for c in state.cohorts],
-        "cohorts": state.cohorts,
-        "config": crm_cfg,
-        "trial_config": trial_cfg,
+        "final_level": int(final),
+        "trajectory_levels": cohorts_level,
+        "trajectory_dlts": cohorts_dlts,
+        "final_post_mean_p": mean_p.tolist(),
+        "final_post_prob_over_target": prob_over.tolist(),
+        "n": n.tolist(),
+        "y": y.tolist(),
     }
 
 
-def run_simulation(
+def simulate_many(
     crm_cfg: CRMConfig,
     trial_cfg: TrialConfig,
     true_tox: List[float],
-    n_trials: int = 200,
-    seed: int = 123,
+    n_trials: int,
+    seed: int,
 ) -> Dict[str, object]:
-    """
-    Run many simulated trials. Returns distribution of final recommended dose and some diagnostics.
-    """
     rng = np.random.default_rng(seed)
-    finals = []
-    stuck_at_0 = 0
+    finals = np.zeros(len(crm_cfg.skeleton), dtype=int)
+    stuck_all_0 = 0
 
-    # To ensure independent trials, vary CRM seed each time
-    for i in range(n_trials):
-        cfg_i = CRMConfig(**{**crm_cfg.__dict__})
-        cfg_i.seed = int(rng.integers(1, 2_000_000_000))
-
-        out = run_one_trial(cfg_i, trial_cfg, true_tox)
-        finals.append(out["final_recommended_level"])
+    for _ in range(n_trials):
+        s = int(rng.integers(1, 2_000_000_000))
+        out = simulate_one_trial(crm_cfg, trial_cfg, true_tox, seed=s)
+        finals[out["final_level"]] += 1
         if all(lvl == 0 for lvl in out["trajectory_levels"]):
-            stuck_at_0 += 1
+            stuck_all_0 += 1
 
-    finals = np.array(finals, dtype=int)
-    counts = np.bincount(finals, minlength=len(crm_cfg.skeleton))
-
+    probs = (finals / max(1, n_trials)).tolist()
     return {
-        "n_trials": n_trials,
-        "final_counts": counts.tolist(),
-        "final_probs": (counts / n_trials).tolist(),
-        "stuck_all_cohorts_at_0": int(stuck_at_0),
+        "final_counts": finals.tolist(),
+        "final_probs": probs,
+        "stuck_all_cohorts_at_0": int(stuck_all_0),
     }
 
 
 # -----------------------------
-# Example usage
+# Streamlit UI
 # -----------------------------
 
 def main():
-    # Example skeleton (monotone increasing)
-    skeleton = [0.05, 0.08, 0.12, 0.18, 0.25, 0.33]
+    st.set_page_config(page_title="Classic CRM Simulator", layout="wide")
+    st.title("Classic CRM Simulator")
+    st.caption("No SciPy required. Power model with Gauss-Hermite posterior integration.")
 
-    # Example true toxicity curve for simulation
-    true_tox = [0.03, 0.07, 0.12, 0.20, 0.28, 0.40]
+    with st.sidebar:
+        st.header("Inputs")
+
+        skeleton_str = st.text_input(
+            "Skeleton (comma-separated, strictly between 0 and 1)",
+            value="0.05, 0.08, 0.12, 0.18, 0.25, 0.33",
+        )
+        true_tox_str = st.text_input(
+            "True toxicity curve for simulation (same length as skeleton)",
+            value="0.03, 0.07, 0.12, 0.20, 0.28, 0.40",
+        )
+
+        target = st.number_input("Target DLT rate", min_value=0.01, max_value=0.80, value=0.25, step=0.01)
+        prior_mu = st.number_input("Prior mu (alpha)", value=0.0, step=0.1)
+        prior_sigma = st.number_input("Prior sigma (alpha)", min_value=0.01, value=1.0, step=0.1)
+
+        st.subheader("Design")
+        cohort_size = st.number_input("Cohort size", min_value=1, max_value=30, value=3, step=1)
+        n_cohorts = st.number_input("Number of cohorts", min_value=1, max_value=50, value=10, step=1)
+        start_level = st.number_input("Start dose level (0-indexed)", min_value=0, value=0, step=1)
+        max_step = st.number_input("Max step per cohort", min_value=1, max_value=10, value=1, step=1)
+
+        st.subheader("Overdose control")
+        use_oc = st.checkbox("Use overdose control", value=True)
+        oc_cutoff = st.number_input("Overdose cutoff P(p > target) <", min_value=0.01, max_value=0.99, value=0.25, step=0.01)
+
+        st.subheader("Anti-stuck startup escape")
+        use_escape = st.checkbox("Startup escape rule (avoid stuck at level 0)", value=True)
+        startup_margin = st.number_input("Startup margin (target * margin)", min_value=0.50, max_value=1.20, value=0.90, step=0.01)
+        cohort_dlt_threshold = st.number_input("Escalate if last cohort DLTs ≤", min_value=0, max_value=10, value=1, step=1)
+
+        st.subheader("Posterior integration")
+        gh_n = st.selectbox("Gauss-Hermite points", options=[41, 61, 81, 101], index=1)
+
+        st.subheader("Simulation")
+        n_trials = st.number_input("Number of simulated trials", min_value=10, max_value=5000, value=300, step=10)
+        seed = st.number_input("Simulation seed", min_value=1, value=2026, step=1)
+
+        run_btn = st.button("Run simulation", type="primary")
+
+    if not run_btn:
+        st.info("Set inputs in the sidebar and click 'Run simulation'.")
+        return
+
+    try:
+        skeleton = parse_floats_csv(skeleton_str)
+        true_tox = parse_floats_csv(true_tox_str)
+    except Exception:
+        st.error("Could not parse skeleton/true toxicity. Use comma-separated numbers.")
+        return
+
+    if len(skeleton) < 2:
+        st.error("Skeleton must have at least 2 dose levels.")
+        return
+
+    if len(true_tox) != len(skeleton):
+        st.error("True toxicity curve must have the same length as the skeleton.")
+        return
+
+    if start_level < 0 or start_level >= len(skeleton):
+        st.error("Start level is out of range.")
+        return
 
     crm_cfg = CRMConfig(
         skeleton=skeleton,
-        target=0.25,
-        prior_mu=0.0,
-        prior_sigma=1.0,
-        max_step=1,
-        use_overdose_control=True,
-        overdose_cutoff=0.25,
-        gh_n=61,
-        startup_escalate_if_zero=True,
-        startup_margin=0.90,
-        use_tite=False,  # set True to use TITE approximation
-        tite_assessment_window=1.0,
-        tite_weight_power=1.0,
+        target=float(target),
+        prior_mu=float(prior_mu),
+        prior_sigma=float(prior_sigma),
+        max_step=int(max_step),
+        use_overdose_control=bool(use_oc),
+        overdose_cutoff=float(oc_cutoff),
+        gh_n=int(gh_n),
+        startup_escalate_if_zero=bool(use_escape),
+        startup_margin=float(startup_margin),
+        cohort_dlt_threshold=int(cohort_dlt_threshold),
     )
 
     trial_cfg = TrialConfig(
-        cohort_size=3,
-        n_cohorts=10,
-        start_level=0,
+        cohort_size=int(cohort_size),
+        n_cohorts=int(n_cohorts),
+        start_level=int(start_level),
     )
 
-    # Run one trial
-    one = run_one_trial(crm_cfg, trial_cfg, true_tox)
-    print("One trial final recommended level:", one["final_recommended_level"])
-    print("Trajectory (levels):", one["trajectory_levels"])
-    print("Trajectory (DLTs):  ", one["trajectory_dlts"])
-    print("Final posterior mean p:", np.round(np.array(one["final_post_mean_p"]), 3))
-    print("Final P(p > target):  ", np.round(np.array(one["final_post_prob_over_target"]), 3))
+    col1, col2 = st.columns([1, 1])
 
-    # Run many trials
-    sim = run_simulation(crm_cfg, trial_cfg, true_tox, n_trials=300, seed=2026)
-    print("\nSimulation results")
-    print("n_trials:", sim["n_trials"])
-    print("Final probs by dose level:", np.round(np.array(sim["final_probs"]), 3))
-    print("Stuck all cohorts at level 0:", sim["stuck_all_cohorts_at_0"])
+    with col1:
+        st.subheader("Single trial example")
+        one = simulate_one_trial(crm_cfg, trial_cfg, true_tox, seed=int(seed))
+        st.write("Final recommended level:", one["final_level"])
+        st.write("Trajectory levels:", one["trajectory_levels"])
+        st.write("Trajectory DLTs:", one["trajectory_dlts"])
+
+        st.write("Final posterior mean p per level:")
+        st.code([round(x, 4) for x in one["final_post_mean_p"]])
+
+        st.write("Final P(p > target) per level:")
+        st.code([round(x, 4) for x in one["final_post_prob_over_target"]])
+
+        st.write("Observed totals n per level:", one["n"])
+        st.write("Observed totals y per level:", one["y"])
+
+    with col2:
+        st.subheader("Many trials summary")
+        sim = simulate_many(crm_cfg, trial_cfg, true_tox, n_trials=int(n_trials), seed=int(seed))
+        st.write("Final recommendation probabilities per dose level:")
+        st.code([round(x, 4) for x in sim["final_probs"]])
+        st.write("Stuck all cohorts at level 0:", sim["stuck_all_cohorts_at_0"])
+
+        finals = np.array(sim["final_probs"], dtype=float)
+        st.bar_chart(finals)
+
+    st.success("Done.")
 
 
 if __name__ == "__main__":
