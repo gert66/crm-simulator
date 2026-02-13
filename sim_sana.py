@@ -1,44 +1,10 @@
 import numpy as np
 import streamlit as st
 import matplotlib.pyplot as plt
-from math import erf, sqrt, log
 
 # ============================================================
-# Small math helpers (no SciPy required)
+# Utilities
 # ============================================================
-
-def norm_cdf(x):
-    return 0.5 * (1.0 + erf(x / sqrt(2.0)))
-
-def norm_ppf(p):
-    # Acklam approximation (good enough for our use)
-    # Source: Peter J. Acklam (public domain style implementation)
-    p = float(np.clip(p, 1e-12, 1 - 1e-12))
-    a = [-3.969683028665376e+01,  2.209460984245205e+02,
-         -2.759285104469687e+02,  1.383577518672690e+02,
-         -3.066479806614716e+01,  2.506628277459239e+00]
-    b = [-5.447609879822406e+01,  1.615858368580409e+02,
-         -1.556989798598866e+02,  6.680131188771972e+01,
-         -1.328068155288572e+01]
-    c = [-7.784894002430293e-03, -3.223964580411365e-01,
-         -2.400758277161838e+00, -2.549732539343734e+00,
-          4.374664141464968e+00,  2.938163982698783e+00]
-    d = [ 7.784695709041462e-03,  3.224671290700398e-01,
-          2.445134137142996e+00,  3.754408661907416e+00]
-    plow = 0.02425
-    phigh = 1 - plow
-    if p < plow:
-        q = sqrt(-2*log(p))
-        return (((((c[0]*q+c[1])*q+c[2])*q+c[3])*q+c[4])*q+c[5]) / \
-               ((((d[0]*q+d[1])*q+d[2])*q+d[3])*q+1)
-    if p > phigh:
-        q = sqrt(-2*log(1-p))
-        return -(((((c[0]*q+c[1])*q+c[2])*q+c[3])*q+c[4])*q+c[5]) / \
-                 ((((d[0]*q+d[1])*q+d[2])*q+d[3])*q+1)
-    q = p - 0.5
-    r = q*q
-    return (((((a[0]*r+a[1])*r+a[2])*r+a[3])*r+a[4])*r+a[5])*q / \
-           (((((b[0]*r+b[1])*r+b[2])*r+b[3])*r+b[4])*r+1)
 
 def clamp_probs(p):
     p = np.asarray(p, dtype=float)
@@ -53,79 +19,116 @@ def compact_style(ax):
     ax.spines["right"].set_visible(False)
     ax.grid(axis="y", linewidth=0.5, alpha=0.25)
 
+def find_true_mtd(true_p, target):
+    true_p = np.asarray(true_p, dtype=float)
+    return int(np.argmin(np.abs(true_p - target)))
+
+def switch_rate(path):
+    if path is None or len(path) < 2:
+        return 0.0
+    p = np.asarray(path, dtype=int)
+    return float(np.mean(p[1:] != p[:-1]))
+
+def oscillation_index(path):
+    if path is None or len(path) < 3:
+        return 0.0
+    p = np.asarray(path, dtype=int)
+    a, b, c = p[:-2], p[1:-1], p[2:]
+    return float(np.mean((a == c) & (a != b)))
+
 # ============================================================
-# Gaussian copula for correlated Bernoulli (r=2 => rho=0 here)
+# 6+3 design
 # ============================================================
 
-def gaussian_copula_joint_probs(p1, p2, gamma):
-    # P11 = Phi2(z1,z2;gamma) approx via Monte Carlo (fast enough for small K)
-    # We do a low-noise approximation using 40k draws.
-    z1 = norm_ppf(p1)
-    z2 = norm_ppf(p2)
-    n = 40000
-    rng = np.random.default_rng(12345)
-    u = rng.standard_normal(n)
-    v = rng.standard_normal(n)
-    x = u
-    y = gamma*u + np.sqrt(max(1e-12, 1-gamma**2))*v
-    P11 = np.mean((x <= z1) & (y <= z2))
-    P10 = p1 - P11
-    P01 = p2 - P11
-    P00 = 1 - p1 - p2 + P11
-    probs = np.array([P00, P01, P10, P11], dtype=float)
-    probs = np.clip(probs, 0, 1)
-    probs = probs / probs.sum()
-    return probs  # order: 00,01,10,11
-
-def simulate_acute_subacute(n_patients, P_acute, P_subacute, rho=0.0, rng=None):
+def run_6plus3(true_p, start_level=0, max_n=36, accept_max_dlt=1, rng=None):
     if rng is None:
         rng = np.random.default_rng()
-    K = len(P_acute)
-    acute = np.zeros((n_patients, K), dtype=int)
-    sub = np.zeros((n_patients, K), dtype=int)
 
-    # r=2 in their script => rho_target = 0 (independence) per dose
-    gamma = 0.0 if abs(rho) < 1e-12 else float(np.clip(rho, -0.95, 0.95))
+    true_p = clamp_probs(true_p)
+    K = len(true_p)
 
-    for k in range(K):
-        p1 = float(P_acute[k])
-        p2 = float(P_subacute[k])
-        probs = gaussian_copula_joint_probs(p1, p2, gamma)
-        idx = rng.choice(4, size=n_patients, replace=True, p=probs)
-        # outcomes: 00,01,10,11 => (acute, subacute) = (0,0),(0,1),(1,0),(1,1)
-        acute[:, k] = (idx == 2) | (idx == 3)
-        sub[:, k] = (idx == 1) | (idx == 3)
+    level = int(start_level)
+    n_per = np.zeros(K, dtype=int)
+    dlt_per = np.zeros(K, dtype=int)
+    dose_path = []
+    total_n = 0
+    last_acceptable = None
 
-    return acute, sub
+    while total_n < max_n:
+        n_add = min(6, max_n - total_n)
+        out = rng.binomial(1, true_p[level], size=n_add)
+        n_per[level] += n_add
+        dlt_per[level] += int(out.sum())
+        dose_path.extend([level] * n_add)
+        total_n += n_add
+
+        if n_add < 6:
+            break
+
+        d6 = int(out.sum())
+
+        if d6 == 0:
+            last_acceptable = level
+            if level < K - 1:
+                level += 1
+                continue
+            break
+
+        if d6 == 1:
+            n_add2 = min(3, max_n - total_n)
+            out2 = rng.binomial(1, true_p[level], size=n_add2)
+            n_per[level] += n_add2
+            dlt_per[level] += int(out2.sum())
+            dose_path.extend([level] * n_add2)
+            total_n += n_add2
+
+            if n_add2 < 3:
+                break
+
+            d9 = d6 + int(out2.sum())
+            if d9 <= accept_max_dlt:
+                last_acceptable = level
+                if level < K - 1:
+                    level += 1
+                    continue
+                break
+            else:
+                if level > 0:
+                    level -= 1
+                break
+
+        if level > 0:
+            level -= 1
+        break
+
+    selected = 0 if last_acceptable is None else int(last_acceptable)
+    total_dlts = int(dlt_per.sum())
+    observed_dlts = total_dlts  # 6+3 assumes outcomes observed within decision window
+    exp_risk = float(np.sum(n_per * true_p) / max(1, np.sum(n_per)))
+
+    return selected, n_per, total_dlts, observed_dlts, exp_risk, dose_path
 
 # ============================================================
-# dfcrm getprior-like skeleton
-# We mimic the idea: nu is the "prior MTD" level, skeleton[nu] near target,
-# and adjacent doses separated by roughly halfwidth.
+# R-style skeleton (getprior-like)
 # ============================================================
 
-def getprior_like(target, nu, nlevel, halfwidth=0.1):
-    # nu is 1-based in R; convert to 0-based
-    nu0 = int(nu) - 1
+def getprior_like(target, nu_0based, nlevel, halfwidth=0.1):
     sk = np.zeros(nlevel, dtype=float)
-    sk[nu0] = target
+    nu = int(np.clip(nu_0based, 0, nlevel - 1))
+    sk[nu] = float(target)
 
-    # move down: target - halfwidth steps, clip > 0
-    for k in range(nu0 - 1, -1, -1):
-        sk[k] = max(1e-6, sk[k+1] - halfwidth)
+    for k in range(nu - 1, -1, -1):
+        sk[k] = max(1e-6, sk[k + 1] - halfwidth)
 
-    # move up: target + halfwidth steps, clip < 1
-    for k in range(nu0 + 1, nlevel):
-        sk[k] = min(1 - 1e-6, sk[k-1] + halfwidth)
+    for k in range(nu + 1, nlevel):
+        sk[k] = min(1 - 1e-6, sk[k - 1] + halfwidth)
 
-    # enforce monotone and clamp
     sk = np.maximum.accumulate(sk)
     return clamp_probs(sk)
 
 # ============================================================
-# TITE-CRM core (power model) with weighted likelihood
+# CRM core (power model) with Normal prior
 # p_k(theta) = skeleton_k ^ exp(theta)
-# theta ~ Normal(0, sigma^2)
 # ============================================================
 
 def crm_probs(theta_grid, skeleton):
@@ -134,301 +137,572 @@ def crm_probs(theta_grid, skeleton):
     return sk[None, :] ** a
 
 def prior_logpdf(theta_grid, sigma):
-    return -0.5 * (theta_grid / sigma) ** 2 - np.log(sigma * np.sqrt(2*np.pi))
+    return -0.5 * (theta_grid / sigma) ** 2 - np.log(sigma * np.sqrt(2 * np.pi))
 
 def posterior_weights(theta_grid, sigma, skeleton, n_eff, y):
-    P = crm_probs(theta_grid, skeleton)  # (G,K)
+    P = crm_probs(theta_grid, skeleton)
     n_eff = np.asarray(n_eff, dtype=float)
     y = np.asarray(y, dtype=float)
+
     ll = (y[None, :] * np.log(P) + (n_eff[None, :] - y[None, :]) * np.log(1 - P)).sum(axis=1)
     lp = prior_logpdf(theta_grid, sigma)
     log_post = lp + ll
     w = np.exp(log_post - logsumexp(log_post))
     return w, P
 
-def titecrm_mtd(theta_grid, sigma, skeleton, n_eff, y, target):
+def crm_choose_mtd(theta_grid, sigma, skeleton, n_eff, y, target):
     w, P = posterior_weights(theta_grid, sigma, skeleton, n_eff, y)
     post_mean = (w[:, None] * P).sum(axis=0)
     mtd = int(np.argmin(np.abs(post_mean - target)))
     return mtd, post_mean
 
 # ============================================================
-# Time-to-event simulation (simplified but consistent)
-# We keep the spirit: event times lognormal; partial follow-up weights.
+# Classic CRM trial (no time-to-event)
+# - Cohorts of size CO
+# - tox observed immediately
+# - no skipping: max +1 up
 # ============================================================
 
-def lognormal_time(meanlog, sdlog, rng):
-    return float(rng.lognormal(mean=meanlog, sigma=sdlog))
-
-def run_trial(
-    P_acute, P_subacute,
-    N_patient=27,
-    CO=3,
-    Wait_Time=1.0,
-    operation_time=6.0,
+def run_classic_crm_trial(
+    true_p,
+    target,
+    skeleton,
     sigma=1.158,
-    halfwidth=0.1,
-    prior_target_acute=0.15,
-    prior_nu_acute=3,
-    target_acute=None,
-    start_dose=2,
-    rho=0.0,
-    mu_tox=2.0,
-    sd_tox=0.9,
-    seed=None
+    start_level=0,
+    max_n=27,
+    cohort_size=3,
+    theta_min=-4.0,
+    theta_max=4.0,
+    theta_grid_n=401,
+    rng=None
 ):
-    rng = np.random.default_rng(seed)
+    if rng is None:
+        rng = np.random.default_rng()
 
-    K = len(P_acute)
-    P_acute = clamp_probs(P_acute)
-    P_subacute = clamp_probs(P_subacute)
+    true_p = clamp_probs(true_p)
+    K = len(true_p)
+    level = int(start_level)
 
-    # Simulate correlated acute/subacute binary DLT indicators per dose for all patients
-    acute_mat, sub_mat = simulate_acute_subacute(N_patient, P_acute, P_subacute, rho=rho, rng=rng)
+    assigned = np.full(max_n, -1, dtype=int)
+    tox = np.zeros(max_n, dtype=int)
 
-    # Build prior skeleton like getprior
-    prior_skeleton = getprior_like(prior_target_acute, prior_nu_acute, K, halfwidth=halfwidth)
+    theta_grid = np.linspace(theta_min, theta_max, int(theta_grid_n))
+    n_enrolled = 0
 
-    # Choose analysis target (their script uses scenario at True.MTD + 0.03)
-    if target_acute is None:
-        target_acute = 0.25
+    while n_enrolled < max_n:
+        n_add = min(int(cohort_size), max_n - n_enrolled)
 
-    # Patient ledger for CRM input (like tox, level, followup, obswin)
-    # We mimic their idea:
-    # - obswin is a patient-specific max time (surgery-ish), at least operation_time
-    # - followup advances in Wait_Time increments
-    # - DLT is observed if event_time < followup
-    level = np.zeros(N_patient, dtype=int)
-    tox_obs = np.zeros(N_patient, dtype=int)
-    followup = np.zeros(N_patient, dtype=float)
-    obswin = np.zeros(N_patient, dtype=float)
+        for i in range(n_enrolled, n_enrolled + n_add):
+            assigned[i] = level
+            tox[i] = int(rng.binomial(1, true_p[level]))
 
-    # Simulate acute event times for severe events (if acute=1) as lognormal(log(2), 0.5)
-    # If acute=0 => event time = very large
-    acute_time = np.full((N_patient, K), 1e9, dtype=float)
-    for i in range(N_patient):
-        for k in range(K):
-            if acute_mat[i, k] == 1:
-                acute_time[i, k] = min(lognormal_time(meanlog=np.log(2.0), sdlog=0.5, rng=rng), 1e6)
+        n_enrolled += n_add
 
-    # Simple obswin: if acute DLT occurs before operation, obswin stretches a bit; else = operation_time
-    # This is a simplification of their Surgery_Time logic but preserves: some patients have longer windows.
-    def patient_obswin(i, k):
-        t = acute_time[i, k]
-        if t < operation_time:
-            return max(operation_time, t + lognormal_time(meanlog=np.log(6.25), sdlog=0.5, rng=rng))
-        return operation_time
-
-    # Burning phase (their code starts at p=2 and runs j=1..6 before CRM triggered)
-    p = int(start_dose)  # 1-based like R uses 2; we store 1..K
-    j = 0
-    CRM_run = False
-
-    while not CRM_run and j < N_patient:
-        level[j] = p
-        ow = patient_obswin(j, p-1)
-        obswin[j] = ow
-
-        # follow-up at first decision: treat as ow (they set Wait to Surgery_Time early)
-        followup[j] = ow
-
-        # composite_DLT triggers only if j>=5 (since j was 1.. in R; their condition j>=6)
-        composite = (acute_mat[j, p-1] == 1) and (j >= 5)
-        tox_obs[j] = 1 if composite else 0
-
-        if composite:
-            CRM_run = True
-        j += 1
-        if j >= 6:
-            break
-
-    # Main TITE-CRM allocation in cohorts of CO
-    theta_grid = np.linspace(-4.0, 4.0, 401)
-
-    current_index = j
-    current_dose = p
-
-    while current_index < N_patient:
-        # Build weighted counts from data observed so far (0..current_index-1)
         n_eff = np.zeros(K, dtype=float)
         y = np.zeros(K, dtype=float)
-        for i in range(current_index):
-            k = level[i] - 1
-            fu = min(followup[i], obswin[i])
-            w = fu / max(obswin[i], 1e-9)
-            if tox_obs[i] == 1:
+        for i in range(n_enrolled):
+            k = assigned[i]
+            n_eff[k] += 1.0
+            y[k] += tox[i]
+
+        mtd, _ = crm_choose_mtd(theta_grid, sigma, skeleton, n_eff, y, target)
+
+        if mtd > level:
+            level = min(level + 1, K - 1)
+        else:
+            level = mtd
+
+    n_eff = np.zeros(K, dtype=float)
+    y = np.zeros(K, dtype=float)
+    for i in range(n_enrolled):
+        k = assigned[i]
+        n_eff[k] += 1.0
+        y[k] += tox[i]
+
+    selected, _ = crm_choose_mtd(theta_grid, sigma, skeleton, n_eff, y, target)
+
+    n_per_level = np.bincount(assigned, minlength=K)
+    total_dlts = int(tox.sum())
+    observed_dlts = total_dlts
+    exp_risk = float(np.sum(n_per_level * true_p) / max(1, np.sum(n_per_level)))
+    dose_path = assigned.tolist()
+
+    return selected, n_per_level, total_dlts, observed_dlts, exp_risk, dose_path
+
+# ============================================================
+# TITE-CRM trial (time-to-event)
+# - DLT time lognormal if latent DLT occurs
+# - follow-up accrues by Wait.Time
+# - weight = followup/obswin for non-events
+# - no skipping: max +1 up
+# ============================================================
+
+def sample_event_time(obswin, rng, meanlog=np.log(2.0), sdlog=0.5):
+    t = rng.lognormal(mean=meanlog, sigma=sdlog)
+    return float(min(t, obswin))
+
+def run_titecrm_trial(
+    true_p,
+    target,
+    skeleton,
+    sigma=1.158,
+    start_level=0,
+    max_n=27,
+    cohort_size=3,
+    wait_time=1.0,
+    obswin=16.0,
+    meanlog_event=np.log(2.0),
+    sdlog_event=0.5,
+    theta_min=-4.0,
+    theta_max=4.0,
+    theta_grid_n=401,
+    rng=None
+):
+    if rng is None:
+        rng = np.random.default_rng()
+
+    true_p = clamp_probs(true_p)
+    K = len(true_p)
+    level = int(start_level)
+
+    assigned = np.full(max_n, -1, dtype=int)
+    latent_dlt = np.zeros(max_n, dtype=int)
+    event_time = np.full(max_n, 1e9, dtype=float)
+    followup = np.zeros(max_n, dtype=float)
+
+    theta_grid = np.linspace(theta_min, theta_max, int(theta_grid_n))
+    n_enrolled = 0
+
+    while n_enrolled < max_n:
+        n_add = min(int(cohort_size), max_n - n_enrolled)
+
+        for i in range(n_enrolled, n_enrolled + n_add):
+            assigned[i] = level
+            latent_dlt[i] = int(rng.binomial(1, true_p[level]))
+            if latent_dlt[i] == 1:
+                event_time[i] = sample_event_time(obswin, rng, meanlog=meanlog_event, sdlog=sdlog_event)
+            else:
+                event_time[i] = 1e9
+            followup[i] = min(wait_time, obswin)
+
+        for i in range(0, n_enrolled + n_add):
+            followup[i] = min(obswin, followup[i] + wait_time)
+
+        n_enrolled += n_add
+
+        n_eff = np.zeros(K, dtype=float)
+        y = np.zeros(K, dtype=float)
+
+        for i in range(n_enrolled):
+            k = assigned[i]
+            fu = min(followup[i], obswin)
+            w = fu / obswin
+            if latent_dlt[i] == 1 and event_time[i] <= fu:
                 n_eff[k] += 1.0
                 y[k] += 1.0
             else:
                 n_eff[k] += w
 
-        mtd0, _ = titecrm_mtd(theta_grid, sigma, prior_skeleton, n_eff, y, target_acute)
-        mtd = mtd0 + 1  # back to 1-based
+        mtd, _ = crm_choose_mtd(theta_grid, sigma, skeleton, n_eff, y, target)
 
-        # step restriction like their code: if last dose < mtd => +1
-        last_dose = level[current_index-1] if current_index > 0 else current_dose
-        if last_dose < mtd:
-            next_dose = last_dose + 1
+        if mtd > level:
+            level = min(level + 1, K - 1)
         else:
-            next_dose = mtd
-        next_dose = int(np.clip(next_dose, 1, K))
+            level = mtd
 
-        # Assign next cohort
-        n_add = min(CO, N_patient - current_index)
-        for t in range(n_add):
-            i = current_index + t
-            level[i] = next_dose
-
-            ow = patient_obswin(i, next_dose-1)
-            obswin[i] = ow
-
-            # follow-up starts at Wait_Time and accrues (simplified)
-            followup[i] = min(Wait_Time, ow)
-
-            # observed tox if event occurs within follow-up
-            tox_obs[i] = 1 if (acute_mat[i, next_dose-1] == 1 and acute_time[i, next_dose-1] < followup[i]) else 0
-
-        # Advance "time": everyone gets additional follow-up Wait_Time (like they keep updating)
-        for i in range(current_index + n_add):
-            followup[i] = min(obswin[i], followup[i] + Wait_Time)
-
-        current_index += n_add
-
-    # Final MTD call on full data
     n_eff = np.zeros(K, dtype=float)
     y = np.zeros(K, dtype=float)
-    for i in range(N_patient):
-        k = level[i] - 1
-        fu = min(followup[i], obswin[i])
-        w = fu / max(obswin[i], 1e-9)
-        if tox_obs[i] == 1:
+    for i in range(n_enrolled):
+        k = assigned[i]
+        fu = min(followup[i], obswin)
+        w = fu / obswin
+        if latent_dlt[i] == 1 and event_time[i] <= fu:
             n_eff[k] += 1.0
             y[k] += 1.0
         else:
             n_eff[k] += w
 
-    mtd0, _ = titecrm_mtd(theta_grid, sigma, prior_skeleton, n_eff, y, target_acute)
-    final_mtd = mtd0 + 1
+    selected, _ = crm_choose_mtd(theta_grid, sigma, skeleton, n_eff, y, target)
 
-    # outputs similar to their Result:
-    # - selection is final_mtd
-    # - percentage treated at each dose
-    alloc = np.bincount(level, minlength=K+1)[1:] / float(N_patient)
+    n_per_level = np.bincount(assigned, minlength=K)
+    total_dlts = int(latent_dlt.sum())
+    observed_dlts = int(np.sum((latent_dlt == 1) & (event_time <= followup)))
+    exp_risk = float(np.sum(n_per_level * true_p) / max(1, np.sum(n_per_level)))
+    dose_path = assigned.tolist()
 
-    return final_mtd, alloc, prior_skeleton
+    return selected, n_per_level, total_dlts, observed_dlts, exp_risk, dose_path
 
 # ============================================================
-# Streamlit UI
+# App UI
 # ============================================================
 
-st.set_page_config(page_title="TITE-CRM (R-script style)", layout="wide")
-st.title("TITE-CRM simulator (aligned with your Julius/dfcrm script)")
+st.set_page_config(page_title="6+3 vs CRM (Classic/TITE)", layout="wide")
+st.title("6+3 vs CRM (Classic or TITE)")
 
-dose_labels = ["Dose 1", "Dose 2", "Dose 3", "Dose 4", "Dose 5"]
+dose_labels = ["5×4 Gy", "5×5 Gy", "5×6 Gy", "5×7 Gy", "5×8 Gy"]
 
-left, right = st.columns([1.0, 1.0])
+scenario_library = {
+    "R snippet acute example": [0.01, 0.02, 0.12, 0.20, 0.35],
+    "MTD around level 2 for target ~0.25": [0.05, 0.10, 0.20, 0.35, 0.55],
+    "Safer overall": [0.03, 0.06, 0.12, 0.20, 0.30],
+    "More toxic overall": [0.08, 0.16, 0.28, 0.42, 0.60],
+}
 
-with left:
-    st.subheader("Trial setup")
-    N_patient = st.number_input("N.patient", 6, 200, 27, 1)
-    CO = st.number_input("CO (cohort size)", 1, 12, 3, 1)
-    Wait_Time = st.number_input("Wait.Time (weeks)", 0.1, 8.0, 1.0, 0.1)
-    start_dose = st.number_input("Start dose (1..5)", 1, 5, 2, 1)
-    n_sims = st.number_input("NREP (simulated trials)", 200, 20000, 1000, 100)
-    seed = st.number_input("Seed", 1, 10_000_000, 123, 1)
+topL, topR = st.columns([1.05, 1.0])
 
-with right:
-    st.subheader("True scenario")
-    P_acute = []
-    P_sub = []
-    cols = st.columns(5)
-    default_acute = [0.01, 0.02, 0.12, 0.20, 0.35]
-    default_sub = [0.15, 0.22, 0.28, 0.35, 0.40]
-    for i in range(5):
-        with cols[i]:
-            P_acute.append(st.number_input(f"Acute P @ L{i+1}", 0.0, 1.0, float(default_acute[i]), 0.01, key=f"a{i}"))
-            P_sub.append(st.number_input(f"Sub P @ L{i+1}", 0.0, 1.0, float(default_sub[i]), 0.01, key=f"s{i}"))
+with topL:
+    st.subheader("Global setup")
+    start_level = st.selectbox(
+        "Start dose level",
+        options=list(range(0, 5)),
+        index=0,
+        format_func=lambda i: f"Level {i} ({dose_labels[i]})",
+        help="Level 0 = 5×4, Level 1 = 5×5, ..."
+    )
+    crm_mode = st.radio(
+        "CRM mode",
+        options=["Classic CRM", "TITE-CRM"],
+        index=1,
+        help="Classic: immediate binary outcomes. TITE: partial follow-up contributes fractional weight."
+    )
+    n_sims = st.number_input("Number of simulated trials", 200, 20000, 2000, 200)
+    seed = st.number_input("Random seed", 1, 10_000_000, 12345, 1)
+
+with topR:
+    st.subheader("True acute scenario")
+    scenario_name = st.selectbox("Scenario library", options=list(scenario_library.keys()), index=0)
+    scenario_vals = scenario_library[scenario_name]
+    manual_true = st.toggle("Manually edit true DLT probabilities", value=True)
+
+    true_p = []
+    for i, lab in enumerate(dose_labels):
+        v0 = float(scenario_vals[i])
+        if manual_true:
+            v = st.number_input(
+                f"True P(DLT) at {lab}",
+                0.0, 1.0, v0, 0.01, key=f"true_{i}"
+            )
+        else:
+            st.write(f"{lab}: {v0:.2f}")
+            v = v0
+        true_p.append(v)
+
+st.divider()
+
+tL, tR = st.columns([1.0, 1.0])
+
+with tL:
+    st.subheader("Target")
+    use_r_target_rule = st.toggle(
+        "Use R-style rule: target = P(true MTD level) + 0.03",
+        value=True,
+        help="Matches your R snippet pattern: target based on the true curve at a selected MTD-like level."
+    )
+    if use_r_target_rule:
+        rule_level = st.selectbox(
+            "Level used in the rule",
+            options=list(range(0, 5)),
+            index=2,
+            format_func=lambda i: f"Level {i} ({dose_labels[i]})"
+        )
+        target = float(true_p[rule_level] + 0.03)
+        st.write(f"Target = {target:.3f}")
+    else:
+        target = st.number_input("Target DLT probability", 0.05, 0.50, 0.25, 0.01)
+
+true_mtd = find_true_mtd(true_p, target)
+
+with tR:
+    st.subheader("Derived truth")
+    st.write(f"True MTD (closest to target {target:.2f}) = Level {true_mtd} ({dose_labels[true_mtd]})")
 
 st.divider()
 
 c1, c2 = st.columns([1.0, 1.0])
 
 with c1:
-    st.subheader("Prior / dfcrm-like defaults")
-    sigma = st.number_input("Prior sigma on theta", 0.2, 5.0, 1.158, 0.01,
-                            help="dfcrm default scale is often ~sqrt(1.34)=1.158.")
-    halfwidth = st.number_input("halfwidth", 0.01, 0.30, 0.10, 0.01)
-    prior_target_acute = st.number_input("prior.target.acute", 0.01, 0.99, 0.15, 0.01)
-    prior_nu_acute = st.number_input("prior.MTD.acute (nu)", 1, 5, 3, 1)
+    st.subheader("6+3 settings")
+    max_n_6 = st.number_input("Max sample size (6+3)", 12, 120, 36, 3)
+    accept_rule = st.selectbox(
+        "Acceptance rule after expansion to 9",
+        options=[1, 2],
+        index=0,
+        help="If 1/6 DLT, treat 3 more. Escalate if DLTs among 9 ≤ this number."
+    )
 
 with c2:
-    st.subheader("Analysis target")
-    use_rule_target = st.toggle("Use R-rule: target = P(true MTD) + 0.03", value=True)
-    true_mtd_level = st.number_input("True.MTD.acute (for the rule)", 1, 5, 3, 1)
-    if use_rule_target:
-        target_acute = float(P_acute[true_mtd_level-1] + 0.03)
-        st.write(f"target.acute = {target_acute:.3f}")
+    st.subheader("CRM settings (R-aligned defaults)")
+    max_n_crm = st.number_input("Max sample size (CRM)", 12, 120, 27, 3)
+    cohort_size = st.number_input(
+        "Cohort size (CO)",
+        1, 12, 3, 1,
+        help="Default 3 is taken from your R snippet (CO=3)."
+    )
+    sigma = st.number_input(
+        "Prior sigma on theta",
+        0.2, 5.0, 1.158, 0.01,
+        help="dfcrm-style default when scale/sigma is not specified explicitly."
+    )
+    halfwidth = st.number_input(
+        "getprior halfwidth",
+        0.01, 0.30, 0.10, 0.01,
+        help="Your R snippet uses halfwidth=0.1."
+    )
+    auto_prior = st.toggle(
+        "Auto prior from true scenario",
+        value=True,
+        help="If on: prior nu = true MTD level, prior target = analysis target."
+    )
+    if auto_prior:
+        prior_nu = int(true_mtd)
+        prior_target = float(target)
+        st.write(f"Prior nu = Level {prior_nu} | Prior target = {prior_target:.3f}")
     else:
-        target_acute = st.number_input("target.acute", 0.01, 0.99, 0.25, 0.01)
+        prior_nu = st.selectbox(
+            "Prior nu (dose you believe is near MTD)",
+            options=list(range(0, 5)),
+            index=true_mtd,
+            format_func=lambda i: f"Level {i} ({dose_labels[i]})"
+        )
+        prior_target = st.number_input("Prior target (for getprior)", 0.05, 0.50, float(target), 0.01)
+
+    skeleton = getprior_like(target=prior_target, nu_0based=prior_nu, nlevel=5, halfwidth=float(halfwidth))
+    sk_cols = st.columns(5)
+    for i in range(5):
+        sk_cols[i].metric(f"Skeleton L{i}", f"{skeleton[i]:.2f}")
+
+# TITE-only controls
+if crm_mode == "TITE-CRM":
+    st.divider()
+    st.subheader("TITE parameters")
+    p1, p2, p3 = st.columns([1.0, 1.0, 1.1])
+    with p1:
+        obswin = st.number_input(
+            "DLT window (weeks)",
+            4.0, 52.0, 16.0, 1.0,
+            help="Used in TITE weighting as obswin."
+        )
+    with p2:
+        wait_time = st.number_input(
+            "Wait.Time (weeks)",
+            0.1, 8.0, 1.0, 0.1,
+            help="Follow-up accrual increment between CRM updates."
+        )
+    with p3:
+        advanced_tite = st.toggle(
+            "Advanced time-to-event settings",
+            value=False,
+            help="Expose the event-time distribution parameters."
+        )
+
+    if advanced_tite:
+        a1, a2 = st.columns(2)
+        with a1:
+            meanlog_event = st.number_input(
+                "Event time meanlog",
+                -1.0, 4.0, float(np.log(2.0)), 0.05,
+                help="DLT event time ~ LogNormal(meanlog, sdlog). R severe uses meanlog=log(2)."
+            )
+        with a2:
+            sdlog_event = st.number_input(
+                "Event time sdlog",
+                0.05, 2.0, 0.50, 0.05,
+                help="R severe uses sdlog ~ 0.5 for acute severe time."
+            )
+    else:
+        meanlog_event = float(np.log(2.0))
+        sdlog_event = 0.50
+else:
+    # placeholders
+    obswin = 16.0
+    wait_time = 1.0
+    meanlog_event = float(np.log(2.0))
+    sdlog_event = 0.50
 
 run = st.button("Run simulations")
 
 if run:
     rng = np.random.default_rng(int(seed))
-    K = 5
-    sel = np.zeros(K, dtype=int)
-    alloc_mat = np.zeros((int(n_sims), K), dtype=float)
+    ns = int(n_sims)
+    true_p_arr = clamp_probs(true_p)
 
-    # show skeleton once
-    prior_skeleton = getprior_like(target=prior_target_acute, nu=prior_nu_acute, nlevel=K, halfwidth=halfwidth)
+    # Storage
+    sel_6 = np.zeros(5, dtype=int)
+    sel_c = np.zeros(5, dtype=int)
 
-    for r in range(int(n_sims)):
-        mtd, alloc, _ = run_trial(
-            P_acute=P_acute, P_subacute=P_sub,
-            N_patient=int(N_patient),
-            CO=int(CO),
-            Wait_Time=float(Wait_Time),
-            sigma=float(sigma),
-            halfwidth=float(halfwidth),
-            prior_target_acute=float(prior_target_acute),
-            prior_nu_acute=int(prior_nu_acute),
-            target_acute=float(target_acute),
-            start_dose=int(start_dose),
-            rho=0.0,
-            seed=int(rng.integers(1, 2_000_000_000))
+    nmat_6 = np.zeros((ns, 5), dtype=int)
+    nmat_c = np.zeros((ns, 5), dtype=int)
+
+    dlts_6 = np.zeros(ns, dtype=int)
+    dlts_c = np.zeros(ns, dtype=int)
+
+    obs_dlts_6 = np.zeros(ns, dtype=int)
+    obs_dlts_c = np.zeros(ns, dtype=int)
+
+    exp_risk_6 = np.zeros(ns, dtype=float)
+    exp_risk_c = np.zeros(ns, dtype=float)
+
+    sw_6 = np.zeros(ns, dtype=float)
+    sw_c = np.zeros(ns, dtype=float)
+    osc_6 = np.zeros(ns, dtype=float)
+    osc_c = np.zeros(ns, dtype=float)
+
+    for s in range(ns):
+        chosen6, n6, d6, od6, er6, path6 = run_6plus3(
+            true_p=true_p_arr,
+            start_level=int(start_level),
+            max_n=int(max_n_6),
+            accept_max_dlt=int(accept_rule),
+            rng=rng
         )
-        sel[mtd-1] += 1
-        alloc_mat[r, :] = alloc
 
-    p_sel = sel / float(n_sims)
-    avg_alloc = alloc_mat.mean(axis=0)
+        if crm_mode == "TITE-CRM":
+            chosenc, nc, dc, odc, erc, pathc = run_titecrm_trial(
+                true_p=true_p_arr,
+                target=float(target),
+                skeleton=skeleton,
+                sigma=float(sigma),
+                start_level=int(start_level),
+                max_n=int(max_n_crm),
+                cohort_size=int(cohort_size),
+                wait_time=float(wait_time),
+                obswin=float(obswin),
+                meanlog_event=float(meanlog_event),
+                sdlog_event=float(sdlog_event),
+                rng=rng
+            )
+        else:
+            chosenc, nc, dc, odc, erc, pathc = run_classic_crm_trial(
+                true_p=true_p_arr,
+                target=float(target),
+                skeleton=skeleton,
+                sigma=float(sigma),
+                start_level=int(start_level),
+                max_n=int(max_n_crm),
+                cohort_size=int(cohort_size),
+                rng=rng
+            )
 
-    st.subheader("Prior skeleton (getprior-like)")
-    sk_cols = st.columns(5)
-    for i in range(5):
-        sk_cols[i].metric(f"L{i+1}", f"{prior_skeleton[i]:.2f}")
+        sel_6[chosen6] += 1
+        sel_c[chosenc] += 1
+
+        nmat_6[s, :] = n6
+        nmat_c[s, :] = nc
+
+        dlts_6[s] = d6
+        dlts_c[s] = dc
+
+        obs_dlts_6[s] = od6
+        obs_dlts_c[s] = odc
+
+        exp_risk_6[s] = er6
+        exp_risk_c[s] = erc
+
+        sw_6[s] = switch_rate(path6)
+        sw_c[s] = switch_rate(pathc)
+        osc_6[s] = oscillation_index(path6)
+        osc_c[s] = oscillation_index(pathc)
+
+    # Summaries
+    p_sel_6 = sel_6 / float(ns)
+    p_sel_c = sel_c / float(ns)
+
+    avg_n6 = np.mean(nmat_6, axis=0)
+    avg_nc = np.mean(nmat_c, axis=0)
+
+    mean_n6 = float(np.mean(nmat_6.sum(axis=1)))
+    mean_nc = float(np.mean(nmat_c.sum(axis=1)))
+
+    mean_latent_rate6 = float(np.mean(dlts_6 / np.maximum(nmat_6.sum(axis=1), 1)))
+    mean_latent_ratec = float(np.mean(dlts_c / np.maximum(nmat_c.sum(axis=1), 1)))
+
+    mean_observed_rate6 = float(np.mean(obs_dlts_6 / np.maximum(nmat_6.sum(axis=1), 1)))
+    mean_observed_ratec = float(np.mean(obs_dlts_c / np.maximum(nmat_c.sum(axis=1), 1)))
+
+    mean_exp6 = float(np.mean(exp_risk_6))
+    mean_expc = float(np.mean(exp_risk_c))
+
+    # ========================================================
+    # Report header metrics
+    # ========================================================
+
+    st.subheader("Quality metrics (averages over simulated trials)")
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Mean expected DLT risk", f"{mean_expc:.3f}", help="Average per-patient DLT probability implied by allocations.")
+    m2.metric("Mean observed DLT rate", f"{mean_observed_ratec:.3f}", help="Observed DLTs / N at end of each simulated trial.")
+    m3.metric("Switch rate", f"{float(np.mean(sw_c)):.3f}", help="Fraction of adjacent patients assigned to different dose levels.")
+    m4.metric("Oscillation index", f"{float(np.mean(osc_c)):.3f}", help="Fraction of A→B→A triples among patient dose assignments.")
+
+    # ========================================================
+    # Plots
+    # ========================================================
 
     st.subheader("Results")
-    cA, cB = st.columns(2)
 
-    with cA:
+    x = np.arange(5)
+    width = 0.38
+
+    r1, r2 = st.columns(2)
+
+    with r1:
         fig, ax = plt.subplots(figsize=(5.6, 2.8), dpi=140)
-        x = np.arange(1, 6)
-        ax.bar(x, p_sel)
+        ax.bar(x - width / 2, p_sel_6, width, label="6+3")
+        ax.bar(x + width / 2, p_sel_c, width, label=crm_mode)
         ax.set_title("Probability of selecting each dose as MTD", fontsize=10)
         ax.set_xticks(x)
-        ax.set_xticklabels([f"L{i}" for i in x], fontsize=9)
+        ax.set_xticklabels([f"L{i}\n{dose_labels[i]}" for i in range(5)], fontsize=8)
         ax.set_ylabel("Probability", fontsize=9)
         compact_style(ax)
+        ax.axvline(true_mtd, linewidth=1, alpha=0.6)
+        ax.text(true_mtd + 0.05, ax.get_ylim()[1] * 0.92 if ax.get_ylim()[1] > 0 else 0.9, "True MTD", fontsize=8)
+        ax.legend(fontsize=8, frameon=False, loc="upper right")
         st.pyplot(fig, clear_figure=True)
 
-    with cB:
+    with r2:
         fig, ax = plt.subplots(figsize=(5.6, 2.8), dpi=140)
-        x = np.arange(1, 6)
-        ax.bar(x, avg_alloc)
-        ax.set_title("Mean proportion treated at each dose", fontsize=10)
+        ax.bar(x - width / 2, avg_n6, width, label="6+3")
+        ax.bar(x + width / 2, avg_nc, width, label=crm_mode)
+        ax.set_title("Average number treated per dose level", fontsize=10)
         ax.set_xticks(x)
-        ax.set_xticklabels([f"L{i}" for i in x], fontsize=9)
-        ax.set_ylabel("Proportion", fontsize=9)
+        ax.set_xticklabels([f"L{i}\n{dose_labels[i]}" for i in range(5)], fontsize=8)
+        ax.set_ylabel("Patients", fontsize=9)
         compact_style(ax)
+        ax.legend(fontsize=8, frameon=False, loc="upper right")
         st.pyplot(fig, clear_figure=True)
+
+    r3, r4 = st.columns(2)
+
+    with r3:
+        fig, ax = plt.subplots(figsize=(5.6, 2.6), dpi=140)
+        labels = ["6+3", crm_mode]
+        obs = [mean_observed_rate6, mean_observed_ratec]
+        exp = [mean_exp6, mean_expc]
+        xi = np.arange(2)
+        w = 0.38
+        ax.bar(xi - w / 2, obs, w, label="Observed DLT rate")
+        ax.bar(xi + w / 2, exp, w, label="Expected DLT risk")
+        ax.set_title("Average DLT burden per patient", fontsize=10)
+        ax.set_xticks(xi)
+        ax.set_xticklabels(labels, fontsize=9)
+        ax.set_ylabel("Rate", fontsize=9)
+        compact_style(ax)
+        ax.legend(fontsize=8, frameon=False, loc="upper right")
+        st.pyplot(fig, clear_figure=True)
+
+    with r4:
+        st.markdown("**Summary**")
+        st.write(f"Mean sample size: 6+3 = {mean_n6:.1f} | {crm_mode} = {mean_nc:.1f}")
+        st.write(f"Mean total DLTs (latent): 6+3 = {float(np.mean(dlts_6)):.2f} | {crm_mode} = {float(np.mean(dlts_c)):.2f}")
+        st.write(f"Mean latent DLT rate: 6+3 = {mean_latent_rate6:.3f} | {crm_mode} = {mean_latent_ratec:.3f}")
+        st.write(f"Mean observed DLT rate: 6+3 = {mean_observed_rate6:.3f} | {crm_mode} = {mean_observed_ratec:.3f}")
+        st.write(f"Mean expected DLT risk: 6+3 = {mean_exp6:.3f} | {crm_mode} = {mean_expc:.3f}")
+
+    # Optional: ping-pong distribution histogram (oscillation index)
+    st.subheader("Ping-pong distribution (oscillation index)")
+    fig, ax = plt.subplots(figsize=(5.6, 2.4), dpi=140)
+    ax.hist(osc_c, bins=np.linspace(0, 1, 21), alpha=0.9)
+    ax.set_xlabel("Oscillation index", fontsize=9)
+    ax.set_ylabel("Count", fontsize=9)
+    compact_style(ax)
+    st.pyplot(fig, clear_figure=True)
