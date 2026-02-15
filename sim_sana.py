@@ -74,166 +74,55 @@ def dfcrm_getprior(halfwidth, target, nu, nlevel, model="empiric", intcpt=3.0):
     raise ValueError('model must be "empiric" or "logistic".')
 
 # ============================================================
-# CRM (acute-only): Gauss–Hermite quadrature
+# Ping-pong / oscillation metrics
 # ============================================================
 
-def posterior_via_gh(sigma, skeleton, n_per_level, dlt_per_level, gh_n=61):
+def switch_rate(path):
+    if path is None or len(path) < 2:
+        return 0.0
+    path = np.asarray(path, dtype=int)
+    return float(np.mean(path[1:] != path[:-1]))
+
+def mean_step_size(path):
+    if path is None or len(path) < 2:
+        return 0.0
+    path = np.asarray(path, dtype=int)
+    return float(np.mean(np.abs(path[1:] - path[:-1])))
+
+def oscillation_index(path):
     """
-    Model:
-      p_k(theta) = skeleton_k ^ exp(theta)
-      theta ~ Normal(0, sigma^2)
+    Fraction of length-3 windows that look like A -> B -> A (with A != B).
+    Example: 0,1,0 counts as oscillation.
     """
-    sk = safe_probs(skeleton)
-    n = np.asarray(n_per_level, dtype=float)
-    y = np.asarray(dlt_per_level, dtype=float)
+    if path is None or len(path) < 3:
+        return 0.0
+    path = np.asarray(path, dtype=int)
+    a = path[:-2]
+    b = path[1:-1]
+    c = path[2:]
+    osc = (a == c) & (a != b)
+    return float(np.mean(osc))
 
-    x, w = np.polynomial.hermite.hermgauss(int(gh_n))
-    theta = float(sigma) * np.sqrt(2.0) * x
+# ============================================================
+# DLT burden metrics per trial
+# ============================================================
 
-    P = sk[None, :] ** np.exp(theta)[:, None]
-    P = safe_probs(P)
+def observed_dlt_rate(total_dlts, n_total):
+    if n_total <= 0:
+        return 0.0
+    return float(total_dlts) / float(n_total)
 
-    ll = (y[None, :] * np.log(P) + (n[None, :] - y[None, :]) * np.log(1 - P)).sum(axis=1)
-
-    log_unnorm = np.log(w) + ll
-    m = np.max(log_unnorm)
-    unnorm = np.exp(log_unnorm - m)
-    post_w = unnorm / np.sum(unnorm)
-
-    return post_w, P
-
-def crm_posterior_summaries(sigma, skeleton, n_per_level, dlt_per_level, target, gh_n=61):
-    post_w, P = posterior_via_gh(sigma, skeleton, n_per_level, dlt_per_level, gh_n=gh_n)
-    post_mean = (post_w[:, None] * P).sum(axis=0)
-    overdose_prob = (post_w[:, None] * (P > target)).sum(axis=0)
-    return post_mean, overdose_prob
-
-def crm_choose_next(
-    sigma, skeleton, n_per_level, dlt_per_level,
-    current_level, target, alpha_overdose,
-    max_step=1, gh_n=61,
-    enforce_highest_tried_plus_one=True,
-    highest_tried=None,
-):
-    post_mean, overdose_prob = crm_posterior_summaries(
-        sigma, skeleton, n_per_level, dlt_per_level, target, gh_n=gh_n
-    )
-
-    allowed = np.where(overdose_prob < alpha_overdose)[0]
-    if allowed.size == 0:
-        return 0, post_mean, overdose_prob
-
-    k_star = int(allowed[np.argmin(np.abs(post_mean[allowed] - target))])
-
-    # Step limit
-    k_star = int(np.clip(k_star, current_level - max_step, current_level + max_step))
-
-    # Guardrail: never recommend beyond highest tried + 1
-    if enforce_highest_tried_plus_one and highest_tried is not None:
-        k_star = int(min(k_star, highest_tried + 1))
-
-    k_star = int(np.clip(k_star, 0, len(skeleton) - 1))
-    return k_star, post_mean, overdose_prob
-
-def crm_select_mtd(
-    sigma, skeleton, n_per_level, dlt_per_level,
-    target, alpha_overdose, gh_n=61,
-    restrict_to_tried=True
-):
-    post_mean, overdose_prob = crm_posterior_summaries(
-        sigma, skeleton, n_per_level, dlt_per_level, target, gh_n=gh_n
-    )
-
-    allowed = np.where(overdose_prob < alpha_overdose)[0]
-    if allowed.size == 0:
-        return 0
-
-    if restrict_to_tried:
-        tried = np.where(np.asarray(n_per_level) > 0)[0]
-        if tried.size > 0:
-            allowed = np.intersect1d(allowed, tried)
-            if allowed.size == 0:
-                return int(tried[0])
-
-    return int(allowed[np.argmin(np.abs(post_mean[allowed] - target))])
-
-def run_crm(
-    true_p, target, skeleton,
-    sigma=1.0, start_level=0, max_n=36,
-    cohort_size=6, alpha_overdose=0.25, max_step=1,
-    already_n0=0, gh_n=61, rng=None,
-    enforce_highest_tried_plus_one=True,
-    restrict_final_mtd_to_tried=True,
-    stop_if_dose0_likely_overdosing=False,
-):
-    if rng is None:
-        rng = np.random.default_rng()
-
-    n_levels = len(true_p)
-    level = int(start_level)
-
-    n_per_level = np.zeros(n_levels, dtype=int)
-    dlt_per_level = np.zeros(n_levels, dtype=int)
-    total_n = 0
-    dose_path = []
-
-    highest_tried = -1
-
-    # Carry-in
-    if already_n0 > 0:
-        add = int(already_n0)
-        n_per_level[level] += add
-        total_n += add
-        dose_path.extend([level] * add)
-        highest_tried = max(highest_tried, level)
-
-    while total_n < max_n:
-        n_add = min(int(cohort_size), max_n - total_n)
-        dose_path.extend([level] * n_add)
-
-        out = simulate_bernoulli(n_add, true_p[level], rng)
-        n_per_level[level] += n_add
-        dlt_per_level[level] += int(out.sum())
-        total_n += n_add
-        highest_tried = max(highest_tried, level)
-
-        if n_add < cohort_size:
-            break
-
-        if stop_if_dose0_likely_overdosing:
-            _, od = crm_posterior_summaries(sigma, skeleton, n_per_level, dlt_per_level, target, gh_n=gh_n)
-            if od[0] >= alpha_overdose:
-                level = 0
-                break
-
-        next_level, _, _ = crm_choose_next(
-            sigma=sigma,
-            skeleton=skeleton,
-            n_per_level=n_per_level,
-            dlt_per_level=dlt_per_level,
-            current_level=level,
-            target=target,
-            alpha_overdose=alpha_overdose,
-            max_step=max_step,
-            gh_n=gh_n,
-            enforce_highest_tried_plus_one=enforce_highest_tried_plus_one,
-            highest_tried=highest_tried
-        )
-        level = next_level
-
-    selected = crm_select_mtd(
-        sigma=sigma,
-        skeleton=skeleton,
-        n_per_level=n_per_level,
-        dlt_per_level=dlt_per_level,
-        target=target,
-        alpha_overdose=alpha_overdose,
-        gh_n=gh_n,
-        restrict_to_tried=restrict_final_mtd_to_tried
-    )
-
-    total_dlts = int(dlt_per_level.sum())
-    return selected, n_per_level, total_dlts, dose_path
+def expected_dlt_risk(n_per_level, true_p):
+    """
+    Expected DLT probability for a random patient in this trial,
+    using true_p as ground truth.
+    """
+    n_per_level = np.asarray(n_per_level, dtype=float)
+    true_p = np.asarray(true_p, dtype=float)
+    n_total = float(n_per_level.sum())
+    if n_total <= 0:
+        return 0.0
+    return float(np.sum(n_per_level * true_p) / n_total)
 
 # ============================================================
 # 6+3 (simple)
@@ -312,12 +201,167 @@ def run_6plus3(true_p, start_level=0, max_n=36, accept_max_dlt=1, already_n0=0, 
     return selected, n_per_level, total_dlts, dose_path
 
 # ============================================================
+# CRM (acute-only): Gauss–Hermite quadrature
+# ============================================================
+
+def posterior_via_gh(sigma, skeleton, n_per_level, dlt_per_level, gh_n=61):
+    sk = safe_probs(skeleton)
+    n = np.asarray(n_per_level, dtype=float)
+    y = np.asarray(dlt_per_level, dtype=float)
+
+    x, w = np.polynomial.hermite.hermgauss(int(gh_n))
+    theta = float(sigma) * np.sqrt(2.0) * x
+
+    P = sk[None, :] ** np.exp(theta)[:, None]
+    P = safe_probs(P)
+
+    ll = (y[None, :] * np.log(P) + (n[None, :] - y[None, :]) * np.log(1 - P)).sum(axis=1)
+
+    log_unnorm = np.log(w) + ll
+    m = np.max(log_unnorm)
+    unnorm = np.exp(log_unnorm - m)
+    post_w = unnorm / np.sum(unnorm)
+    return post_w, P
+
+def crm_posterior_summaries(sigma, skeleton, n_per_level, dlt_per_level, target, gh_n=61):
+    post_w, P = posterior_via_gh(sigma, skeleton, n_per_level, dlt_per_level, gh_n=gh_n)
+    post_mean = (post_w[:, None] * P).sum(axis=0)
+    overdose_prob = (post_w[:, None] * (P > target)).sum(axis=0)
+    return post_mean, overdose_prob
+
+def crm_choose_next(
+    sigma, skeleton, n_per_level, dlt_per_level,
+    current_level, target, alpha_overdose,
+    max_step=1, gh_n=61,
+    enforce_highest_tried_plus_one=True,
+    highest_tried=None,
+):
+    post_mean, overdose_prob = crm_posterior_summaries(
+        sigma, skeleton, n_per_level, dlt_per_level, target, gh_n=gh_n
+    )
+
+    allowed = np.where(overdose_prob < alpha_overdose)[0]
+    if allowed.size == 0:
+        return 0, post_mean, overdose_prob
+
+    k_star = int(allowed[np.argmin(np.abs(post_mean[allowed] - target))])
+
+    # Step limit
+    k_star = int(np.clip(k_star, current_level - max_step, current_level + max_step))
+
+    # Guardrail
+    if enforce_highest_tried_plus_one and highest_tried is not None:
+        k_star = int(min(k_star, highest_tried + 1))
+
+    k_star = int(np.clip(k_star, 0, len(skeleton) - 1))
+    return k_star, post_mean, overdose_prob
+
+def crm_select_mtd(
+    sigma, skeleton, n_per_level, dlt_per_level,
+    target, alpha_overdose, gh_n=61,
+    restrict_to_tried=True
+):
+    post_mean, overdose_prob = crm_posterior_summaries(
+        sigma, skeleton, n_per_level, dlt_per_level, target, gh_n=gh_n
+    )
+
+    allowed = np.where(overdose_prob < alpha_overdose)[0]
+    if allowed.size == 0:
+        return 0
+
+    if restrict_to_tried:
+        tried = np.where(np.asarray(n_per_level) > 0)[0]
+        if tried.size > 0:
+            allowed = np.intersect1d(allowed, tried)
+            if allowed.size == 0:
+                return int(tried[0])
+
+    return int(allowed[np.argmin(np.abs(post_mean[allowed] - target))])
+
+def run_crm(
+    true_p, target, skeleton,
+    sigma=1.0, start_level=0, max_n=36,
+    cohort_size=6, alpha_overdose=0.25, max_step=1,
+    already_n0=0, gh_n=61, rng=None,
+    enforce_highest_tried_plus_one=True,
+    restrict_final_mtd_to_tried=True,
+    stop_if_dose0_likely_overdosing=False,
+):
+    if rng is None:
+        rng = np.random.default_rng()
+
+    n_levels = len(true_p)
+    level = int(start_level)
+
+    n_per_level = np.zeros(n_levels, dtype=int)
+    dlt_per_level = np.zeros(n_levels, dtype=int)
+    total_n = 0
+    dose_path = []
+
+    highest_tried = -1
+
+    if already_n0 > 0:
+        add = int(already_n0)
+        n_per_level[level] += add
+        total_n += add
+        dose_path.extend([level] * add)
+        highest_tried = max(highest_tried, level)
+
+    while total_n < max_n:
+        n_add = min(int(cohort_size), max_n - total_n)
+        dose_path.extend([level] * n_add)
+
+        out = simulate_bernoulli(n_add, true_p[level], rng)
+        n_per_level[level] += n_add
+        dlt_per_level[level] += int(out.sum())
+        total_n += n_add
+        highest_tried = max(highest_tried, level)
+
+        if n_add < cohort_size:
+            break
+
+        if stop_if_dose0_likely_overdosing:
+            _, od = crm_posterior_summaries(sigma, skeleton, n_per_level, dlt_per_level, target, gh_n=gh_n)
+            if od[0] >= alpha_overdose:
+                level = 0
+                break
+
+        next_level, _, _ = crm_choose_next(
+            sigma=sigma,
+            skeleton=skeleton,
+            n_per_level=n_per_level,
+            dlt_per_level=dlt_per_level,
+            current_level=level,
+            target=target,
+            alpha_overdose=alpha_overdose,
+            max_step=max_step,
+            gh_n=gh_n,
+            enforce_highest_tried_plus_one=enforce_highest_tried_plus_one,
+            highest_tried=highest_tried
+        )
+        level = next_level
+
+    selected = crm_select_mtd(
+        sigma=sigma,
+        skeleton=skeleton,
+        n_per_level=n_per_level,
+        dlt_per_level=dlt_per_level,
+        target=target,
+        alpha_overdose=alpha_overdose,
+        gh_n=gh_n,
+        restrict_to_tried=restrict_final_mtd_to_tried
+    )
+
+    total_dlts = int(dlt_per_level.sum())
+    return selected, n_per_level, total_dlts, dose_path
+
+# ============================================================
 # Streamlit UI
 # ============================================================
 
 st.set_page_config(page_title="Dose Escalation Simulator: 6+3 vs CRM", layout="centered")
 st.title("Dose Escalation Simulator: 6+3 vs CRM")
-st.caption("Acute-only CRM (power model). Guardrail is implemented correctly: next ≤ highest tried + 1.")
+st.caption("Acute-only CRM (power model). Includes oscillation and DLT burden metrics.")
 
 dose_labels = ["5×4 Gy", "5×5 Gy", "5×6 Gy", "5×7 Gy", "5×8 Gy"]
 
@@ -331,7 +375,6 @@ colA, colB = st.columns([1.05, 1.0])
 
 with colA:
     st.subheader("Study setup")
-
     target = st.number_input("Target DLT probability", 0.05, 0.50, 0.25, 0.01)
     start_level = st.selectbox(
         "Start dose level", options=list(range(0, 5)), index=0,
@@ -433,6 +476,11 @@ st.pyplot(fig, clear_figure=True)
 
 st.divider()
 
+show_quality_plots = st.toggle(
+    "Show quality distribution plots (oscillation, DLT burden)",
+    value=True
+)
+
 run = st.button("Run simulations")
 
 if run:
@@ -441,11 +489,30 @@ if run:
 
     sel_6 = np.zeros(5, dtype=int)
     sel_c = np.zeros(5, dtype=int)
+
     nmat_6 = np.zeros((ns, 5), dtype=int)
     nmat_c = np.zeros((ns, 5), dtype=int)
 
+    tot_dlt_6 = np.zeros(ns, dtype=int)
+    tot_dlt_c = np.zeros(ns, dtype=int)
+
+    # Quality metrics
+    ping_sw_6 = np.zeros(ns, dtype=float)
+    ping_osc_6 = np.zeros(ns, dtype=float)
+    ping_step_6 = np.zeros(ns, dtype=float)
+
+    ping_sw_c = np.zeros(ns, dtype=float)
+    ping_osc_c = np.zeros(ns, dtype=float)
+    ping_step_c = np.zeros(ns, dtype=float)
+
+    obs_rate_6 = np.zeros(ns, dtype=float)
+    obs_rate_c = np.zeros(ns, dtype=float)
+
+    exp_risk_6 = np.zeros(ns, dtype=float)
+    exp_risk_c = np.zeros(ns, dtype=float)
+
     for s in range(ns):
-        chosen6, n6, _, _ = run_6plus3(
+        chosen6, n6, d6, path6 = run_6plus3(
             true_p=true_p,
             start_level=int(start_level),
             max_n=int(max_n_6),
@@ -453,7 +520,8 @@ if run:
             already_n0=int(already_n0),
             rng=rng
         )
-        chosenc, nc, _, _ = run_crm(
+
+        chosenc, nc, dc, pathc = run_crm(
             true_p=true_p,
             target=float(target),
             skeleton=skeleton,
@@ -473,19 +541,55 @@ if run:
 
         sel_6[chosen6] += 1
         sel_c[chosenc] += 1
+
         nmat_6[s, :] = n6
         nmat_c[s, :] = nc
 
+        tot_dlt_6[s] = d6
+        tot_dlt_c[s] = dc
+
+        ping_sw_6[s] = switch_rate(path6)
+        ping_osc_6[s] = oscillation_index(path6)
+        ping_step_6[s] = mean_step_size(path6)
+
+        ping_sw_c[s] = switch_rate(pathc)
+        ping_osc_c[s] = oscillation_index(pathc)
+        ping_step_c[s] = mean_step_size(pathc)
+
+        n6_total = int(np.sum(n6))
+        nc_total = int(np.sum(nc))
+
+        obs_rate_6[s] = observed_dlt_rate(d6, n6_total)
+        obs_rate_c[s] = observed_dlt_rate(dc, nc_total)
+
+        exp_risk_6[s] = expected_dlt_risk(n6, true_p)
+        exp_risk_c[s] = expected_dlt_risk(nc, true_p)
+
+    # Aggregates
     p_sel_6 = sel_6 / float(ns)
     p_sel_c = sel_c / float(ns)
+
     avg_n6 = np.mean(nmat_6, axis=0)
     avg_nc = np.mean(nmat_c, axis=0)
 
+    mean_total_dlt_6 = float(np.mean(tot_dlt_6))
+    mean_total_dlt_c = float(np.mean(tot_dlt_c))
+
+    mean_n_6 = float(np.mean(nmat_6.sum(axis=1)))
+    mean_n_c = float(np.mean(nmat_c.sum(axis=1)))
+
+    mean_obs_6 = float(np.mean(obs_rate_6))
+    mean_obs_c = float(np.mean(obs_rate_c))
+
+    mean_exp_6 = float(np.mean(exp_risk_6))
+    mean_exp_c = float(np.mean(exp_risk_c))
+
     st.subheader("Results")
+
     xx = np.arange(5)
     width = 0.38
-    r1, r2 = st.columns(2)
 
+    r1, r2 = st.columns(2)
     with r1:
         fig, ax = plt.subplots(figsize=(4.2, 2.2), dpi=160)
         ax.bar(xx - width/2, p_sel_6, width, label="6+3")
@@ -513,4 +617,75 @@ if run:
         ax.legend(fontsize=8, frameon=False, loc="upper right")
         st.pyplot(fig, clear_figure=True)
 
-    st.caption("If CRM still sticks at level 0, toggle OFF the guardrail and re-run once. If it then escalates, the problem was your guardrail logic.")
+    r3, r4 = st.columns(2)
+    with r3:
+        fig, ax = plt.subplots(figsize=(4.2, 2.1), dpi=160)
+        labels = ["6+3", "CRM"]
+        obs = [mean_obs_6, mean_obs_c]
+        expv = [mean_exp_6, mean_exp_c]
+        xi = np.arange(len(labels))
+        w = 0.38
+        ax.bar(xi - w/2, obs, w, label="Observed DLT rate")
+        ax.bar(xi + w/2, expv, w, label="Expected DLT risk")
+        ax.set_title("Average DLT burden per patient", fontsize=10)
+        ax.set_xticks(xi)
+        ax.set_xticklabels(labels, fontsize=9)
+        ax.set_ylabel("Rate", fontsize=9)
+        ax.set_ylim(0, max(max(obs), max(expv)) * 1.20 + 1e-6)
+        compact_style(ax)
+        ax.legend(fontsize=8, frameon=False, loc="upper right")
+        st.pyplot(fig, clear_figure=True)
+
+    with r4:
+        st.markdown("**Summary (averages over simulated trials)**")
+        st.write(f"Mean sample size: 6+3 = {mean_n_6:.1f} | CRM = {mean_n_c:.1f}")
+        st.write(f"Mean total DLTs: 6+3 = {mean_total_dlt_6:.2f} | CRM = {mean_total_dlt_c:.2f}")
+        st.write(f"Mean observed DLT rate: 6+3 = {mean_obs_6:.3f} | CRM = {mean_obs_c:.3f}")
+        st.write(f"Mean expected DLT risk: 6+3 = {mean_exp_6:.3f} | CRM = {mean_exp_c:.3f}")
+        st.write("")
+        st.write(f"Switch rate: 6+3 = {np.mean(ping_sw_6):.3f} | CRM = {np.mean(ping_sw_c):.3f}")
+        st.write(f"Oscillation index (A→B→A): 6+3 = {np.mean(ping_osc_6):.3f} | CRM = {np.mean(ping_osc_c):.3f}")
+        st.write(f"Mean step size: 6+3 = {np.mean(ping_step_6):.3f} | CRM = {np.mean(ping_step_c):.3f}")
+
+    if show_quality_plots:
+        st.subheader("Quality distributions")
+
+        bins01 = np.linspace(0, 1, 21)
+
+        cA, cB = st.columns(2)
+        with cA:
+            fig, ax = plt.subplots(figsize=(4.2, 2.0), dpi=160)
+            ax.hist(ping_osc_6, bins=bins01, alpha=0.9)
+            ax.set_title("6+3 oscillation index", fontsize=10)
+            ax.set_xlabel("Oscillation index", fontsize=9)
+            ax.set_ylabel("Count", fontsize=9)
+            compact_style(ax)
+            st.pyplot(fig, clear_figure=True)
+
+        with cB:
+            fig, ax = plt.subplots(figsize=(4.2, 2.0), dpi=160)
+            ax.hist(ping_osc_c, bins=bins01, alpha=0.9)
+            ax.set_title("CRM oscillation index", fontsize=10)
+            ax.set_xlabel("Oscillation index", fontsize=9)
+            ax.set_ylabel("Count", fontsize=9)
+            compact_style(ax)
+            st.pyplot(fig, clear_figure=True)
+
+        cC, cD = st.columns(2)
+        with cC:
+            fig, ax = plt.subplots(figsize=(4.2, 2.0), dpi=160)
+            ax.hist(obs_rate_6, bins=bins01, alpha=0.9)
+            ax.set_title("6+3 observed DLT rate", fontsize=10)
+            ax.set_xlabel("DLT rate", fontsize=9)
+            ax.set_ylabel("Count", fontsize=9)
+            compact_style(ax)
+            st.pyplot(fig, clear_figure=True)
+
+        with cD:
+            fig, ax = plt.subplots(figsize=(4.2, 2.0), dpi=160)
+            ax.hist(obs_rate_c, bins=bins01, alpha=0.9)
+            ax.set_title("CRM observed DLT rate", fontsize=10)
+            ax.set_xlabel("DLT rate", fontsize=9)
+            ax.set_ylabel("Count", fontsize=9)
+            compact_style(ax)
+            st.pyplot(fig, clear_figure=True)
