@@ -27,6 +27,14 @@ def compact_style(ax):
 # ============================================================
 
 def dfcrm_getprior(halfwidth, target, nu, nlevel, model="empiric", intcpt=3.0):
+    """
+    dfcrm::getprior translation (Lee & Cheung calibration).
+
+    halfwidth: delta; indifference interval [target - delta, target + delta]
+    nu: prior MTD dose level (1-based)
+    nlevel: number of dose levels
+    model: "empiric" or "logistic"
+    """
     halfwidth = float(halfwidth)
     target = float(target)
     nu = int(nu)
@@ -76,10 +84,42 @@ def dfcrm_getprior(halfwidth, target, nu, nlevel, model="empiric", intcpt=3.0):
     raise ValueError('model must be "empiric" or "logistic".')
 
 # ============================================================
+# Ping-pong / oscillation metrics
+# ============================================================
+
+def switch_rate(path):
+    if path is None or len(path) < 2:
+        return 0.0
+    path = np.asarray(path, dtype=int)
+    return float(np.mean(path[1:] != path[:-1]))
+
+def mean_step_size(path):
+    if path is None or len(path) < 2:
+        return 0.0
+    path = np.asarray(path, dtype=int)
+    return float(np.mean(np.abs(path[1:] - path[:-1])))
+
+def oscillation_index(path):
+    if path is None or len(path) < 3:
+        return 0.0
+    path = np.asarray(path, dtype=int)
+    a = path[:-2]
+    b = path[1:-1]
+    c = path[2:]
+    osc = (a == c) & (a != b)
+    return float(np.mean(osc))
+
+# ============================================================
 # 6+3 Design (acute-only, with carry-in)
 # ============================================================
 
 def run_6plus3(true_p, start_level=0, max_n=36, accept_max_dlt=1, already_n0=0, rng=None):
+    """
+    Cohorts of 6.
+      0/6 -> escalate
+      1/6 -> expand by 3; escalate if DLT among 9 <= accept_max_dlt
+      >=2/6 -> stop / de-escalate (simple stop rule)
+    """
     if rng is None:
         rng = np.random.default_rng()
 
@@ -116,8 +156,9 @@ def run_6plus3(true_p, start_level=0, max_n=36, accept_max_dlt=1, already_n0=0, 
             last_acceptable = level
             if level < n_levels - 1:
                 level += 1
-                continue
-            break
+            else:
+                break
+            continue
 
         if d6 == 1:
             n_add2 = min(3, max_n - total_n)
@@ -131,17 +172,18 @@ def run_6plus3(true_p, start_level=0, max_n=36, accept_max_dlt=1, already_n0=0, 
             if n_add2 < 3:
                 break
 
-            d9_cycle = d6 + int(out3.sum())
-            if d9_cycle <= accept_max_dlt:
+            d9 = d6 + int(out3.sum())
+            if d9 <= accept_max_dlt:
                 last_acceptable = level
                 if level < n_levels - 1:
                     level += 1
-                    continue
-                break
+                else:
+                    break
             else:
                 if level > 0:
                     level -= 1
                 break
+            continue
 
         if level > 0:
             level -= 1
@@ -152,8 +194,9 @@ def run_6plus3(true_p, start_level=0, max_n=36, accept_max_dlt=1, already_n0=0, 
     return selected, n_per_level, total_dlts, dose_path
 
 # ============================================================
-# CRM (acute-only): Gauss–Hermite posterior
-# Model: p_k(theta) = skeleton_k ^ exp(theta), theta ~ N(0, sigma^2)
+# CRM (acute-only): posterior via Gauss–Hermite quadrature
+# p_k(theta) = skeleton_k ^ exp(theta)
+# theta ~ Normal(0, sigma^2)
 # ============================================================
 
 def posterior_via_gh(sigma, skeleton, n_per_level, dlt_per_level, gh_n=61):
@@ -171,6 +214,7 @@ def posterior_via_gh(sigma, skeleton, n_per_level, dlt_per_level, gh_n=61):
     m = np.max(log_unnorm)
     unnorm = np.exp(log_unnorm - m)
     post_w = unnorm / np.sum(unnorm)
+
     return post_w, P
 
 def crm_posterior_summaries(sigma, skeleton, n_per_level, dlt_per_level, target, gh_n=61):
@@ -181,73 +225,58 @@ def crm_posterior_summaries(sigma, skeleton, n_per_level, dlt_per_level, target,
 
 def crm_choose_next(
     sigma, skeleton, n_per_level, dlt_per_level,
-    current_level, target, alpha_overdose,
-    max_step=1, gh_n=61,
+    current_level, target, alpha_overdose, max_step=1, gh_n=61,
     restrict_to_tried_plus_one=True
 ):
     post_mean, overdose_prob = crm_posterior_summaries(
         sigma, skeleton, n_per_level, dlt_per_level, target, gh_n=gh_n
     )
 
-    allowed = np.where(overdose_prob < alpha_overdose)[0]
-    if allowed.size == 0:
-        return 0, post_mean, overdose_prob
+    K = len(skeleton)
 
-    # Guardrail: do not recommend beyond highest tried + 1
     if restrict_to_tried_plus_one:
         tried = np.where(np.asarray(n_per_level) > 0)[0]
-        if tried.size == 0:
-            max_reco = 0
-        else:
-            max_reco = int(tried.max() + 1)
-        allowed = allowed[allowed <= max_reco]
-        if allowed.size == 0:
-            allowed = np.array([0], dtype=int)
+        max_reco = int(tried.max() + 1) if tried.size > 0 else 0
+        max_reco = int(np.clip(max_reco, 0, K - 1))
+        candidates = np.arange(0, max_reco + 1, dtype=int)
+    else:
+        candidates = np.arange(0, K, dtype=int)
 
-    k_star = int(allowed[np.argmin(np.abs(post_mean[allowed] - target))])
+    allowed = candidates[overdose_prob[candidates] < alpha_overdose]
+
+    if allowed.size == 0:
+        k_star = int(candidates[np.argmin(overdose_prob[candidates])])
+    else:
+        k_star = int(allowed[np.argmin(np.abs(post_mean[allowed] - target))])
 
     if k_star > current_level + max_step:
         k_star = current_level + max_step
     if k_star < current_level - max_step:
         k_star = current_level - max_step
 
-    k_star = int(np.clip(k_star, 0, len(skeleton) - 1))
+    k_star = int(np.clip(k_star, 0, K - 1))
     return k_star, post_mean, overdose_prob
 
-def crm_select_mtd(
-    sigma, skeleton, n_per_level, dlt_per_level,
-    target, alpha_overdose, gh_n=61,
-    select_only_tried=True,
-    min_n_for_final=1
-):
+def crm_select_mtd(sigma, skeleton, n_per_level, dlt_per_level, target, alpha_overdose, gh_n=61):
     post_mean, overdose_prob = crm_posterior_summaries(
         sigma, skeleton, n_per_level, dlt_per_level, target, gh_n=gh_n
     )
-    allowed = np.where(overdose_prob < alpha_overdose)[0]
+
+    tried = np.where(np.asarray(n_per_level) > 0)[0]
+    max_reco = int(tried.max() + 1) if tried.size > 0 else 0
+    max_reco = int(np.clip(max_reco, 0, len(skeleton) - 1))
+    candidates = np.arange(0, max_reco + 1, dtype=int)
+
+    allowed = candidates[overdose_prob[candidates] < alpha_overdose]
     if allowed.size == 0:
-        return 0
+        return int(candidates[np.argmin(overdose_prob[candidates])])
 
-    candidates = allowed
-    if select_only_tried:
-        tried = np.where(np.asarray(n_per_level) >= int(min_n_for_final))[0]
-        if tried.size > 0:
-            candidates = np.intersect1d(allowed, tried)
-            if candidates.size == 0:
-                # fallback: if overdose control blocks all tried doses, pick best tried dose anyway
-                candidates = tried
-
-    return int(candidates[np.argmin(np.abs(post_mean[candidates] - target))])
+    return int(allowed[np.argmin(np.abs(post_mean[allowed] - target))])
 
 def run_crm(
-    true_p, target, skeleton,
-    sigma=1.0, start_level=0, max_n=36,
-    cohort_size=6, alpha_overdose=0.25, max_step=1,
-    already_n0=0, gh_n=61,
-    restrict_to_tried_plus_one=True,
-    select_only_tried=True,
-    min_n_for_final=1,
-    stop_if_dose0_too_toxic=False,
-    rng=None
+    true_p, target, skeleton, sigma=1.0, start_level=0, max_n=36,
+    cohort_size=6, alpha_overdose=0.25, max_step=1, already_n0=0,
+    gh_n=61, rng=None
 ):
     if rng is None:
         rng = np.random.default_rng()
@@ -278,13 +307,6 @@ def run_crm(
         if n_add < cohort_size:
             break
 
-        # Optional safety stop: if even dose 0 is likely overdosing, stop
-        if stop_if_dose0_too_toxic:
-            _, od = crm_posterior_summaries(sigma, skeleton, n_per_level, dlt_per_level, target, gh_n=gh_n)
-            if od[0] >= alpha_overdose:
-                level = 0
-                break
-
         next_level, _, _ = crm_choose_next(
             sigma=sigma,
             skeleton=skeleton,
@@ -295,7 +317,7 @@ def run_crm(
             alpha_overdose=alpha_overdose,
             max_step=max_step,
             gh_n=gh_n,
-            restrict_to_tried_plus_one=restrict_to_tried_plus_one
+            restrict_to_tried_plus_one=True
         )
         level = next_level
 
@@ -306,16 +328,14 @@ def run_crm(
         dlt_per_level=dlt_per_level,
         target=target,
         alpha_overdose=alpha_overdose,
-        gh_n=gh_n,
-        select_only_tried=select_only_tried,
-        min_n_for_final=min_n_for_final
+        gh_n=gh_n
     )
 
     total_dlts = int(dlt_per_level.sum())
     return selected, n_per_level, total_dlts, dose_path
 
 # ============================================================
-# Metrics
+# DLT burden metrics per trial
 # ============================================================
 
 def observed_dlt_rate(total_dlts, n_total):
@@ -325,31 +345,7 @@ def expected_dlt_risk(n_per_level, true_p):
     n_per_level = np.asarray(n_per_level, dtype=float)
     true_p = np.asarray(true_p, dtype=float)
     n_total = float(n_per_level.sum())
-    if n_total <= 0:
-        return 0.0
-    return float(np.sum(n_per_level * true_p) / n_total)
-
-def switch_rate(path):
-    if path is None or len(path) < 2:
-        return 0.0
-    path = np.asarray(path, dtype=int)
-    return float(np.mean(path[1:] != path[:-1]))
-
-def mean_step_size(path):
-    if path is None or len(path) < 2:
-        return 0.0
-    path = np.asarray(path, dtype=int)
-    return float(np.mean(np.abs(path[1:] - path[:-1])))
-
-def oscillation_index(path):
-    if path is None or len(path) < 3:
-        return 0.0
-    path = np.asarray(path, dtype=int)
-    a = path[:-2]
-    b = path[1:-1]
-    c = path[2:]
-    osc = (a == c) & (a != b)
-    return float(np.mean(osc))
+    return 0.0 if n_total <= 0 else float(np.sum(n_per_level * true_p) / n_total)
 
 # ============================================================
 # Streamlit App
@@ -357,7 +353,7 @@ def oscillation_index(path):
 
 st.set_page_config(page_title="Dose Escalation Simulator: 6+3 vs CRM", layout="centered")
 st.title("Dose Escalation Simulator: 6+3 vs CRM")
-st.caption("Acute-only CRM (no TITE). CRM has extra guardrails: no final MTD from untried doses, and no recommending beyond highest tried + 1.")
+st.caption("Acute-only CRM. Guardrails: no final MTD from untried doses, and no recommending beyond highest tried + 1.")
 
 dose_labels = ["5×4 Gy", "5×5 Gy", "5×6 Gy", "5×7 Gy", "5×8 Gy"]
 
@@ -370,34 +366,63 @@ scenario_library = {
     "Sharp jump after level 2": [0.05, 0.08, 0.18, 0.40, 0.65],
 }
 
+# ------------------------------------------------------------
 # Study setup
+# ------------------------------------------------------------
+
 colA, colB = st.columns([1.05, 1.0])
 
 with colA:
     st.subheader("Study setup")
 
-    target = st.number_input("Target DLT probability", 0.05, 0.50, 0.25, 0.01)
+    target = st.number_input(
+        "Target DLT probability",
+        min_value=0.05, max_value=0.50, value=0.25, step=0.01
+    )
+
     start_level = st.selectbox(
         "Start dose level",
         options=list(range(0, 5)),
         index=0,
-        format_func=lambda i: f"Level {i} ({dose_labels[i]})",
+        format_func=lambda i: f"Level {i} ({dose_labels[i]})"
     )
-    already_n0 = st.number_input("Carry-in (already treated at start dose, 0 DLT)", 0, 20, 0, 1)
-    n_sims = st.number_input("Number of simulated trials", 200, 20000, 2000, 200)
-    seed = st.number_input("Random seed", 1, 10_000_000, 12345, 1)
+
+    already_n0 = st.number_input(
+        "Already treated at start dose with 0 acute DLT (carry-in)",
+        min_value=0, max_value=20, value=0, step=1
+    )
+
+    n_sims = st.number_input(
+        "Number of simulated trials",
+        min_value=50, max_value=5000, value=200, step=50
+    )
+
+    seed = st.number_input(
+        "Random seed",
+        min_value=1, max_value=10_000_000, value=12345, step=1
+    )
 
 with colB:
     st.subheader("True scenario (ground truth)")
-    scenario_name = st.selectbox("Scenario library", options=list(scenario_library.keys()), index=0)
+
+    scenario_name = st.selectbox(
+        "Scenario library",
+        options=list(scenario_library.keys()),
+        index=0
+    )
     scenario_vals = scenario_library[scenario_name]
+
     manual_true = st.toggle("Manually edit the true DLT probabilities", value=True)
 
     true_p = []
     for i, lab in enumerate(dose_labels):
         default_val = float(scenario_vals[i])
         if manual_true:
-            val = st.number_input(f"True P(DLT) at {lab}", 0.0, 1.0, default_val, 0.01, key=f"true_{i}")
+            val = st.number_input(
+                f"True P(DLT) at {lab}",
+                min_value=0.0, max_value=1.0, value=default_val, step=0.01,
+                key=f"true_{i}"
+            )
         else:
             st.write(f"{lab}: {default_val:.2f}")
             val = default_val
@@ -408,29 +433,67 @@ with colB:
 
 st.divider()
 
+# ------------------------------------------------------------
 # Design settings
+# ------------------------------------------------------------
+
 c1, c2 = st.columns([1.0, 1.0])
 
 with c1:
     st.subheader("6+3 settings")
-    max_n_6 = st.number_input("Max sample size (6+3)", 12, 120, 36, 3)
-    accept_rule = st.selectbox("Acceptance rule after expansion to 9", options=[1, 2], index=0)
+
+    max_n_6 = st.number_input(
+        "Max sample size (6+3)",
+        min_value=12, max_value=120, value=36, step=3
+    )
+
+    accept_rule = st.selectbox(
+        "Acceptance rule after expansion to 9",
+        options=[1, 2],
+        index=0
+    )
 
 with c2:
     st.subheader("CRM settings")
-    max_n_crm = st.number_input("Max sample size (CRM)", 12, 120, 36, 3)
-    cohort_size = st.number_input("Cohort size (CRM)", 1, 12, 6, 1)
+
+    max_n_crm = st.number_input(
+        "Max sample size (CRM)",
+        min_value=12, max_value=120, value=36, step=3
+    )
+
+    cohort_size = st.number_input(
+        "Cohort size (CRM)",
+        min_value=1, max_value=12, value=6, step=1
+    )
 
     st.markdown("**Prior (skeleton) mode**")
-    prior_mode = st.radio("Skeleton mode", options=["Auto (dfcrm getprior)", "Manual"], index=0)
+    prior_mode = st.radio(
+        "Skeleton mode",
+        options=["Auto (dfcrm getprior)", "Manual (edit each dose)"],
+        index=0
+    )
 
     prior_mtd_idx = None
+
     if prior_mode == "Auto (dfcrm getprior)":
-        prior_target = st.number_input("Prior target (for skeleton calibration)", 0.05, 0.50, float(target), 0.01)
-        prior_halfwidth = st.number_input("Halfwidth (delta)", 0.01, 0.30, 0.10, 0.01)
-        prior_nu = st.selectbox("Prior MTD dose level (nu, 1-based)", options=[1,2,3,4,5], index=2)
+        prior_target = st.number_input(
+            "Prior target (used to calibrate the skeleton)",
+            min_value=0.05, max_value=0.50, value=float(target), step=0.01
+        )
+        prior_halfwidth = st.number_input(
+            "Halfwidth (delta)",
+            min_value=0.01, max_value=0.30, value=0.10, step=0.01
+        )
+        prior_nu = st.selectbox(
+            "Prior MTD dose level (nu, 1-based)",
+            options=[1, 2, 3, 4, 5],
+            index=2
+        )
         prior_model = st.selectbox("Working model for getprior", options=["empiric", "logistic"], index=0)
-        prior_intcpt = st.number_input("Logistic intercept (intcpt)", 0.0, 10.0, 3.0, 0.1)
+        prior_intcpt = st.number_input(
+            "Logistic intercept (intcpt)",
+            min_value=0.0, max_value=10.0, value=3.0, step=0.1
+        )
 
         skeleton = dfcrm_getprior(
             halfwidth=float(prior_halfwidth),
@@ -440,42 +503,65 @@ with c2:
             model=str(prior_model),
             intcpt=float(prior_intcpt)
         ).tolist()
+
         prior_mtd_idx = int(prior_nu) - 1
         st.caption("Auto skeleton: " + ", ".join([f"{v:.3f}" for v in skeleton]))
+
     else:
         skeleton = []
         for i, lab in enumerate(dose_labels):
-            val = st.number_input(f"Skeleton prior mean at {lab}", 0.01, 0.99, float(scenario_vals[i]), 0.01, key=f"sk_{i}")
+            val = st.number_input(
+                f"Skeleton prior mean at {lab}",
+                min_value=0.01, max_value=0.99,
+                value=float(scenario_vals[i]), step=0.01,
+                key=f"sk_{i}"
+            )
             skeleton.append(val)
 
-    sigma = st.number_input("Prior sigma on theta", 0.2, 5.0, 1.0, 0.1)
-    alpha_overdose = st.number_input("Overdose control alpha", 0.05, 0.50, 0.25, 0.01)
+    sigma = st.number_input(
+        "Prior sigma on theta",
+        min_value=0.2, max_value=5.0, value=1.0, step=0.1
+    )
+
+    alpha_overdose = st.number_input(
+        "Overdose control alpha",
+        min_value=0.05, max_value=0.50, value=0.25, step=0.01
+    )
+
     max_step = st.selectbox("Max dose step per update", options=[1, 2], index=0)
     gh_n = st.selectbox("Gauss–Hermite points", options=[31, 41, 61, 81], index=2)
 
-    st.markdown("**CRM guardrails**")
-    restrict_to_tried_plus_one = st.toggle("Next dose limited to (highest tried + 1)", value=True)
-    select_only_tried = st.toggle("Final MTD must be among tried doses", value=True)
-    min_n_for_final = st.number_input("Min patients at a dose to be eligible as final MTD", 1, 24, 1, 1)
-    stop_if_dose0_too_toxic = st.toggle("Stop early if dose 0 violates overdose control", value=False)
+st.divider()
+
+# ------------------------------------------------------------
+# Input curves plot (True vs Prior)
+# ------------------------------------------------------------
 
 st.subheader("Input curves (True vs Prior)")
+
 fig, ax = plt.subplots(figsize=(3.8, 2.0), dpi=160)
 x = np.arange(5)
+
 ax.plot(x, true_p, marker="o", linewidth=1.4, label="True P(DLT)")
 ax.plot(x, skeleton, marker="o", linewidth=1.4, label="Prior (skeleton)")
+
 ax.axhline(float(target), linewidth=1, alpha=0.6)
 ax.text(0.05, float(target) + 0.01, f"Target = {float(target):.2f}", fontsize=8)
+
 ax.axvline(true_mtd, linewidth=1, alpha=0.25)
 ax.text(true_mtd + 0.05, 0.90, "True MTD", fontsize=8, transform=ax.get_xaxis_transform())
+
 if prior_mtd_idx is not None:
     ax.axvline(prior_mtd_idx, linewidth=1, alpha=0.25)
     ax.text(prior_mtd_idx + 0.05, 0.82, "Prior MTD", fontsize=8, transform=ax.get_xaxis_transform())
+
 ax.set_xticks(x)
 ax.set_xticklabels([f"L{i}\n{dose_labels[i]}" for i in range(5)], fontsize=8)
 ax.set_ylabel("Probability", fontsize=9)
+
 ymax = max(max(true_p), max(skeleton), float(target))
 ax.set_ylim(0, min(1.0, ymax * 1.25 + 0.02))
+
 compact_style(ax)
 ax.legend(fontsize=8, frameon=False, loc="upper left")
 st.pyplot(fig, clear_figure=True)
@@ -485,7 +571,12 @@ st.divider()
 show_ping_plot = st.toggle("Show ping-pong distribution plot", value=True)
 run = st.button("Run simulations")
 
+# ============================================================
+# Run simulations
+# ============================================================
+
 if run:
+    rng = np.random.default_rng(int(seed))
     ns = int(n_sims)
 
     sel_6 = np.zeros(5, dtype=int)
@@ -511,11 +602,7 @@ if run:
     exp_risk_6 = np.zeros(ns, dtype=float)
     exp_risk_c = np.zeros(ns, dtype=float)
 
-    base_seed = int(seed)
-
     for s in range(ns):
-        rng = np.random.default_rng(base_seed + s)
-
         chosen6, n6, d6, path6 = run_6plus3(
             true_p=true_p,
             start_level=int(start_level),
@@ -537,10 +624,6 @@ if run:
             max_step=int(max_step),
             already_n0=int(already_n0),
             gh_n=int(gh_n),
-            restrict_to_tried_plus_one=bool(restrict_to_tried_plus_one),
-            select_only_tried=bool(select_only_tried),
-            min_n_for_final=int(min_n_for_final),
-            stop_if_dose0_too_toxic=bool(stop_if_dose0_too_toxic),
             rng=rng
         )
 
@@ -660,6 +743,7 @@ if run:
 
     if show_ping_plot:
         st.subheader("Ping-pong distribution (oscillation index)")
+
         cA, cB = st.columns(2)
         bins = np.linspace(0, 1, 21)
 
