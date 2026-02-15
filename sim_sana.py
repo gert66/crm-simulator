@@ -77,7 +77,7 @@ def dfcrm_getprior(halfwidth, target, nu, nlevel, model="empiric", intcpt=3.0):
     raise ValueError('model must be "empiric" or "logistic".')
 
 # ============================================================
-# GH cache (Streamlit)
+# Gauss–Hermite cache
 # ============================================================
 
 @st.cache_data(show_spinner=False)
@@ -122,7 +122,7 @@ def _pick_closest_to_target(post_mean, candidates, target):
     candidates = np.asarray(candidates, dtype=int)
     if candidates.size == 0:
         return None
-    idx = np.argmin(np.abs(post_mean[candidates] - float(target)))
+    idx = int(np.argmin(np.abs(post_mean[candidates] - float(target))))
     return int(candidates[idx])
 
 def crm_choose_next(
@@ -149,40 +149,38 @@ def crm_choose_next(
     if allowed.size == 0:
         return lowest_tried, post_mean, overdose_prob, allowed
 
-    k_star = _pick_closest_to_target(post_mean, allowed, target)
-    if k_star is None:
+    proposed = _pick_closest_to_target(post_mean, allowed, target)
+    if proposed is None:
         return lowest_tried, post_mean, overdose_prob, allowed
 
     lo = int(max(0, int(current_level) - int(max_step)))
     hi = int(min(K - 1, int(current_level) + int(max_step)))
-    k_star = int(np.clip(k_star, lo, hi))
+    window = np.arange(lo, hi + 1, dtype=int)
 
     if enforce_guardrail and highest_tried is not None:
-        k_star = int(min(k_star, int(highest_tried) + 1))
+        window = window[window <= (int(highest_tried) + 1)]
 
-    k_star = int(np.clip(k_star, 0, K - 1))
-
-    # If EWOC is on, ensure final dose is still EWOC-allowed.
-    if ewoc_alpha is not None and (k_star not in set(allowed.tolist())):
-        window = np.arange(lo, hi + 1, dtype=int)
-        if enforce_guardrail and highest_tried is not None:
-            window = window[window <= (int(highest_tried) + 1)]
-        window = np.intersect1d(window, allowed)
-
-        if window.size > 0:
-            k_star = _pick_closest_to_target(post_mean, window, target)
+    # EWOC safety: pick within intersection(window, allowed)
+    if ewoc_alpha is not None:
+        candidate = np.intersect1d(window, allowed)
+        if candidate.size > 0:
+            k_star = _pick_closest_to_target(post_mean, candidate, target)
         else:
+            # fallback: among allowed (and guardrail if on)
             fallback = allowed.copy()
             if enforce_guardrail and highest_tried is not None:
                 fallback = fallback[fallback <= (int(highest_tried) + 1)]
             if fallback.size == 0:
                 return lowest_tried, post_mean, overdose_prob, allowed
             k_star = _pick_closest_to_target(post_mean, fallback, target)
+    else:
+        # no EWOC: step limit is enough
+        k_star = int(np.clip(proposed, lo, hi))
 
     if k_star is None:
         k_star = lowest_tried
 
-    return int(k_star), post_mean, overdose_prob, allowed
+    return int(np.clip(int(k_star), 0, K - 1)), post_mean, overdose_prob, allowed
 
 def crm_select_mtd(
     sigma, skeleton, n_per_level, dlt_per_level,
@@ -251,7 +249,6 @@ def run_crm_trial(
         n_per[level] += n_add
         y_per[level] += int(out.sum())
         highest_tried = max(highest_tried, level)
-
         if int(out.sum()) > 0:
             any_dlt_seen = True
 
@@ -263,18 +260,19 @@ def run_crm_trial(
                 "any_dlt_seen": bool(any_dlt_seen),
                 "n_per": n_per.copy().tolist(),
                 "y_per": y_per.copy().tolist(),
+                "highest_tried": int(highest_tried),
             })
 
         if n_add < int(cohort_size):
             break
 
+        # Simplified "burn-in" mimic: escalate cohort-wise until first DLT
         if burn_in_until_first_dlt and (not any_dlt_seen):
             if level < K - 1:
                 level += 1
             continue
 
         ewoc_alpha_eff = float(ewoc_alpha) if ewoc_on else None
-
         next_level, post_mean, od_prob, allowed = crm_choose_next(
             sigma=sigma,
             skeleton=skeleton,
@@ -295,7 +293,6 @@ def run_crm_trial(
                 "allowed": allowed.astype(int).tolist(),
                 "post_mean": [float(x) for x in post_mean],
                 "od_prob": [float(x) for x in od_prob],
-                "highest_tried": int(highest_tried),
             })
 
         level = int(next_level)
@@ -311,7 +308,6 @@ def run_crm_trial(
         gh_n=gh_n,
         restrict_to_tried=restrict_final_mtd_to_tried
     )
-
     return int(selected), n_per, int(y_per.sum()), debug_rows
 
 # ============================================================
@@ -335,7 +331,6 @@ def run_6plus3(true_p, start_level=1, max_n=36, accept_max_dlt=1, rng=None):
     while total_n < int(max_n):
         n_add = min(6, int(max_n) - total_n)
         out6 = simulate_bernoulli(n_add, true_p[level], rng)
-
         n_per[level] += n_add
         y_per[level] += int(out6.sum())
         total_n += n_add
@@ -354,7 +349,6 @@ def run_6plus3(true_p, start_level=1, max_n=36, accept_max_dlt=1, rng=None):
         if d6 == 1:
             n_add2 = min(3, int(max_n) - total_n)
             out3 = simulate_bernoulli(n_add2, true_p[level], rng)
-
             n_per[level] += n_add2
             y_per[level] += int(out3.sum())
             total_n += n_add2
@@ -368,10 +362,9 @@ def run_6plus3(true_p, start_level=1, max_n=36, accept_max_dlt=1, rng=None):
                 if level < K - 1:
                     level += 1
                 continue
-            else:
-                if level > 0:
-                    level -= 1
-                break
+            if level > 0:
+                level -= 1
+            break
 
         if level > 0:
             level -= 1
@@ -381,7 +374,7 @@ def run_6plus3(true_p, start_level=1, max_n=36, accept_max_dlt=1, rng=None):
     return selected, n_per, int(y_per.sum())
 
 # ============================================================
-# Defaults + reset handling
+# App defaults + reset handling
 # ============================================================
 
 st.set_page_config(page_title="6+3 vs CRM (acute-only)", layout="wide")
@@ -391,25 +384,25 @@ DEFAULT_TRUE_P = [0.01, 0.02, 0.12, 0.20, 0.35]
 
 R_DEFAULTS = {
     # Essentials (R-aligned)
-    "target": 0.15,
-    "start_level": 1,        # 0-based, Level 1 is 5x5
-    "max_n": 27,
-    "cohort_size": 3,
+    "target": 0.15,            # target.acute
+    "start_level": 1,          # R p <- 2 (1-based) => 1 in 0-based
+    "max_n": 27,               # N.patient
+    "cohort_size": 3,          # CO
 
-    # Prior playground
+    # Prior playground (dfcrm::getprior)
     "prior_model": "empiric",
-    "prior_target": 0.15,
-    "halfwidth": 0.10,
-    "prior_nu": 3,           # 1-based
+    "prior_target": 0.15,      # prior.target.acute
+    "halfwidth": 0.10,         # halfwidth
+    "prior_nu": 3,             # prior.MTD.acute (1-based)
     "logistic_intcpt": 3.0,
 
     # CRM knobs
-    "sigma": 1.0,
-    "burn_in": True,
+    "sigma": 1.0,              # prior SD of theta
+    "burn_in": True,           # simplified burn-in mimic
     "ewoc_on": False,
     "ewoc_alpha": 0.25,
 
-    # Advanced
+    # Advanced (CRM)
     "gh_n": 61,
     "max_step": 1,
     "enforce_guardrail": True,
@@ -441,7 +434,7 @@ def init_state():
     for i in range(5):
         st.session_state.setdefault(f"true_{i}", float(DEFAULT_TRUE_P[i]))
 
-    # IMPORTANT: reset must happen before widgets are created
+    # Reset must happen before widgets exist
     if st.session_state.get("_do_reset", False):
         reset_true = bool(st.session_state.get("_do_reset_true", False))
         apply_defaults(reset_true_curve=reset_true)
@@ -461,14 +454,16 @@ init_state()
 st.title("Dose Escalation Simulator: 6+3 vs CRM (acute-only)")
 st.caption("Prior playground is central. Advanced settings are tucked away.")
 
+# Essentials row
 st.subheader("Essentials")
-c1, c2, c3, c4, c5 = st.columns([1.0, 1.0, 1.0, 1.0, 0.9], gap="large")
+c1, c2, c3, c4, c5 = st.columns([1.0, 1.1, 1.0, 1.0, 0.9], gap="large")
 
 with c1:
     st.number_input(
         "Study target (acute)",
         min_value=0.05, max_value=0.50, step=0.01,
         key="target",
+        help="Target DLT probability used by the CRM decision rule. R example uses target.acute = 0.15."
     )
 
 with c2:
@@ -477,6 +472,7 @@ with c2:
         options=list(range(5)),
         format_func=lambda i: f"Level {i} ({dose_labels[i]})",
         key="start_level",
+        help="Start dose level for BOTH designs. R burning phase starts at p=2 (1-based), which is level 1 in 0-based indexing."
     )
 
 with c3:
@@ -484,6 +480,7 @@ with c3:
         "Max sample size (CRM)",
         min_value=12, max_value=200, step=3,
         key="max_n",
+        help="Maximum number of patients in the CRM trial. R example uses N.patient = 27."
     )
 
 with c4:
@@ -491,12 +488,13 @@ with c4:
         "CRM cohort size",
         min_value=1, max_value=12, step=1,
         key="cohort_size",
+        help="Cohort size per CRM update. R example uses CO = 3."
     )
 
 with c5:
     st.write("")
     st.write("")
-    if st.button("Reset to R defaults"):
+    if st.button("Reset to R defaults", help="Reset all tunable settings back to the embedded R-aligned defaults."):
         request_reset(reset_true_curve=bool(st.session_state.get("reset_true_curve", False)))
         st.rerun()
 
@@ -506,7 +504,12 @@ left, right = st.columns([1.05, 1.35], gap="large")
 
 with left:
     st.subheader("True acute DLT curve")
-    edit_true = st.toggle("Edit true curve", value=True)
+
+    edit_true = st.toggle(
+        "Edit true curve",
+        value=True,
+        help="If off, the true curve inputs are locked. The true curve is only used for simulation, not for CRM inference."
+    )
 
     true_p = []
     for i, lab in enumerate(dose_labels):
@@ -515,6 +518,7 @@ with left:
             min_value=0.0, max_value=1.0, step=0.01,
             key=f"true_{i}",
             disabled=(not edit_true),
+            help="Ground-truth acute toxicity probability at this dose (used to simulate DLT outcomes)."
         )))
 
     true_mtd = find_true_mtd(true_p, float(st.session_state["target"]))
@@ -524,21 +528,74 @@ with left:
     )
 
     st.subheader("Key CRM knobs")
-    st.slider("Prior sigma on theta", 0.2, 5.0, step=0.1, key="sigma")
-    st.toggle("Burn-in until first DLT (R-like)", key="burn_in")
-    st.toggle("Enable EWOC overdose control", key="ewoc_on")
-    st.slider("EWOC alpha", 0.05, 0.99, step=0.01, key="ewoc_alpha", disabled=(not st.session_state["ewoc_on"]))
+    st.slider(
+        "Prior sigma on theta",
+        0.2, 5.0, step=0.1,
+        key="sigma",
+        help="Prior SD of theta in theta ~ Normal(0, sigma^2). Larger sigma means a wider prior and typically more aggressive updates early on."
+    )
+
+    st.toggle(
+        "Burn-in until first DLT (R-like)",
+        key="burn_in",
+        help="Simplified burn-in mimic: escalate cohort-by-cohort until the first DLT is observed, then switch to CRM decisions."
+    )
+
+    st.toggle(
+        "Enable EWOC overdose control",
+        key="ewoc_on",
+        help="If on: doses must satisfy P(p_k > target | data) < alpha to be admissible."
+    )
+
+    st.slider(
+        "EWOC alpha",
+        0.05, 0.99, step=0.01,
+        key="ewoc_alpha",
+        disabled=(not st.session_state["ewoc_on"]),
+        help="EWOC admissibility threshold. Smaller alpha is more conservative."
+    )
 
 with right:
     st.subheader("Prior playground")
+
     p1, p2 = st.columns([1.0, 1.0], gap="medium")
 
     with p1:
-        st.radio("Skeleton model", ["empiric", "logistic"], horizontal=True, key="prior_model")
-        st.slider("Prior target (skeleton calibration)", 0.05, 0.50, step=0.01, key="prior_target")
-        st.slider("Halfwidth (delta)", 0.01, 0.30, step=0.01, key="halfwidth")
-        st.slider("Prior MTD (nu, 1-based)", 1, 5, step=1, key="prior_nu")
-        st.slider("Logistic intercept (only if logistic)", 0.0, 10.0, step=0.1, key="logistic_intcpt")
+        st.radio(
+            "Skeleton model",
+            ["empiric", "logistic"],
+            horizontal=True,
+            key="prior_model",
+            help="How the prior skeleton is generated (dfcrm-style). 'empiric' matches getprior() power skeleton behavior."
+        )
+
+        st.slider(
+            "Prior target (skeleton calibration)",
+            0.05, 0.50, step=0.01,
+            key="prior_target",
+            help="Target used to construct the skeleton. R example uses prior.target.acute = 0.15."
+        )
+
+        st.slider(
+            "Halfwidth (delta)",
+            0.01, 0.30, step=0.01,
+            key="halfwidth",
+            help="Halfwidth used by getprior(): skeleton is calibrated so that nu is near target, neighbors are roughly target±halfwidth."
+        )
+
+        st.slider(
+            "Prior MTD (nu, 1-based)",
+            1, 5, step=1,
+            key="prior_nu",
+            help="The dose (1-based) whose skeleton probability is closest to prior_target. R example uses prior.MTD.acute = 3."
+        )
+
+        st.slider(
+            "Logistic intercept (only if logistic)",
+            0.0, 10.0, step=0.1,
+            key="logistic_intcpt",
+            help="Only relevant for logistic skeleton generation."
+        )
 
         skeleton = dfcrm_getprior(
             halfwidth=float(st.session_state["halfwidth"]),
@@ -548,6 +605,7 @@ with right:
             model=str(st.session_state["prior_model"]),
             intcpt=float(st.session_state["logistic_intcpt"]),
         ).tolist()
+
         st.caption("Skeleton: " + ", ".join([f"{v:.3f}" for v in skeleton]))
 
     with p2:
@@ -575,40 +633,102 @@ with st.expander("Advanced settings", expanded=False):
     a1, a2, a3 = st.columns([1.0, 1.0, 1.0], gap="large")
 
     with a1:
-        st.number_input("Number of simulated trials", 50, 5000, step=50, key="n_sims")
-        st.number_input("Random seed", 1, 10_000_000, step=1, key="seed")
+        st.number_input(
+            "Number of simulated trials",
+            50, 5000, step=50,
+            key="n_sims",
+            help="Monte Carlo repetitions. More simulations gives smoother estimates but takes longer."
+        )
+        st.number_input(
+            "Random seed",
+            1, 10_000_000, step=1,
+            key="seed",
+            help="Seed for reproducibility across runs."
+        )
 
     with a2:
-        st.selectbox("Gauss–Hermite points", [31, 41, 61, 81],
-                     index=[31, 41, 61, 81].index(int(st.session_state["gh_n"])),
-                     key="gh_n")
-        st.selectbox("Max dose step per CRM update", [1, 2],
-                     index=[1, 2].index(int(st.session_state["max_step"])),
-                     key="max_step")
+        st.selectbox(
+            "Gauss–Hermite points",
+            [31, 41, 61, 81],
+            index=[31, 41, 61, 81].index(int(st.session_state["gh_n"])),
+            key="gh_n",
+            help="Number of GH nodes for integrating the posterior. More points is more accurate and slower."
+        )
+        st.selectbox(
+            "Max dose step per CRM update",
+            [1, 2],
+            index=[1, 2].index(int(st.session_state["max_step"])),
+            key="max_step",
+            help="Step limiting: restrict how far the next dose can move from the current dose in one update."
+        )
 
     with a3:
-        st.toggle("Guardrail: next dose ≤ highest tried + 1", key="enforce_guardrail")
-        st.toggle("Final MTD must be among tried doses", key="restrict_final_mtd")
+        st.toggle(
+            "Guardrail: next dose ≤ highest tried + 1",
+            key="enforce_guardrail",
+            help="Prevents skipping untried dose levels. Common operational safety rule."
+        )
+        st.toggle(
+            "Final MTD must be among tried doses",
+            key="restrict_final_mtd",
+            help="If on: final MTD selection is restricted to dose levels that were actually treated."
+        )
 
-    st.toggle("Show CRM decision debug (first simulated trial)", key="show_debug")
+    st.toggle(
+        "Show CRM decision debug (first simulated trial)",
+        key="show_debug",
+        help="Prints admissible set and posterior summaries for the first simulated CRM trial."
+    )
 
     st.markdown("---")
-    st.markdown("**6+3 settings**")
+    st.markdown("**6+3 design settings**")
+
     b1, b2 = st.columns([1.0, 1.0], gap="large")
     with b1:
-        st.number_input("Max sample size (6+3)", 12, 200, step=3, key="max_n_63")
+        st.number_input(
+            "Max sample size (6+3)",
+            12, 200, step=3,
+            key="max_n_63",
+            help="Total sample size cap for the 6+3 design."
+        )
     with b2:
-        st.selectbox("Acceptance rule after expansion to 9", [1, 2],
-                     index=[1, 2].index(int(st.session_state["accept_rule_63"])),
-                     key="accept_rule_63")
+        st.selectbox(
+            "Acceptance rule after expansion to 9",
+            [1, 2],
+            index=[1, 2].index(int(st.session_state["accept_rule_63"])),
+            key="accept_rule_63",
+            help="If 1/6 DLT, expand to 9 at that dose. Accept if total DLTs in 9 is <= this threshold."
+        )
 
     st.markdown("---")
-    st.checkbox("Reset button also resets the true curve", key="reset_true_curve")
+    st.checkbox(
+        "Reset button also resets the true curve",
+        key="reset_true_curve",
+        help="By default, reset keeps your true curve as-is. Turn this on if you want reset to also restore the default true curve."
+    )
 
-run = st.button("Run simulations")
+with st.expander("Current settings (from code)", expanded=False):
+    st.markdown("**Embedded R-aligned defaults (R_DEFAULTS)**")
+    st.json(R_DEFAULTS)
+
+    current = {k: st.session_state.get(k) for k in R_DEFAULTS.keys()}
+    st.markdown("**Current UI values**")
+    st.json(current)
+
+    derived = {
+        "dose_labels": dose_labels,
+        "true_curve": [float(v) for v in true_p],
+        "target": float(st.session_state["target"]),
+        "true_mtd_level": int(true_mtd),
+        "skeleton": [float(v) for v in skeleton],
+    }
+    st.markdown("**Derived / computed**")
+    st.json(derived)
+
+run = st.button("Run simulations", help="Run Monte Carlo simulations for both designs using the current settings.")
 
 # ============================================================
-# Simulation + outputs (R-like)
+# Simulation + outputs
 # ============================================================
 
 if run:
@@ -668,25 +788,23 @@ if run:
         if debug_flag:
             debug_dump = dbg
 
-    # MTD selection probabilities
     p63 = sel_63 / float(ns)
     pcrm = sel_crm / float(ns)
 
-    # average treated counts
     avg63 = np.mean(nmat_63, axis=0)
     avgcrm = np.mean(nmat_crm, axis=0)
 
-    # mean sample size
     mean_n63 = float(np.mean(nmat_63.sum(axis=1)))
     mean_ncrm = float(np.mean(nmat_crm.sum(axis=1)))
 
-    # mean total DLTs
     mean_dlt63 = float(np.mean(dlt_63))
     mean_dltcrm = float(np.mean(dlt_crm))
 
-    # R-like percentage treated at each dose
-    prop63 = np.mean(nmat_63 / np.maximum(1, nmat_63.sum(axis=1, keepdims=True)), axis=0)
-    propcrm = np.mean(nmat_crm / np.maximum(1, nmat_crm.sum(axis=1, keepdims=True)), axis=0)
+    # Mean proportion treated at each dose (R-like "SELECT.DOSE.10" mean)
+    denom63 = np.maximum(1, nmat_63.sum(axis=1, keepdims=True))
+    denomcrm = np.maximum(1, nmat_crm.sum(axis=1, keepdims=True))
+    prop63 = np.mean(nmat_63 / denom63, axis=0)
+    propcrm = np.mean(nmat_crm / denomcrm, axis=0)
 
     st.subheader("Results (6+3 vs CRM)")
 
@@ -750,14 +868,14 @@ if run:
         d63_vec = np.concatenate([p63, [mean_n63], prop63])
         st.code(", ".join([f"{v:.4f}" for v in d63_vec]))
 
-    s1, s2, s3, s4 = st.columns([1.0, 1.0, 1.0, 1.0], gap="large")
-    with s1:
+    m1, m2, m3, m4 = st.columns([1.0, 1.0, 1.0, 1.0], gap="large")
+    with m1:
         st.metric("Mean sample size (6+3)", f"{mean_n63:.1f}")
-    with s2:
+    with m2:
         st.metric("Mean sample size (CRM)", f"{mean_ncrm:.1f}")
-    with s3:
+    with m3:
         st.metric("Mean total DLTs (6+3)", f"{mean_dlt63:.2f}")
-    with s4:
+    with m4:
         st.metric("Mean total DLTs (CRM)", f"{mean_dltcrm:.2f}")
 
     if st.session_state["show_debug"] and debug_dump:
@@ -769,5 +887,5 @@ if run:
             )
             if "next_level" in row:
                 st.write(f"  allowed: {row['allowed']} | next: L{row['next_level']} | highest_tried={row['highest_tried']}")
-                st.write(f"  post_mean: {[round(v,3) for v in row['post_mean']]}")
-                st.write(f"  od_prob:   {[round(v,3) for v in row['od_prob']]}")
+                st.write(f"  post_mean: {[round(v, 3) for v in row['post_mean']]}")
+                st.write(f"  od_prob:   {[round(v, 3) for v in row['od_prob']]}")
