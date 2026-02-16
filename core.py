@@ -89,13 +89,9 @@ def reset_to_defaults() -> None:
 
 
 def init_state() -> None:
-    """
-    Call at top of every page.
-    Never overwrites user values unless a reset was requested.
-    """
     s = st.session_state
 
-    # first ever init
+    # first init in this session
     if not s.get("_initialized", False):
         _apply_defaults_overwrite_all()
         s["_initialized"] = True
@@ -105,7 +101,7 @@ def init_state() -> None:
         s["_do_reset"] = False
         _apply_defaults_overwrite_all()
 
-    # setdefault for any missing keys (safe across page navigation)
+    # ensure missing keys exist (do not overwrite existing user values)
     for k, v in asdict(DEFAULTS).items():
         if k == "true_curve":
             s.setdefault("true_curve", list(v))
@@ -118,6 +114,7 @@ def init_state() -> None:
     s.setdefault("is_running", False)
 
     _sync_true_curve_widget_keys()
+
 
 
 def sync_widget_keys(force_defaults: bool = False) -> None:
