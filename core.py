@@ -131,12 +131,27 @@ def init_state() -> None:
     s.setdefault("last_error", None)
     s.setdefault("is_running", False)
 
+def sync_widget_keys() -> None:
+    s = st.session_state
+    # force widget keys to equal canonical state
+    for k in [
+        "target","start_dose_level","n_sims","seed",
+        "max_n_6p3","cohort_size_6p3",
+        "skeleton_model","prior_target","delta","prior_mtd","logistic_intercept",
+        "prior_sigma_theta","burnin_until_first_dlt","ewoc_enable","ewoc_alpha",
+        "edit_true_curve",
+    ]:
+        if k in s:
+            s[k] = s[k]
 
 def reset_to_defaults() -> None:
-    # Clear all user-set keys
     for k in list(st.session_state.keys()):
         del st.session_state[k]
+    init_state()
+    sync_widget_keys()
+    st.rerun()
 
+    
     # Reinitialize clean defaults
     init_state()
 
