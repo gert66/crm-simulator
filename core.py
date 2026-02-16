@@ -30,12 +30,12 @@ class Defaults:
     skeleton_model: str = "empiric"  # "empiric" or "logistic"
     prior_target: float = 0.15
     delta: float = 0.10
-    prior_mtd: int = 3  # 1-based (dose index)
+    prior_mtd: int = 3  # 1-based
     logistic_intercept: float = 0.0
 
     # CRM knobs
     prior_sigma_theta: float = 1.0
-    burnin_until_first_dlt: bool = False
+    burnin_until_first_dlt: bool = True
     ewoc_enable: bool = False
     ewoc_alpha: float = 0.25
 
@@ -48,54 +48,54 @@ DEFAULTS = Defaults()
 
 
 # -----------------------------
-# State helpers
+# True curve widget syncing
 # -----------------------------
 def _sync_true_curve_widget_keys() -> None:
     s = st.session_state
     tc = s.get("true_curve", list(DEFAULTS.true_curve))
-    if not isinstance(tc, list):
-        tc = list(tc)
-        s["true_curve"] = tc
+    try:
+        n = len(tc)
+    except Exception:
+        n = len(DEFAULTS.true_curve)
+        tc = list(DEFAULTS.true_curve)
 
-    n = len(tc)
-
+    new_vals: List[float] = []
     for i in range(n):
-        k = f"true_p_{i}"
-        if k not in s:
-            s[k] = float(tc[i])
-        else:
+        key = f"true_p_{i}"
+        if key not in s:
             try:
-                s[k] = float(tc[i])
+                s[key] = float(tc[i])
             except Exception:
-                s[k] = float(DEFAULTS.true_curve[i]) if i < len(DEFAULTS.true_curve) else 0.0
-
-    for k in list(s.keys()):
-        if k.startswith("true_p_"):
+                s[key] = float(DEFAULTS.true_curve[i]) if i < len(DEFAULTS.true_curve) else 0.0
+        try:
+            new_vals.append(float(s[key]))
+        except Exception:
             try:
-                idx = int(k.split("_")[-1])
+                new_vals.append(float(tc[i]))
             except Exception:
-                continue
-            if idx >= n:
-                del s[k]
+                new_vals.append(0.0)
+    s["true_curve"] = new_vals
 
 
 def sync_true_curve_from_widgets() -> None:
     s = st.session_state
     tc = s.get("true_curve", list(DEFAULTS.true_curve))
-    if not isinstance(tc, list):
-        tc = list(tc)
-    n = len(tc)
+    n = len(tc) if isinstance(tc, list) else len(DEFAULTS.true_curve)
     new_vals: List[float] = []
     for i in range(n):
-        v = s.get(f"true_p_{i}", tc[i])
+        key = f"true_p_{i}"
         try:
-            new_vals.append(float(v))
+            new_vals.append(float(s.get(key, tc[i] if isinstance(tc, list) else DEFAULTS.true_curve[i])))
         except Exception:
-            new_vals.append(float(tc[i]))
+            new_vals.append(float(tc[i]) if isinstance(tc, list) else float(DEFAULTS.true_curve[i]))
     s["true_curve"] = new_vals
 
 
+# -----------------------------
+# State helpers
+# -----------------------------
 def init_state() -> None:
+    """Initialize session_state keys once. Never overwrite user-changed values."""
     s = st.session_state
 
     # Essentials
@@ -111,7 +111,7 @@ def init_state() -> None:
     s.setdefault("skeleton_model", DEFAULTS.skeleton_model)
     s.setdefault("prior_target", DEFAULTS.prior_target)
     s.setdefault("delta", DEFAULTS.delta)
-    s.setdefault("prior_mtd", DEFAULTS.prior_mtd)
+    s.setdefault("prior_mtd", DEFAULTS.prior_mtd)  # 1-based in UI
     s.setdefault("logistic_intercept", DEFAULTS.logistic_intercept)
 
     # CRM knobs
@@ -130,7 +130,6 @@ def init_state() -> None:
     s.setdefault("results_meta", None)
     s.setdefault("last_error", None)
     s.setdefault("is_running", False)
-    sync_widget_keys()
 
 
 def sync_widget_keys(force_defaults: bool = False) -> None:
@@ -155,51 +154,35 @@ def sync_widget_keys(force_defaults: bool = False) -> None:
         "edit_true_curve": DEFAULTS.edit_true_curve,
     }
 
-    for k, default_v in mapping.items():
+    for k, dv in mapping.items():
         if force_defaults:
-            s[k] = default_v
-        else:
-            # only auto-fix obvious "stuck at min" widget state
-            if k in ("prior_target", "delta", "prior_sigma_theta", "ewoc_alpha") and float(s.get(k, default_v)) <= 0.011:
-                s[k] = default_v
-            if k == "prior_mtd" and int(s.get(k, default_v)) == 1 and DEFAULTS.prior_mtd != 1:
-                s[k] = DEFAULTS.prior_mtd
+            s[k] = dv
+            continue
+
+        if k in ("prior_target", "delta", "prior_sigma_theta", "ewoc_alpha"):
+            try:
+                if float(s.get(k, dv)) <= 0.011:
+                    s[k] = dv
+            except Exception:
+                s[k] = dv
+
+        if k == "prior_mtd":
+            try:
+                if int(s.get(k, dv)) == 1 and int(dv) != 1:
+                    s[k] = int(dv)
+            except Exception:
+                s[k] = int(dv)
+
+        if k == "skeleton_model":
+            if s.get(k, dv) not in ("empiric", "logistic"):
+                s[k] = dv
 
 
 def reset_to_defaults() -> None:
     s = st.session_state
     for k in list(s.keys()):
         del s[k]
-    init_state()
-    sync_widget_keys(force_defaults=True)
     st.rerun()
-
-
-    
-    # Reinitialize clean defaults
-    init_state()
-
-    # Force clean rerun
-    st.rerun()
-
-
-    # Clear widget keys that can stick across reruns and block reset visuals
-    for k in list(s.keys()):
-        if k.startswith("true_p_"):
-            del s[k]
-
-    for k, v in asdict(DEFAULTS).items():
-        if k == "true_curve":
-            s[k] = list(v)
-        else:
-            s[k] = v
-
-    _sync_true_curve_widget_keys()
-
-    s["results"] = None
-    s["results_meta"] = None
-    s["last_error"] = None
-    s["is_running"] = False
 
 
 def dose_labels(n: int) -> List[str]:
@@ -229,7 +212,10 @@ def build_logistic_skeleton(n_dose: int, prior_target: float, prior_mtd_1based: 
     m = int(prior_mtd_1based) - 1
     m = max(0, min(n_dose - 1, m))
     logit = np.log(prior_target / (1.0 - prior_target))
-    b = 0.25 if m == 0 else (logit - intercept) / m
+    if m == 0:
+        b = 0.25
+    else:
+        b = (logit - intercept) / m
     xs = np.arange(n_dose, dtype=float)
     z = intercept + b * xs
     sk = 1.0 / (1.0 + np.exp(-z))
@@ -239,7 +225,7 @@ def build_logistic_skeleton(n_dose: int, prior_target: float, prior_mtd_1based: 
 
 def get_skeleton_from_state(n_dose: int) -> np.ndarray:
     s = st.session_state
-    model = s.get("skeleton_model", "empiric")
+    model = s.get("skeleton_model", DEFAULTS.skeleton_model)
     prior_target = float(s.get("prior_target", DEFAULTS.prior_target))
     prior_mtd = int(s.get("prior_mtd", DEFAULTS.prior_mtd))
     if model == "logistic":
@@ -250,12 +236,12 @@ def get_skeleton_from_state(n_dose: int) -> np.ndarray:
 
 
 # -----------------------------
-# Plotting (compact)
+# Plotting
 # -----------------------------
 def plot_true_vs_prior(true_p: List[float], prior_p: np.ndarray, target: float, true_mtd_idx0: int) -> plt.Figure:
     n = len(true_p)
     xs = np.arange(n)
-    fig = plt.figure(figsize=(4.6, 2.6), dpi=140)
+    fig = plt.figure(figsize=(4.0, 2.1), dpi=140)
     ax = fig.add_subplot(111)
     ax.plot(xs, true_p, marker="o", linewidth=1.5, label="True P(DLT)")
     ax.plot(xs, prior_p, marker="o", linewidth=1.5, label="Prior (skeleton)")
@@ -277,15 +263,11 @@ def _import_simplesim():
     if "" not in sys.path:
         sys.path.insert(0, "")
 
-    last_exc: Exception | None = None
     for name in ["simplesim", "simpleSim", "SimpleSim"]:
         try:
             return importlib.import_module(name)
-        except Exception as e:
-            last_exc = e
+        except ModuleNotFoundError:
             continue
-    if last_exc:
-        raise last_exc
     raise ModuleNotFoundError("Could not import simplesim module. Ensure simplesim.py is in repo root.")
 
 
@@ -293,7 +275,7 @@ def build_payload() -> Dict[str, Any]:
     s = st.session_state
     payload = {
         "target": float(s["target"]),
-        "start_dose_level": int(s["start_dose_level"]) - 1,
+        "start_dose_level": int(s["start_dose_level"]) - 1,  # 0-based for simulator
         "n_sims": int(s["n_sims"]),
         "seed": int(s["seed"]),
         "max_n_6p3": int(s["max_n_6p3"]),
@@ -315,32 +297,28 @@ def build_payload() -> Dict[str, Any]:
 def run_simulations() -> None:
     s = st.session_state
     s["last_error"] = None
-
-    try:
-        sync_true_curve_from_widgets()
-    except Exception:
-        pass
-
-    sim = _import_simplesim()
-    payload = build_payload()
-
-    fn = None
-    for cand in ["run_simulations", "simulate", "run", "main"]:
-        if hasattr(sim, cand):
-            fn = getattr(sim, cand)
-            break
-    if fn is None:
-        raise AttributeError("simplesim.py must define one of: run_simulations / simulate / run / main")
-
     s["is_running"] = True
+
     try:
+        sim = _import_simplesim()
+        payload = build_payload()
+
+        fn = None
+        for cand in ["run_simulations", "simulate", "run", "main"]:
+            if hasattr(sim, cand):
+                fn = getattr(sim, cand)
+                break
+        if fn is None:
+            raise AttributeError("simplesim.py must define one of: run_simulations / simulate / run / main")
+
         out = fn(payload)
+
         s["results"] = out
         s["results_meta"] = {"n_sims": payload["n_sims"], "seed": payload["seed"]}
     except Exception as e:
         s["results"] = None
         s["results_meta"] = None
-        s["last_error"] = str(e)
+        s["last_error"] = repr(e)
         raise
     finally:
         s["is_running"] = False
