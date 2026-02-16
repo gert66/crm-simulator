@@ -1,204 +1,129 @@
+# core.py
 from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Dict, Any, List, Tuple
 import numpy as np
 
+DEFAULTS: Dict[str, Any] = {
+    # essentials
+    "target": 0.15,
+    "start_dose": 1,          # 0-based index
+    "crm_max_n": 27,
+    "crm_cohort": 3,
+    "n_sims": 500,
+    "seed": 123,
 
-def pick_true_mtd(true_p, target):
-    true_p = np.asarray(true_p, dtype=float)
-    return int(np.argmin(np.abs(true_p - target)))
+    # true curve (example defaults, pas aan aan jouw eerdere defaults)
+    "true_p": [0.01, 0.02, 0.12, 0.20, 0.35],
+    "edit_true_curve": False,
+
+    # prior playground
+    "skeleton_model": "empiric",   # "empiric" or "logistic"
+    "prior_target": 0.15,
+    "delta": 0.10,
+    "prior_mtd_nu": 3,             # 1-based in UI
+    "logistic_intercept": 3.0,
+
+    # CRM knobs
+    "sigma_theta": 1.0,
+    "burn_in_first_dlt": True,
+    "ewoc": False,
+    "ewoc_alpha": 0.25,
+}
+
+DOSE_LABELS = ["L0\n5×4 Gy", "L1\n5×5 Gy", "L2\n5×6 Gy", "L3\n5×7 Gy", "L4\n5×8 Gy"]
 
 
-def run_six_plus_three(true_p, start=0, max_n=27, cohort=3, rng=None):
+def init_state(st) -> None:
+    """Initialize session_state once without overwriting user input."""
+    for k, v in DEFAULTS.items():
+        if k not in st.session_state:
+            st.session_state[k] = v
+
+
+def get_rng(seed: int) -> np.random.Generator:
+    return np.random.default_rng(int(seed))
+
+
+def true_mtd_index(true_p: List[float], target: float) -> int:
+    arr = np.array(true_p, dtype=float)
+    return int(np.argmin(np.abs(arr - target)))
+
+
+def build_skeleton_from_controls(st) -> List[float]:
     """
-    Simple 3+3-style escalation with max_n cap.
-    Returns selected dose index and n treated per dose and DLTs.
+    Produce a monotone skeleton vector length 5.
+    Keep it simple; you can replace with your original R-like logic.
     """
-    if rng is None:
-        rng = np.random.default_rng()
+    model = st.session_state["skeleton_model"]
+    tgt = float(st.session_state["prior_target"])
+    delta = float(st.session_state["delta"])
+    nu = int(st.session_state["prior_mtd_nu"])  # 1..5
+    nu0 = nu - 1
 
-    K = len(true_p)
-    n = np.zeros(K, dtype=int)
-    dlt = np.zeros(K, dtype=int)
+    if model == "logistic":
+        a = float(st.session_state["logistic_intercept"])
+        # Create increasing dose scores centered at nu0
+        x = np.arange(5) - nu0
+        p = 1 / (1 + np.exp(-(a + x)))
+        # rescale to roughly hit target at nu0
+        if p[nu0] > 0:
+            p = p * (tgt / p[nu0])
+        p = np.clip(p, 1e-6, 0.999)
+        return p.tolist()
 
-    d = start
-    while True:
-        # treat one cohort
-        c = min(cohort, max_n - n.sum())
-        if c <= 0:
-            break
-        tox = rng.binomial(1, true_p[d], size=c)
-        n[d] += c
-        dlt[d] += tox.sum()
-
-        # decision rules (classic 3+3 flavor)
-        if c < cohort:
-            break
-
-        if dlt[d] == 0 and n[d] >= cohort:
-            if d < K - 1:
-                d += 1
-                continue
-            break
-
-        if dlt[d] == 1 and n[d] == cohort:
-            # expand to 6
-            continue
-
-        if n[d] >= 6:
-            # if <=1/6 DLT escalate else de-escalate
-            if dlt[d] <= 1 and d < K - 1:
-                d += 1
-                continue
-            break
-
-        if dlt[d] >= 2:
-            # stop, select previous dose if possible
-            if d > 0:
-                d -= 1
-            break
-
-    selected = int(d)
-    return selected, n, dlt
+    # empiric: simple ladder around target with delta
+    p = np.array([tgt - 2*delta, tgt - delta, tgt, tgt + delta, tgt + 2*delta], dtype=float)
+    # shift so the nu index maps to target
+    shift = tgt - p[nu0]
+    p = p + shift
+    p = np.clip(p, 1e-6, 0.999)
+    # enforce monotone
+    p = np.maximum.accumulate(p)
+    return p.tolist()
 
 
-def skeleton_empiric(K, target, nu_1based, delta):
-    # Simple monotone skeleton around target with halfwidth delta
-    nu = int(np.clip(nu_1based - 1, 0, K - 1))
-    p = np.zeros(K, dtype=float)
-    for i in range(K):
-        p[i] = target + (i - nu) * delta
-    return np.clip(p, 0.001, 0.999)
+# ---------- Plug your real simulation engine here ----------
+
+@dataclass
+class SimResults:
+    p_select_6p3: List[float]
+    p_select_crm: List[float]
+    mean_n_6p3: List[float]
+    mean_n_crm: List[float]
+    dlt_prob_6p3: float
+    dlt_prob_crm: float
 
 
-def skeleton_logistic(K, target, nu_1based, intercept):
-    # Basic logistic curve passing near target at nu
-    nu = int(np.clip(nu_1based - 1, 0, K - 1))
-    x = np.arange(K) - nu
-    # slope chosen to keep modest increase
-    slope = 1.0
-    logits = intercept + slope * x
-    p = 1 / (1 + np.exp(-logits))
-    # rescale so p[nu] ~= target
-    p_nu = p[nu]
-    if p_nu > 0:
-        p = np.clip(p * (target / p_nu), 0.001, 0.999)
-    return p
-
-
-def run_crm_trial(true_p, skeleton_p, target, start=0, max_n=27, cohort=3,
-                  burn_in_first_dlt=False, rng=None):
+def run_simulations_stub(st) -> SimResults:
     """
-    Lightweight CRM-like rule:
-    - treat cohorts
-    - update empirical tox rate at visited doses
-    - choose next dose minimizing |posterior-ish estimate - target|
-    This is not a full Bayesian CRM, but it is stable and matches your UI needs.
+    Replace with your real CRM + 6+3 sim.
+    This stub just makes deterministic-ish output so UI works.
     """
-    if rng is None:
-        rng = np.random.default_rng()
+    rng = get_rng(st.session_state["seed"])
+    k = 5
 
-    K = len(true_p)
-    n = np.zeros(K, dtype=int)
-    dlt = np.zeros(K, dtype=int)
+    # fake selection probabilities
+    base = rng.random(k)
+    p6 = base / base.sum()
+    base2 = rng.random(k)
+    pc = base2 / base2.sum()
 
-    d = start
-    seen_dlt = False
+    # fake mean treated
+    n6 = (p6 * 27).tolist()
+    nc = (pc * 27).tolist()
 
-    while n.sum() < max_n:
-        c = min(cohort, max_n - n.sum())
-        tox = rng.binomial(1, true_p[d], size=c)
-        n[d] += c
-        dlt[d] += tox.sum()
-        if tox.sum() > 0:
-            seen_dlt = True
+    # fake DLT probability per patient: weighted by true curve
+    truep = np.array(st.session_state["true_p"], dtype=float)
+    dlt6 = float(np.dot(p6, truep))
+    dltc = float(np.dot(pc, truep))
 
-        if burn_in_first_dlt and not seen_dlt:
-            # during burn-in, only escalate by 1 each cohort
-            d = min(d + 1, K - 1)
-            continue
-
-        # "posterior-ish" estimate: blend skeleton with observed
-        obs = np.where(n > 0, dlt / np.maximum(n, 1), np.nan)
-        est = skeleton_p.copy()
-        w = np.clip(n / 6.0, 0.0, 1.0)  # more weight with more data
-        for i in range(K):
-            if np.isfinite(obs[i]):
-                est[i] = (1 - w[i]) * skeleton_p[i] + w[i] * obs[i]
-
-        # choose dose closest to target, with no skipping more than 1 level
-        best = int(np.argmin(np.abs(est - target)))
-        if best > d + 1:
-            best = d + 1
-        if best < d - 1:
-            best = d - 1
-        d = int(np.clip(best, 0, K - 1))
-
-    selected = int(d)
-    return selected, n, dlt
-
-
-def simulate(params):
-    rng = np.random.default_rng(int(params["seed"]))
-
-    true_p = np.asarray(params["true_p"], dtype=float)
-    K = len(true_p)
-    target = float(params["target"])
-
-    true_mtd = pick_true_mtd(true_p, target)
-
-    # skeleton
-    if params["skeleton_model"] == "logistic":
-        skel = skeleton_logistic(K, params["prior_target"], params["prior_mtd_nu"], params["logit_intercept"])
-    else:
-        skel = skeleton_empiric(K, params["prior_target"], params["prior_mtd_nu"], params["delta"])
-
-    n_sims = int(params["n_sims"])
-
-    sel_633 = np.zeros(K, dtype=int)
-    sel_crm = np.zeros(K, dtype=int)
-    n_633 = np.zeros(K, dtype=float)
-    n_crm = np.zeros(K, dtype=float)
-
-    dlt_total_633 = 0
-    dlt_total_crm = 0
-    pt_total_633 = 0
-    pt_total_crm = 0
-
-    for _ in range(n_sims):
-        s1, n1, d1 = run_six_plus_three(
-            true_p=true_p,
-            start=int(params["start_dose"]),
-            max_n=int(params["sixplus3_max_n"]),
-            cohort=3,
-            rng=rng,
-        )
-        sel_633[s1] += 1
-        n_633 += n1
-        dlt_total_633 += int(d1.sum())
-        pt_total_633 += int(n1.sum())
-
-        s2, n2, d2 = run_crm_trial(
-            true_p=true_p,
-            skeleton_p=skel,
-            target=target,
-            start=int(params["start_dose"]),
-            max_n=int(params["crm_max_n"]),
-            cohort=int(params["crm_cohort"]),
-            burn_in_first_dlt=bool(params["burn_in_first_dlt"]),
-            rng=rng,
-        )
-        sel_crm[s2] += 1
-        n_crm += n2
-        dlt_total_crm += int(d2.sum())
-        pt_total_crm += int(n2.sum())
-
-    out = {
-        "true_mtd": true_mtd,
-        "skeleton": skel,
-        "p_select_633": sel_633 / n_sims,
-        "p_select_crm": sel_crm / n_sims,
-        "avg_n_633": n_633 / n_sims,
-        "avg_n_crm": n_crm / n_sims,
-        "p_dlt_per_patient_633": (dlt_total_633 / pt_total_633) if pt_total_633 > 0 else 0.0,
-        "p_dlt_per_patient_crm": (dlt_total_crm / pt_total_crm) if pt_total_crm > 0 else 0.0,
-    }
-    return out
+    return SimResults(
+        p_select_6p3=p6.tolist(),
+        p_select_crm=pc.tolist(),
+        mean_n_6p3=n6,
+        mean_n_crm=nc,
+        dlt_prob_6p3=dlt6,
+        dlt_prob_crm=dltc,
+    )
