@@ -253,7 +253,6 @@ def run_simulations(payload: Dict[str, Any]) -> Dict[str, Any]:
         n_prior_start_no_dlt=n_prior_start_no_dlt,
     )
 
-        )
         mtd_counts_c[mtdc] += 1
         treated_sum_c += trc
         total_treated_c += nc
