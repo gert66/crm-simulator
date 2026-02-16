@@ -1,4 +1,6 @@
+# pages/1_Essentials.py
 import streamlit as st
+
 from core import init_state, reset_to_defaults
 
 st.set_page_config(page_title="Essentials", layout="wide")
@@ -6,7 +8,7 @@ init_state()
 
 st.header("Essentials")
 
-c1, c2, c3 = st.columns([1.2, 1.2, 1.0])
+c1, c2, c3 = st.columns([1.1, 1.1, 1.0], gap="large")
 
 with c1:
     st.subheader("Study")
@@ -25,11 +27,12 @@ with c3:
 
 st.divider()
 
-colr1, colr2 = st.columns([1, 3])
-with colr1:
+r1, r2 = st.columns([0.9, 2.1], gap="large")
+
+with r1:
     if st.button("Reset to defaults", use_container_width=True):
         reset_to_defaults()
         st.rerun()
 
-with colr2:
-    st.caption("Defaults are stored in core.py. Reset clears results too.")
+with r2:
+    st.caption("Reset restores defaults from core.py and clears results.")
