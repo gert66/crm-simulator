@@ -743,4 +743,4 @@ if run:
     }
 
     st.success("Results stored. Open the Results page in a second window to view outputs without scrolling.")
-    st.page_link("pages/Results.py", label="Open Results page", icon="📈")
+    st.page_link("pages/results.py", label="Open Results page", icon="📈")
