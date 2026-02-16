@@ -4,7 +4,6 @@ import numpy as np
 
 from core import (
     init_state,
-    sync_widget_keys,
     run_simulations,
     get_skeleton_from_state,
     plot_true_vs_prior,
@@ -25,13 +24,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# one-time: align widget visuals with defaults when first opening Playground
-if not st.session_state.get("_playground_synced", False):
-    sync_widget_keys(force_defaults=True)
-    st.session_state["_playground_synced"] = True
-    st.rerun()
-
-# keep true_curve and widget keys consistent
+# keep true_curve and widget keys consistent (without forcing defaults)
 tc = list(st.session_state.get("true_curve", []))
 if tc:
     for i in range(len(tc)):
@@ -114,7 +107,6 @@ with col2:
 
     if st.button("Run simulations", use_container_width=True):
         run_simulations()
-
 
 with col3:
     st.subheader("CRM knobs + preview")
