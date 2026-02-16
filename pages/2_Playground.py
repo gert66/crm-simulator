@@ -139,9 +139,11 @@ with col3:
         help="Enable EWOC overdose control.\nR default: OFF",
     )
 
+f"DEBUG ewoc_enable={st.session_state.get('ewoc_enable')}"
+
 
 st.caption(
-    f"DEBUG ewoc_enable={st.session_state.get('ewoc_enable')} "
+    f"DEBUG ewoc_enable={st.session_state.get('ewoc_enable')}"
     f"ewoc_alpha={st.session_state.get('ewoc_alpha')}"
 
 st.caption(
