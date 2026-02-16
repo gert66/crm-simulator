@@ -13,6 +13,10 @@ from core import (
 
 init_state()
 
+st.error("DEBUG: Playground.py is running")
+st.stop()
+
+
 st.caption(
     f"_initialized={st.session_state.get('_initialized')} | "
     f"_do_reset={st.session_state.get('_do_reset')} | "
