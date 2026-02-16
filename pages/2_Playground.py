@@ -1,3 +1,4 @@
+# pages/2_Playground.py
 import streamlit as st
 import numpy as np
 
@@ -24,33 +25,18 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# One-time: make sure widget keys match canonical defaults on first entry
+# one-time: align widget visuals with defaults when first opening Playground
 if not st.session_state.get("_playground_synced", False):
     sync_widget_keys(force_defaults=True)
     st.session_state["_playground_synced"] = True
     st.rerun()
 
-# --- Keep true_curve and its widget keys ALWAYS in sync (prevents drop-to-zero after reruns)
+# keep true_curve and widget keys consistent
 tc = list(st.session_state.get("true_curve", []))
-n_dose = len(tc)
-
-# If widget keys exist, trust them and rebuild canonical true_curve from them
-if n_dose > 0:
-    have_any_widget = any((f"true_p_{i}" in st.session_state) for i in range(n_dose))
-    if have_any_widget:
-        new_tc = []
-        for i in range(n_dose):
-            v = st.session_state.get(f"true_p_{i}", tc[i])
-            try:
-                new_tc.append(float(v))
-            except Exception:
-                new_tc.append(float(tc[i]))
-        st.session_state["true_curve"] = new_tc
-        tc = new_tc
-
-    # Now force widget keys to mirror canonical true_curve (safe before widget creation)
-    for i in range(n_dose):
-        st.session_state[f"true_p_{i}"] = float(tc[i])
+if tc:
+    for i in range(len(tc)):
+        st.session_state[f"true_p_{i}"] = float(st.session_state.get(f"true_p_{i}", tc[i]))
+    sync_true_curve_from_widgets()
 
 true_curve = list(st.session_state["true_curve"])
 n_dose = len(true_curve)
@@ -58,9 +44,6 @@ labels = dose_labels(n_dose)
 
 col1, col2, col3 = st.columns([1.05, 1.10, 1.25], gap="large")
 
-# --------------------------------------------------
-# TRUE DLT CURVE (ALWAYS EDITABLE)
-# --------------------------------------------------
 with col1:
     st.subheader("True acute DLT curve")
 
@@ -81,9 +64,6 @@ with col1:
     true_mtd_idx0 = int(np.argmin(np.abs(arr - target)))
     st.caption(f"True MTD (closest to target) = L{true_mtd_idx0}")
 
-# --------------------------------------------------
-# PRIOR PLAYGROUND
-# --------------------------------------------------
 with col2:
     st.subheader("Prior playground")
 
@@ -101,7 +81,7 @@ with col2:
         0.50,
         step=0.01,
         key="prior_target",
-        help="Prior guess of DLT at the prior MTD.\nR default (target): 0.15",
+        help="Prior guess of DLT at the prior MTD.\nR default (prior.target.acute): 0.15",
     )
 
     st.slider(
@@ -119,7 +99,7 @@ with col2:
         n_dose,
         step=1,
         key="prior_mtd",
-        help="Dose level that the prior target corresponds to.\nR default (nu): 3",
+        help="Dose level that the prior target corresponds to.\nR default (prior.MTD.acute): 3",
     )
 
     st.slider(
@@ -136,9 +116,6 @@ with col2:
         run_simulations()
         st.rerun()
 
-# --------------------------------------------------
-# CRM KNOBS + PREVIEW
-# --------------------------------------------------
 with col3:
     st.subheader("CRM knobs + preview")
 
@@ -169,12 +146,11 @@ with col3:
         0.50,
         step=0.01,
         key="ewoc_alpha",
-        disabled=(not st.session_state["ewoc_enable"]),
+        disabled=(not bool(st.session_state.get("ewoc_enable", False))),
         help="EWOC threshold (smaller = stricter).\nR default: 0.25",
     )
 
     prior_curve = get_skeleton_from_state(n_dose)
-
     fig = plot_true_vs_prior(
         true_p=true_curve,
         prior_p=prior_curve,
@@ -185,9 +161,6 @@ with col3:
     fig.tight_layout()
     st.pyplot(fig, clear_figure=True, use_container_width=True)
 
-# --------------------------------------------------
-# RESULTS
-# --------------------------------------------------
 res = st.session_state.get("results", None)
 meta = st.session_state.get("results_meta", None)
 last_error = st.session_state.get("last_error", None)
