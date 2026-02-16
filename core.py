@@ -209,26 +209,37 @@ def _import_simplesim():
 
 def build_payload() -> Dict[str, Any]:
     s = st.session_state
-    return {
-        "target": float(s["target"]),
-        "start_dose_level": int(s["start_dose_level"]) - 1,  # to 0-based
-        "n_sims": int(s["n_sims"]),
-        "seed": int(s["seed"]),
-        "max_n_6p3": int(s["max_n_6p3"]),
-        "max_n_crm": int(s["max_n_crm"]),
-        "cohort_size": int(s["cohort_size"]),
-        "n_prior_start_no_dlt": int(s.get("n_prior_start_no_dlt", 0)),
-        "true_curve": list(map(float, s["true_curve"])),
-        "skeleton_model": s["skeleton_model"],
-        "prior_target": float(s["prior_target"]),
-        "delta": float(s["delta"]),
-        "prior_mtd_1based": int(s["prior_mtd"]),
-        "logistic_intercept": float(s["logistic_intercept"]),
-        "prior_sigma_theta": float(s["prior_sigma_theta"]),
-        "burnin_until_first_dlt": bool(s["burnin_until_first_dlt"]),
-        "ewoc_enable": bool(s["ewoc_enable"]),
-        "ewoc_alpha": float(s["ewoc_alpha"]),
+
+    payload = {
+        "target": float(s.get("target", DEFAULTS.target)),
+        "start_dose_level": int(s.get("start_dose_level", DEFAULTS.start_dose_level)) - 1,
+        "n_sims": int(s.get("n_sims", DEFAULTS.n_sims)),
+        "seed": int(s.get("seed", DEFAULTS.seed)),
+
+        # sample sizes
+        "max_n_6p3": int(s.get("max_n_6p3", DEFAULTS.max_n_6p3)),
+        "cohort_size_6p3": int(s.get("cohort_size_6p3", DEFAULTS.cohort_size_6p3)),
+        "max_n_crm": int(s.get("max_n_crm", getattr(DEFAULTS, "max_n_crm", DEFAULTS.max_n_6p3))),
+
+        # prior info
+        "n_prior_start_no_dlt": int(s.get("n_prior_start_no_dlt", DEFAULTS.n_prior_start_no_dlt)),
+
+        # curves / prior playground
+        "true_curve": list(map(float, s.get("true_curve", list(DEFAULTS.true_curve)))),
+        "skeleton_model": s.get("skeleton_model", DEFAULTS.skeleton_model),
+        "prior_target": float(s.get("prior_target", DEFAULTS.prior_target)),
+        "delta": float(s.get("delta", DEFAULTS.delta)),
+        "prior_mtd_1based": int(s.get("prior_mtd", DEFAULTS.prior_mtd)),
+        "logistic_intercept": float(s.get("logistic_intercept", DEFAULTS.logistic_intercept)),
+
+        # crm knobs
+        "prior_sigma_theta": float(s.get("prior_sigma_theta", DEFAULTS.prior_sigma_theta)),
+        "burnin_until_first_dlt": bool(s.get("burnin_until_first_dlt", DEFAULTS.burnin_until_first_dlt)),
+        "ewoc_enable": bool(s.get("ewoc_enable", DEFAULTS.ewoc_enable)),
+        "ewoc_alpha": float(s.get("ewoc_alpha", DEFAULTS.ewoc_alpha)),
     }
+    return payload
+
 
 
 def run_simulations() -> None:
