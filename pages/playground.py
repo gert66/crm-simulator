@@ -151,7 +151,7 @@ with st.form("playground_form", border=False):
         )
 
         # Put the RUN button under the middle column
-        run_clicked = st.form_submit_button("Run simulations", type="primary", use_container_width=True)
+        run_clicked = st.form_submit_button("Run simulations", use_container_width=True)
 
         # compact skeleton preview line
         sk_preview = get_skeleton_from_state(st)
