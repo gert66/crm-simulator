@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from typing import Any, Dict, Tuple
-
 import numpy as np
 
 
@@ -48,6 +47,7 @@ def _simulate_6p3_trial(
     start_idx: int,
     cohort_size: int,
     max_n: int,
+    n_prior_start_no_dlt: int,
 ) -> Tuple[int, np.ndarray, int, int]:
     n_dose = len(true_curve)
     treated = np.zeros(n_dose, dtype=int)
@@ -55,9 +55,18 @@ def _simulate_6p3_trial(
 
     dose = int(np.clip(start_idx, 0, n_dose - 1))
     total_treated = 0
-
-    prev_dose = dose
     stopped = False
+
+    # For 6+3, only incorporate FULL cohorts as already completed at start dose (0 DLT).
+    if n_prior_start_no_dlt > 0:
+        full = (int(n_prior_start_no_dlt) // int(max(1, cohort_size))) * int(cohort_size)
+        full = int(min(full, max_n))
+        treated[dose] += full
+        total_treated += full
+
+        # If we have already a full cohort with 0 DLT at start dose, the design would have escalated.
+        if full >= cohort_size and dlts[dose] == 0 and dose < n_dose - 1:
+            dose = min(dose + 1, n_dose - 1)
 
     while not stopped and total_treated < max_n:
         n = min(cohort_size, max_n - total_treated)
@@ -69,25 +78,26 @@ def _simulate_6p3_trial(
         if n < cohort_size:
             break
 
-        if treated[dose] == cohort_size:
-            d = dlts[dose]
+        # Decision based on current dose totals
+        d = dlts[dose]
+        t = treated[dose]
+
+        # 6+3 logic (simple)
+        if t == cohort_size:
             if d == 0:
-                prev_dose = dose
                 dose = min(dose + 1, n_dose - 1)
-                if dose == prev_dose and dose == n_dose - 1:
-                    stopped = True
+                if dose == n_dose - 1:
+                    # allow one more cohort at top, then stop naturally by max_n
+                    pass
             elif d == 1:
-                continue
+                continue  # treat 3 more at same dose
             else:
                 dose = max(dose - 1, 0)
                 stopped = True
         else:
-            d = dlts[dose]
+            # after 6 at same dose
             if d <= 1:
-                prev_dose = dose
                 dose = min(dose + 1, n_dose - 1)
-                if dose == prev_dose and dose == n_dose - 1:
-                    stopped = True
             else:
                 dose = max(dose - 1, 0)
                 stopped = True
@@ -98,9 +108,6 @@ def _simulate_6p3_trial(
 
 
 def _ewoc_allowed(p_mean: np.ndarray, a: np.ndarray, b: np.ndarray, target: float, alpha: float) -> np.ndarray:
-    # Pr(p > target) = 1 - CDF_beta(target; a, b)
-    # Use a fast Monte Carlo approx to avoid SciPy dependency.
-    # Small draws, adequate for filtering.
     draws = 200
     rng = np.random.default_rng(12345)
     samp = rng.beta(a[:, None], b[:, None], size=(len(a), draws))
@@ -130,19 +137,27 @@ def _simulate_crm_trial(
     total_treated = 0
     first_dlt_seen = False
 
-    # --- incorporate "already treated at start dose with 0 DLT" ---
+    # incorporate "already treated at start dose with 0 DLT"
     if n_prior_start_no_dlt > 0:
-        treated[dose] += int(n_prior_start_no_dlt)
-        total_treated += int(n_prior_start_no_dlt)
+        add = int(min(int(n_prior_start_no_dlt), max_n))
+        treated[dose] += add
+        total_treated += add
 
-    # --- map prior_sigma_theta -> prior strength (kappa) ---
+    # map prior_sigma_theta -> strength (kappa): smaller sigma -> stronger prior
     sigma = float(max(0.10, prior_sigma_theta))
     base_kappa = 6.0
-    kappa = base_kappa / (sigma * sigma)
-    kappa = float(np.clip(kappa, 0.5, 50.0))
+    kappa = float(np.clip(base_kappa / (sigma * sigma), 0.5, 50.0))
 
     a0 = np.clip(skeleton * kappa, 0.5, None)
     b0 = np.clip((1.0 - skeleton) * kappa, 0.5, None)
+
+    # If we already used up max_n with prior patients, choose MTD based on prior-only posterior
+    if total_treated >= max_n:
+        a = a0 + dlts
+        b = b0 + treated - dlts
+        p_mean = a / (a + b)
+        mtd = int(np.argmin(np.abs(p_mean - target)))
+        return mtd, treated, total_treated, int(dlts.sum())
 
     while total_treated < max_n:
         n = min(cohort_size, max_n - total_treated)
@@ -156,8 +171,6 @@ def _simulate_crm_trial(
 
         if burnin_until_first_dlt and not first_dlt_seen:
             dose = min(dose + 1, n_dose - 1)
-            if dose == n_dose - 1 and total_treated >= max_n:
-                break
             continue
 
         a = a0 + dlts
@@ -175,10 +188,9 @@ def _simulate_crm_trial(
                 else:
                     cand = int(np.argmin(p_mean))
 
-        if cand > dose + 1:
-            cand = dose + 1
-        if cand < dose - 1:
-            cand = dose - 1
+        # restrict step size
+        cand = min(cand, dose + 1)
+        cand = max(cand, dose - 1)
         dose = int(np.clip(cand, 0, n_dose - 1))
 
     a = a0 + dlts
@@ -199,12 +211,12 @@ def run_simulations(payload: Dict[str, Any]) -> Dict[str, Any]:
     n_sims = int(payload["n_sims"])
     seed = int(payload["seed"])
 
+    max_n_6p3 = int(payload["max_n_6p3"])
+    cohort_size = int(payload["cohort_size_6p3"])
+    max_n_crm = int(payload.get("max_n_crm", max_n_6p3))
+
     prior_sigma_theta = float(payload.get("prior_sigma_theta", 1.0))
     n_prior_start_no_dlt = int(payload.get("n_prior_start_no_dlt", 0))
-
-
-    max_n_6p3 = int(payload["max_n_6p3"])
-    cohort_size_6p3 = int(payload["cohort_size_6p3"])
 
     skeleton = _get_skeleton(payload, n_dose)
 
@@ -230,8 +242,9 @@ def run_simulations(payload: Dict[str, Any]) -> Dict[str, Any]:
             rng=rng,
             true_curve=true_curve,
             start_idx=start_idx,
-            cohort_size=cohort_size_6p3,
+            cohort_size=cohort_size,
             max_n=max_n_6p3,
+            n_prior_start_no_dlt=n_prior_start_no_dlt,
         )
         mtd_counts_6[mtd6] += 1
         treated_sum_6 += tr6
@@ -244,20 +257,18 @@ def run_simulations(payload: Dict[str, Any]) -> Dict[str, Any]:
             skeleton=skeleton,
             target=target,
             start_idx=start_idx,
-            cohort_size=cohort_size_6p3,
-            max_n=max_n_6p3,
+            cohort_size=cohort_size,
+            max_n=max_n_crm,
             burnin_until_first_dlt=burnin_until_first_dlt,
             ewoc_enable=ewoc_enable,
             ewoc_alpha=ewoc_alpha,
             prior_sigma_theta=prior_sigma_theta,
             n_prior_start_no_dlt=n_prior_start_no_dlt,
         )
-
         mtd_counts_c[mtdc] += 1
         treated_sum_c += trc
         total_treated_c += nc
         total_dlts_c += dc
-
 
     mtd_probs_6p3 = (mtd_counts_6 / float(n_sims)).tolist()
     mtd_probs_crm = (mtd_counts_c / float(n_sims)).tolist()
