@@ -743,4 +743,11 @@ if run:
     }
 
     st.success("Results stored. Open the Results page in a second window to view outputs without scrolling.")
-    st.page_link("pages/results.py", label="Open Results page", icon="📈")
+st.success("Results stored. Open the Results page from the left sidebar. Tip: duplicate this tab and put Results on your second monitor.")
+
+if st.button("Go to Results"):
+    if hasattr(st, "switch_page"):
+        st.switch_page("pages/results.py")
+    else:
+        st.info("Use the left sidebar to open Results (switch_page not available in this Streamlit version).")
+
