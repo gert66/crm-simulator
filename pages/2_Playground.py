@@ -24,10 +24,33 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# One-time: make sure widget keys match canonical defaults on first entry
 if not st.session_state.get("_playground_synced", False):
     sync_widget_keys(force_defaults=True)
     st.session_state["_playground_synced"] = True
     st.rerun()
+
+# --- Keep true_curve and its widget keys ALWAYS in sync (prevents drop-to-zero after reruns)
+tc = list(st.session_state.get("true_curve", []))
+n_dose = len(tc)
+
+# If widget keys exist, trust them and rebuild canonical true_curve from them
+if n_dose > 0:
+    have_any_widget = any((f"true_p_{i}" in st.session_state) for i in range(n_dose))
+    if have_any_widget:
+        new_tc = []
+        for i in range(n_dose):
+            v = st.session_state.get(f"true_p_{i}", tc[i])
+            try:
+                new_tc.append(float(v))
+            except Exception:
+                new_tc.append(float(tc[i]))
+        st.session_state["true_curve"] = new_tc
+        tc = new_tc
+
+    # Now force widget keys to mirror canonical true_curve (safe before widget creation)
+    for i in range(n_dose):
+        st.session_state[f"true_p_{i}"] = float(tc[i])
 
 true_curve = list(st.session_state["true_curve"])
 n_dose = len(true_curve)
@@ -74,28 +97,36 @@ with col2:
 
     st.slider(
         "Prior target",
-        0.01, 0.50, step=0.01,
+        0.01,
+        0.50,
+        step=0.01,
         key="prior_target",
         help="Prior guess of DLT at the prior MTD.\nR default (target): 0.15",
     )
 
     st.slider(
         "Halfwidth (delta)",
-        0.01, 0.30, step=0.01,
+        0.01,
+        0.30,
+        step=0.01,
         key="delta",
         help="Spacing used for empiric skeleton.\nR default (halfwidth): 0.10",
     )
 
     st.slider(
         "Prior MTD (1-based)",
-        1, n_dose, step=1,
+        1,
+        n_dose,
+        step=1,
         key="prior_mtd",
         help="Dose level that the prior target corresponds to.\nR default (nu): 3",
     )
 
     st.slider(
         "Logistic intercept",
-        -5.0, 5.0, step=0.1,
+        -5.0,
+        5.0,
+        step=0.1,
         key="logistic_intercept",
         disabled=(st.session_state["skeleton_model"] != "logistic"),
         help="Intercept for logistic skeleton.\nR default: 0.0",
@@ -113,7 +144,9 @@ with col3:
 
     st.slider(
         "Prior sigma on theta",
-        0.10, 3.00, step=0.05,
+        0.10,
+        3.00,
+        step=0.05,
         key="prior_sigma_theta",
         help="Prior SD for the CRM model parameter.\nR default: 1.0",
     )
@@ -132,7 +165,9 @@ with col3:
 
     st.slider(
         "EWOC alpha",
-        0.01, 0.50, step=0.01,
+        0.01,
+        0.50,
+        step=0.01,
         key="ewoc_alpha",
         disabled=(not st.session_state["ewoc_enable"]),
         help="EWOC threshold (smaller = stricter).\nR default: 0.25",
@@ -146,7 +181,6 @@ with col3:
         target=float(st.session_state["target"]),
         true_mtd_idx0=true_mtd_idx0,
     )
-
     fig.set_size_inches(3.2, 1.7)
     fig.tight_layout()
     st.pyplot(fig, clear_figure=True, use_container_width=True)
@@ -198,6 +232,8 @@ if res is not None:
     with r2:
         fig2 = plt.figure(figsize=(4.8, 3.25), dpi=140)
         ax = fig2.add_subplot(111)
+        xs = np.arange(n_dose)
+        w = 0.38
         ax.bar(xs - w / 2, n6, width=w, label="6+3")
         ax.bar(xs + w / 2, nc, width=w, label="CRM")
         ax.set_xticks(xs)
