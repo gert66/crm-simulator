@@ -48,12 +48,18 @@ DEFAULTS = Defaults()
 
 def _hard_apply_defaults() -> None:
     s = st.session_state
+
+    # Reset per-page "one-time sync" flags so widgets re-align after a reset
+    s.pop("_playground_synced", None)
+    s.pop("_essentials_synced", None)  # alleen als je zoiets gebruikt
+
     for k, v in asdict(DEFAULTS).items():
         if k == "true_curve":
             s["true_curve"] = list(v)
         else:
             s[k] = v
 
+    # clean widget keys for true curve
     for k in list(s.keys()):
         if k.startswith("true_p_"):
             del s[k]
