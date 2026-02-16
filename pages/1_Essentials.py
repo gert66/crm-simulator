@@ -3,7 +3,6 @@ import streamlit as st
 
 from core import init_state, reset_to_defaults, DEFAULTS
 
-st.set_page_config(page_title="Essentials", layout="wide")
 init_state()
 
 st.markdown(
