@@ -11,7 +11,6 @@ from core import (
     sync_true_curve_from_widgets,
 )
 
-st.set_page_config(page_title="Playground", layout="wide")
 init_state()
 
 st.markdown(
