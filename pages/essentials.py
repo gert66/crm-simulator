@@ -1,100 +1,68 @@
 import streamlit as st
-from core import (
-    init_state, reset_to_defaults,
-    K_TARGET, K_START_DOSE, K_MAX_N_SERUM, K_COHORT, K_N_SIMS, K_SEED, K_GAUSS_POINTS,
-    DOSE_LABELS,
-)
+from core import init_state, DOSE_LABELS
 
-# Compact spacing
+st.set_page_config(page_title="Essentials", layout="wide")
+
+init_state()
+
 st.markdown(
     """
     <style>
-      .block-container { padding-top: 1.0rem; padding-bottom: 1.2rem; }
-      h1, h2, h3 { margin-bottom: 0.35rem; }
-      .stNumberInput, .stSelectbox, .stSlider { margin-bottom: 0.2rem; }
+    .block-container { padding-top: 1.2rem; padding-bottom: 1.0rem; }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
-init_state()
+st.subheader("Essentials")
 
-# Keep title small and clean
-st.header("Essentials")
+colA, colB, colC = st.columns([1.1, 1.1, 1.0], gap="large")
 
-c1, c2, c3 = st.columns([1, 1, 1])
-
-with c1:
-    st.subheader("Study")
-    st.slider(
-        "Target toxicity",
-        min_value=0.05,
-        max_value=0.50,
-        step=0.01,
-        key=K_TARGET,
-        help="Target DLT probability (e.g., 0.15).",
+with colA:
+    st.number_input(
+        "Study target (DLT)",
+        min_value=0.01, max_value=0.60, step=0.01,
+        key="target",
     )
     st.selectbox(
         "Start dose level",
         options=list(range(len(DOSE_LABELS))),
-        format_func=lambda i: DOSE_LABELS[i].replace("\n", " "),
-        key=K_START_DOSE,
-        help="Dose level where escalation starts (0-based).",
-    )
-
-with c2:
-    st.subheader("6+3 design")
-    st.number_input(
-        "Max sample size (serum)",
-        min_value=6,
-        max_value=60,
-        step=3,
-        key=K_MAX_N_SERUM,
-        help="Hard cap for the 6+3 design. You wanted default = 27.",
+        format_func=lambda i: f"{i}  ({DOSE_LABELS[i].replace(chr(10), ' ')})",
+        key="start_dose",
     )
     st.number_input(
         "Cohort size",
-        min_value=1,
-        max_value=12,
-        step=1,
-        key=K_COHORT,
-        help="Patients per cohort.",
+        min_value=1, max_value=12, step=1,
+        key="cohort_size",
     )
 
-with c3:
-    st.subheader("Simulation")
+with colB:
+    st.number_input(
+        "Max sample size (6+3)",
+        min_value=6, max_value=120, step=3,
+        key="max_n_63",
+        help="Default = 27",
+    )
     st.number_input(
         "Number of simulated trials",
-        min_value=50,
-        max_value=20000,
-        step=50,
-        key=K_N_SIMS,
-        help="Monte Carlo repetitions.",
+        min_value=50, max_value=20000, step=50,
+        key="n_sims",
     )
     st.number_input(
         "Random seed",
-        min_value=0,
-        max_value=10_000_000,
-        step=1,
-        key=K_SEED,
-        help="Seed for reproducibility.",
+        min_value=0, max_value=10**9, step=1,
+        key="seed",
     )
+
+with colC:
     st.number_input(
-        "Gaussian quadrature points",
-        min_value=5,
-        max_value=50,
-        step=1,
-        key=K_GAUSS_POINTS,
-        help="Numerical integration points (used by CRM parts if applicable).",
+        "Guardrail: max final MTD level",
+        min_value=0, max_value=len(DOSE_LABELS) - 1, step=1,
+        key="guardrail_max_mtd",
+    )
+    st.toggle(
+        "Allow dose skipping (CRM step > 1)",
+        key="allow_skip",
     )
 
-st.divider()
-
-cA, cB = st.columns([1, 2])
-with cA:
-    if st.button("Reset essentials to defaults", use_container_width=True):
-        reset_to_defaults(scope="essentials")
-        st.rerun()
-
-with cB:
-    st.caption("Tip: Essentials is deliberately stable. Playground controls live on the Playground tab.")
+st.caption("Go to Playground to tune priors and run simulations.")
