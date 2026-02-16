@@ -4,6 +4,7 @@ import numpy as np
 
 from core import (
     init_state,
+    sync_widget_keys,
     run_simulations,
     get_skeleton_from_state,
     plot_true_vs_prior,
@@ -14,14 +15,20 @@ from core import (
 st.set_page_config(page_title="Playground", layout="wide")
 init_state()
 
-# ---- force correct widget defaults on first load ----
-from core import sync_widget_keys
+st.markdown(
+    """
+    <style>
+      .block-container { padding-top: 1.2rem; padding-bottom: 1.2rem; }
+      h1, h2, h3 { margin-top: 0.4rem; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 if not st.session_state.get("_playground_synced", False):
     sync_widget_keys(force_defaults=True)
     st.session_state["_playground_synced"] = True
     st.rerun()
-
 
 true_curve = list(st.session_state["true_curve"])
 n_dose = len(true_curve)
@@ -31,7 +38,11 @@ col1, col2, col3 = st.columns([1.05, 1.10, 1.25], gap="large")
 
 with col1:
     st.subheader("True acute DLT curve")
-    st.toggle("Edit true curve", key="edit_true_curve")
+    st.toggle(
+        "Edit true curve",
+        key="edit_true_curve",
+        help="Enable editing of the true DLT probabilities per dose.\nR default: fixed scenario",
+    )
 
     if st.session_state["edit_true_curve"]:
         for i, lab in enumerate(labels):
@@ -42,11 +53,21 @@ with col1:
                 step=0.01,
                 key=f"true_p_{i}",
                 on_change=sync_true_curve_from_widgets,
+                help="True probability of acute DLT at this dose.\nR default (P.acute.real): scenario-specific",
             )
         true_curve = list(st.session_state["true_curve"])
     else:
         for i, lab in enumerate(labels):
-            st.caption(f"{lab}: **{float(true_curve[i]):.2f}**")
+            st.number_input(
+                lab,
+                min_value=0.0,
+                max_value=0.99,
+                step=0.01,
+                value=float(true_curve[i]),
+                disabled=True,
+                key=f"true_p_ro_{i}",
+                help="True probability of acute DLT at this dose.\nR default (P.acute.real): scenario-specific",
+            )
 
     target = float(st.session_state["target"])
     arr = np.array(true_curve, dtype=float)
@@ -55,17 +76,37 @@ with col1:
 
 with col2:
     st.subheader("Prior playground")
-    st.radio("Skeleton model", ["empiric", "logistic"], key="skeleton_model", horizontal=True)
+    st.radio(
+        "Skeleton model",
+        ["empiric", "logistic"],
+        key="skeleton_model",
+        horizontal=True,
+        help="How the prior skeleton is constructed.\nR default: empiric",
+    )
 
-    st.slider("Prior target", min_value=0.01, max_value=0.50, step=0.01, key="prior_target")
-    st.slider("Halfwidth (delta)", min_value=0.01, max_value=0.30, step=0.01, key="delta")
-
+    st.slider(
+        "Prior target",
+        min_value=0.01,
+        max_value=0.50,
+        step=0.01,
+        key="prior_target",
+        help="Prior guess of DLT at the prior MTD.\nR default (target): 0.15",
+    )
+    st.slider(
+        "Halfwidth (delta)",
+        min_value=0.01,
+        max_value=0.30,
+        step=0.01,
+        key="delta",
+        help="Spacing used for empiric skeleton.\nR default (halfwidth): 0.10",
+    )
     st.slider(
         "Prior MTD (1-based)",
         min_value=1,
         max_value=n_dose,
         step=1,
         key="prior_mtd",
+        help="Dose level that the prior target corresponds to.\nR default (nu): 3",
     )
 
     st.slider(
@@ -75,26 +116,34 @@ with col2:
         step=0.1,
         key="logistic_intercept",
         disabled=(st.session_state["skeleton_model"] != "logistic"),
+        help="Intercept for logistic skeleton.\nR default: 0.0",
     )
 
-    run_disabled = bool(st.session_state.get("is_running", False))
-    if st.button("Run simulations", use_container_width=True, disabled=run_disabled):
-        with st.spinner("Running simulations..."):
-            run_simulations()
+    if st.button("Run simulations", use_container_width=True, help="Run simulations with current settings."):
+        run_simulations()
         st.rerun()
-
-    sk_preview = get_skeleton_from_state(n_dose)
-    st.caption("Skeleton: " + ", ".join(f"{v:.3f}" for v in sk_preview))
-
-    err = st.session_state.get("last_error", None)
-    if err:
-        st.error(err)
 
 with col3:
     st.subheader("CRM knobs + preview")
-    st.slider("Prior sigma on theta", min_value=0.10, max_value=3.00, step=0.05, key="prior_sigma_theta")
-    st.toggle("Burn-in until first DLT", key="burnin_until_first_dlt")
-    st.toggle("Enable EWOC overdose control", key="ewoc_enable")
+
+    st.slider(
+        "Prior sigma on theta",
+        min_value=0.10,
+        max_value=3.00,
+        step=0.05,
+        key="prior_sigma_theta",
+        help="Prior SD for the CRM model parameter.\nR default: 1.0",
+    )
+    st.toggle(
+        "Burn-in until first DLT",
+        key="burnin_until_first_dlt",
+        help="If enabled, run a simple escalation phase until first observed DLT, then switch to CRM.\nR default: ON",
+    )
+    st.toggle(
+        "Enable EWOC overdose control",
+        key="ewoc_enable",
+        help="Enable EWOC overdose control.\nR default: OFF",
+    )
     st.slider(
         "EWOC alpha",
         min_value=0.01,
@@ -102,6 +151,7 @@ with col3:
         step=0.01,
         key="ewoc_alpha",
         disabled=(not st.session_state["ewoc_enable"]),
+        help="EWOC threshold (smaller = stricter).\nR default: 0.25",
     )
 
     prior_curve = get_skeleton_from_state(n_dose)
@@ -115,6 +165,10 @@ with col3:
 
 res = st.session_state.get("results", None)
 meta = st.session_state.get("results_meta", None)
+last_error = st.session_state.get("last_error", None)
+
+if last_error:
+    st.error(last_error)
 
 if res is not None:
     st.divider()
@@ -135,7 +189,7 @@ if res is not None:
     with r1:
         import matplotlib.pyplot as plt
 
-        fig1 = plt.figure(figsize=(4.8, 2.4), dpi=140)
+        fig1 = plt.figure(figsize=(4.8, 3.1), dpi=140)
         ax = fig1.add_subplot(111)
         xs = np.arange(n_dose)
         w = 0.38
@@ -153,7 +207,7 @@ if res is not None:
     with r2:
         import matplotlib.pyplot as plt
 
-        fig2 = plt.figure(figsize=(4.8, 2.4), dpi=140)
+        fig2 = plt.figure(figsize=(4.8, 3.1), dpi=140)
         ax = fig2.add_subplot(111)
         xs = np.arange(n_dose)
         w = 0.38
