@@ -1,9 +1,10 @@
+# core.py
 from __future__ import annotations
 
 import importlib
 import sys
 from dataclasses import dataclass, asdict
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
 import numpy as np
 import streamlit as st
@@ -49,8 +50,52 @@ DEFAULTS = Defaults()
 # -----------------------------
 # State helpers
 # -----------------------------
+def _sync_true_curve_widget_keys() -> None:
+    s = st.session_state
+    tc = s.get("true_curve", list(DEFAULTS.true_curve))
+    if not isinstance(tc, list):
+        tc = list(tc)
+        s["true_curve"] = tc
+
+    n = len(tc)
+
+    for i in range(n):
+        k = f"true_p_{i}"
+        if k not in s:
+            s[k] = float(tc[i])
+        else:
+            try:
+                s[k] = float(tc[i])
+            except Exception:
+                s[k] = float(DEFAULTS.true_curve[i]) if i < len(DEFAULTS.true_curve) else 0.0
+
+    for k in list(s.keys()):
+        if k.startswith("true_p_"):
+            try:
+                idx = int(k.split("_")[-1])
+            except Exception:
+                continue
+            if idx >= n:
+                del s[k]
+
+
+def sync_true_curve_from_widgets() -> None:
+    s = st.session_state
+    tc = s.get("true_curve", list(DEFAULTS.true_curve))
+    if not isinstance(tc, list):
+        tc = list(tc)
+    n = len(tc)
+    new_vals: List[float] = []
+    for i in range(n):
+        v = s.get(f"true_p_{i}", tc[i])
+        try:
+            new_vals.append(float(v))
+        except Exception:
+            new_vals.append(float(tc[i]))
+    s["true_curve"] = new_vals
+
+
 def init_state() -> None:
-    """Initialize session_state keys once. Never overwrite user-changed values."""
     s = st.session_state
 
     # Essentials
@@ -66,7 +111,7 @@ def init_state() -> None:
     s.setdefault("skeleton_model", DEFAULTS.skeleton_model)
     s.setdefault("prior_target", DEFAULTS.prior_target)
     s.setdefault("delta", DEFAULTS.delta)
-    s.setdefault("prior_mtd", DEFAULTS.prior_mtd)  # keep 1-based in UI
+    s.setdefault("prior_mtd", DEFAULTS.prior_mtd)
     s.setdefault("logistic_intercept", DEFAULTS.logistic_intercept)
 
     # CRM knobs
@@ -78,26 +123,38 @@ def init_state() -> None:
     # True curve
     s.setdefault("edit_true_curve", DEFAULTS.edit_true_curve)
     s.setdefault("true_curve", list(DEFAULTS.true_curve))
+    _sync_true_curve_widget_keys()
 
     # Results store
     s.setdefault("results", None)
     s.setdefault("results_meta", None)
+    s.setdefault("last_error", None)
+    s.setdefault("is_running", False)
 
 
 def reset_to_defaults() -> None:
-    """Hard reset everything to Defaults."""
     s = st.session_state
+
+    # Clear widget keys that can stick across reruns and block reset visuals
+    for k in list(s.keys()):
+        if k.startswith("true_p_"):
+            del s[k]
+
     for k, v in asdict(DEFAULTS).items():
         if k == "true_curve":
             s[k] = list(v)
         else:
             s[k] = v
+
+    _sync_true_curve_widget_keys()
+
     s["results"] = None
     s["results_meta"] = None
+    s["last_error"] = None
+    s["is_running"] = False
 
 
 def dose_labels(n: int) -> List[str]:
-    # Pas dit gerust aan naar jouw echte dose labels
     base = ["5×4 Gy", "5×5 Gy", "5×6 Gy", "5×7 Gy", "5×8 Gy"]
     if n <= len(base):
         return [f"L{i} {base[i]}" for i in range(n)]
@@ -112,36 +169,19 @@ def clamp(x: float, lo: float, hi: float) -> float:
 
 
 def build_empiric_skeleton(n_dose: int, prior_target: float, delta: float, prior_mtd_1based: int) -> np.ndarray:
-    """
-    Simple empiric skeleton: monotone, centered around target at prior_mtd.
-    This is a pragmatic skeleton for the UI preview.
-    """
     m = int(prior_mtd_1based) - 1
     m = max(0, min(n_dose - 1, m))
-    vals = []
-    for i in range(n_dose):
-        vals.append(prior_target + (i - m) * delta)
+    vals = [prior_target + (i - m) * delta for i in range(n_dose)]
     sk = np.array([clamp(v, 0.0001, 0.9999) for v in vals], dtype=float)
-    # enforce monotone nondecreasing
     sk = np.maximum.accumulate(sk)
     return sk
 
 
 def build_logistic_skeleton(n_dose: int, prior_target: float, prior_mtd_1based: int, intercept: float) -> np.ndarray:
-    """
-    Logistic skeleton: choose slope so that p(mtd) ~= prior_target with given intercept.
-    We spread doses as 0..n-1.
-    """
     m = int(prior_mtd_1based) - 1
     m = max(0, min(n_dose - 1, m))
-    # logistic: p = 1/(1+exp(-(a + b*x)))
-    # pick b such that at x=m, p=prior_target -> a + b*m = logit(prior_target)
-    # with fixed a=intercept -> b = (logit(prior_target) - a)/m (if m==0, small b)
     logit = np.log(prior_target / (1.0 - prior_target))
-    if m == 0:
-        b = 0.25
-    else:
-        b = (logit - intercept) / m
+    b = 0.25 if m == 0 else (logit - intercept) / m
     xs = np.arange(n_dose, dtype=float)
     z = intercept + b * xs
     sk = 1.0 / (1.0 + np.exp(-z))
@@ -186,19 +226,18 @@ def plot_true_vs_prior(true_p: List[float], prior_p: np.ndarray, target: float, 
 # Calling simplesim.py
 # -----------------------------
 def _import_simplesim():
-    """
-    Robust import in Streamlit Cloud.
-    Tries a few common filenames: simplesim.py / simpleSim.py.
-    """
-    # ensure repo root is on path
     if "" not in sys.path:
         sys.path.insert(0, "")
 
+    last_exc: Exception | None = None
     for name in ["simplesim", "simpleSim", "SimpleSim"]:
         try:
             return importlib.import_module(name)
-        except ModuleNotFoundError:
+        except Exception as e:
+            last_exc = e
             continue
+    if last_exc:
+        raise last_exc
     raise ModuleNotFoundError("Could not import simplesim module. Ensure simplesim.py is in repo root.")
 
 
@@ -206,7 +245,7 @@ def build_payload() -> Dict[str, Any]:
     s = st.session_state
     payload = {
         "target": float(s["target"]),
-        "start_dose_level": int(s["start_dose_level"]) - 1,  # convert to 0-based for simulator
+        "start_dose_level": int(s["start_dose_level"]) - 1,
         "n_sims": int(s["n_sims"]),
         "seed": int(s["seed"]),
         "max_n_6p3": int(s["max_n_6p3"]),
@@ -226,10 +265,17 @@ def build_payload() -> Dict[str, Any]:
 
 
 def run_simulations() -> None:
+    s = st.session_state
+    s["last_error"] = None
+
+    try:
+        sync_true_curve_from_widgets()
+    except Exception:
+        pass
+
     sim = _import_simplesim()
     payload = build_payload()
 
-    # We proberen een paar function names zodat jij simplesim.py niet hoeft te hernoemen
     fn = None
     for cand in ["run_simulations", "simulate", "run", "main"]:
         if hasattr(sim, cand):
@@ -238,10 +284,15 @@ def run_simulations() -> None:
     if fn is None:
         raise AttributeError("simplesim.py must define one of: run_simulations / simulate / run / main")
 
-    out = fn(payload)
-
-    st.session_state["results"] = out
-    st.session_state["results_meta"] = {
-        "n_sims": payload["n_sims"],
-        "seed": payload["seed"],
-    }
+    s["is_running"] = True
+    try:
+        out = fn(payload)
+        s["results"] = out
+        s["results_meta"] = {"n_sims": payload["n_sims"], "seed": payload["seed"]}
+    except Exception as e:
+        s["results"] = None
+        s["results_meta"] = None
+        s["last_error"] = str(e)
+        raise
+    finally:
+        s["is_running"] = False
