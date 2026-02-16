@@ -131,25 +131,47 @@ def init_state() -> None:
     s.setdefault("last_error", None)
     s.setdefault("is_running", False)
 
-def sync_widget_keys() -> None:
+def sync_widget_keys(force_defaults: bool = False) -> None:
     s = st.session_state
-    # force widget keys to equal canonical state
-    for k in [
-        "target","start_dose_level","n_sims","seed",
-        "max_n_6p3","cohort_size_6p3",
-        "skeleton_model","prior_target","delta","prior_mtd","logistic_intercept",
-        "prior_sigma_theta","burnin_until_first_dlt","ewoc_enable","ewoc_alpha",
-        "edit_true_curve",
-    ]:
-        if k in s:
-            s[k] = s[k]
+
+    mapping = {
+        "target": DEFAULTS.target,
+        "start_dose_level": DEFAULTS.start_dose_level,
+        "n_sims": DEFAULTS.n_sims,
+        "seed": DEFAULTS.seed,
+        "max_n_6p3": DEFAULTS.max_n_6p3,
+        "cohort_size_6p3": DEFAULTS.cohort_size_6p3,
+        "skeleton_model": DEFAULTS.skeleton_model,
+        "prior_target": DEFAULTS.prior_target,
+        "delta": DEFAULTS.delta,
+        "prior_mtd": DEFAULTS.prior_mtd,
+        "logistic_intercept": DEFAULTS.logistic_intercept,
+        "prior_sigma_theta": DEFAULTS.prior_sigma_theta,
+        "burnin_until_first_dlt": DEFAULTS.burnin_until_first_dlt,
+        "ewoc_enable": DEFAULTS.ewoc_enable,
+        "ewoc_alpha": DEFAULTS.ewoc_alpha,
+        "edit_true_curve": DEFAULTS.edit_true_curve,
+    }
+
+    for k, default_v in mapping.items():
+        if force_defaults:
+            s[k] = default_v
+        else:
+            # only auto-fix obvious "stuck at min" widget state
+            if k in ("prior_target", "delta", "prior_sigma_theta", "ewoc_alpha") and float(s.get(k, default_v)) <= 0.011:
+                s[k] = default_v
+            if k == "prior_mtd" and int(s.get(k, default_v)) == 1 and DEFAULTS.prior_mtd != 1:
+                s[k] = DEFAULTS.prior_mtd
+
 
 def reset_to_defaults() -> None:
-    for k in list(st.session_state.keys()):
-        del st.session_state[k]
+    s = st.session_state
+    for k in list(s.keys()):
+        del s[k]
     init_state()
-    sync_widget_keys()
+    sync_widget_keys(force_defaults=True)
     st.rerun()
+
 
     
     # Reinitialize clean defaults
