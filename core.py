@@ -23,10 +23,13 @@ class Defaults:
     max_n_6p3: int = 27
     cohort_size_6p3: int = 3
 
-    # Prior info already observed at start dose (dose = start_dose_level)
-    n_prior_start_no_dlt: int = 0  # e.g. 4 patients treated at start dose with 0 DLTs
+    # CRM (separate max)
+    max_n_crm: int = 27
 
-    # CRM / prior playground
+    # Prior info already observed at start dose (0 DLTs)
+    n_prior_start_no_dlt: int = 0
+
+    # Prior playground
     skeleton_model: str = "empiric"  # "empiric" or "logistic"
     prior_target: float = 0.15
     delta: float = 0.10
@@ -35,7 +38,7 @@ class Defaults:
 
     # CRM knobs
     prior_sigma_theta: float = 1.0
-    burnin_until_first_dlt: bool = True  # per your R script expectation
+    burnin_until_first_dlt: bool = True
     ewoc_enable: bool = False
     ewoc_alpha: float = 0.25
 
@@ -49,21 +52,19 @@ DEFAULTS = Defaults()
 def _hard_apply_defaults() -> None:
     s = st.session_state
 
-    # Reset per-page "one-time sync" flags so widgets re-align after a reset
-    s.pop("_playground_synced", None)
-    s.pop("_essentials_synced", None)  # alleen als je zoiets gebruikt
-
+    # Apply defaults
     for k, v in asdict(DEFAULTS).items():
         if k == "true_curve":
             s["true_curve"] = list(v)
         else:
             s[k] = v
 
-    # clean widget keys for true curve
+    # Remove widget-shadow keys for true curve inputs
     for k in list(s.keys()):
         if k.startswith("true_p_"):
             del s[k]
 
+    # Clear results + flags
     s["results"] = None
     s["results_meta"] = None
     s["last_error"] = None
@@ -71,6 +72,7 @@ def _hard_apply_defaults() -> None:
 
 
 def reset_to_defaults() -> None:
+    # set a flag and rerun, so we do not mutate widget state mid-run
     st.session_state["_do_reset"] = True
     st.rerun()
 
@@ -87,8 +89,15 @@ def init_state() -> None:
     s.setdefault("start_dose_level", DEFAULTS.start_dose_level)
     s.setdefault("n_sims", DEFAULTS.n_sims)
     s.setdefault("seed", DEFAULTS.seed)
+
+    # 6+3
     s.setdefault("max_n_6p3", DEFAULTS.max_n_6p3)
     s.setdefault("cohort_size_6p3", DEFAULTS.cohort_size_6p3)
+
+    # CRM
+    s.setdefault("max_n_crm", DEFAULTS.max_n_crm)
+
+    # Prior already observed
     s.setdefault("n_prior_start_no_dlt", DEFAULTS.n_prior_start_no_dlt)
 
     # Prior playground
@@ -106,6 +115,7 @@ def init_state() -> None:
 
     # True curve
     s.setdefault("true_curve", list(DEFAULTS.true_curve))
+    _sync_true_curve_widget_keys()
 
     # Results/meta/error
     s.setdefault("results", None)
@@ -114,22 +124,13 @@ def init_state() -> None:
     s.setdefault("is_running", False)
 
 
-def sync_widget_keys(force_defaults: bool = False) -> None:
-    s = st.session_state
-    if force_defaults:
-        for k, v in asdict(DEFAULTS).items():
-            if k == "true_curve":
-                s["true_curve"] = list(v)
-            else:
-                s[k] = v
-    _sync_true_curve_widget_keys()
-
-
 def _sync_true_curve_widget_keys() -> None:
     s = st.session_state
     tc = list(s.get("true_curve", []))
     for i, v in enumerate(tc):
-        s[f"true_p_{i}"] = float(v)
+        key = f"true_p_{i}"
+        if key not in s:
+            s[key] = float(v)
 
 
 def sync_true_curve_from_widgets() -> None:
@@ -224,18 +225,24 @@ def build_payload() -> Dict[str, Any]:
     s = st.session_state
     payload = {
         "target": float(s["target"]),
-        "start_dose_level": int(s["start_dose_level"]) - 1,
+        "start_dose_level": int(s["start_dose_level"]) - 1,  # 0-based inside simulator
         "n_sims": int(s["n_sims"]),
         "seed": int(s["seed"]),
+
         "max_n_6p3": int(s["max_n_6p3"]),
         "cohort_size_6p3": int(s["cohort_size_6p3"]),
+        "max_n_crm": int(s["max_n_crm"]),
+
         "n_prior_start_no_dlt": int(s.get("n_prior_start_no_dlt", 0)),
+
         "true_curve": list(map(float, s["true_curve"])),
+
         "skeleton_model": s["skeleton_model"],
         "prior_target": float(s["prior_target"]),
         "delta": float(s["delta"]),
         "prior_mtd_1based": int(s["prior_mtd"]),
         "logistic_intercept": float(s["logistic_intercept"]),
+
         "prior_sigma_theta": float(s["prior_sigma_theta"]),
         "burnin_until_first_dlt": bool(s["burnin_until_first_dlt"]),
         "ewoc_enable": bool(s["ewoc_enable"]),
@@ -267,7 +274,13 @@ def run_simulations() -> None:
         out = fn(payload)
 
         s["results"] = out
-        s["results_meta"] = {"n_sims": payload["n_sims"], "seed": payload["seed"]}
+        s["results_meta"] = {
+            "n_sims": payload["n_sims"],
+            "seed": payload["seed"],
+            "max_n_6p3": payload["max_n_6p3"],
+            "max_n_crm": payload["max_n_crm"],
+            "n_prior_start_no_dlt": payload["n_prior_start_no_dlt"],
+        }
     except Exception as e:
         s["last_error"] = f"{type(e).__name__}: {e}"
     finally:
