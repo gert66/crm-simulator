@@ -133,7 +133,16 @@ def init_state() -> None:
 
 
 def reset_to_defaults() -> None:
-    s = st.session_state
+    # Clear all user-set keys
+    for k in list(st.session_state.keys()):
+        del st.session_state[k]
+
+    # Reinitialize clean defaults
+    init_state()
+
+    # Force clean rerun
+    st.rerun()
+
 
     # Clear widget keys that can stick across reruns and block reset visuals
     for k in list(s.keys()):
