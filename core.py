@@ -123,6 +123,28 @@ def init_state() -> None:
     s.setdefault("last_error", None)
     s.setdefault("is_running", False)
 
+def sync_widget_keys(force_defaults: bool = False) -> None:
+    """
+    Keeps widget shadow-keys (true_p_0, true_p_1, ...) consistent with session_state["true_curve"].
+    Optionally hard-reset all state values to Defaults first (force_defaults=True).
+    """
+    s = st.session_state
+
+    if force_defaults:
+        # Apply defaults without clearing results here (Playground uses this once on first open)
+        for k, v in asdict(DEFAULTS).items():
+            if k == "true_curve":
+                s["true_curve"] = list(v)
+            else:
+                s[k] = v
+
+        # Ensure any old true_p_* keys don't fight the defaults
+        for k in list(s.keys()):
+            if k.startswith("true_p_"):
+                del s[k]
+
+    _sync_true_curve_widget_keys()
+
 
 def _sync_true_curve_widget_keys() -> None:
     s = st.session_state
