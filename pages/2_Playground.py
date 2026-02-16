@@ -114,7 +114,7 @@ with col2:
 
     if st.button("Run simulations", use_container_width=True):
         run_simulations()
-        st.rerun()
+
 
 with col3:
     st.subheader("CRM knobs + preview")
