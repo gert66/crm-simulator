@@ -119,6 +119,8 @@ def _simulate_crm_trial(
     burnin_until_first_dlt: bool,
     ewoc_enable: bool,
     ewoc_alpha: float,
+    prior_sigma_theta: float,
+    n_prior_start_no_dlt: int,
 ) -> Tuple[int, np.ndarray, int, int]:
     n_dose = len(true_curve)
     treated = np.zeros(n_dose, dtype=int)
@@ -128,8 +130,17 @@ def _simulate_crm_trial(
     total_treated = 0
     first_dlt_seen = False
 
-    # Prior strength: keep modest and monotone with skeleton
-    kappa = 6.0
+    # --- incorporate "already treated at start dose with 0 DLT" ---
+    if n_prior_start_no_dlt > 0:
+        treated[dose] += int(n_prior_start_no_dlt)
+        total_treated += int(n_prior_start_no_dlt)
+
+    # --- map prior_sigma_theta -> prior strength (kappa) ---
+    sigma = float(max(0.10, prior_sigma_theta))
+    base_kappa = 6.0
+    kappa = base_kappa / (sigma * sigma)
+    kappa = float(np.clip(kappa, 0.5, 50.0))
+
     a0 = np.clip(skeleton * kappa, 0.5, None)
     b0 = np.clip((1.0 - skeleton) * kappa, 0.5, None)
 
@@ -153,10 +164,8 @@ def _simulate_crm_trial(
         b = b0 + treated - dlts
         p_mean = a / (a + b)
 
-        # pick closest to target
         cand = int(np.argmin(np.abs(p_mean - target)))
 
-        # EWOC filter (approx) if enabled
         if ewoc_enable:
             allowed = _ewoc_allowed(p_mean, a, b, target, float(ewoc_alpha))
             if not allowed[cand]:
@@ -164,16 +173,14 @@ def _simulate_crm_trial(
                 if len(safe_idxs) > 0:
                     cand = int(safe_idxs[np.argmin(np.abs(p_mean[safe_idxs] - target))])
                 else:
-                    cand = int(np.argmin(p_mean))  # fallback safest
+                    cand = int(np.argmin(p_mean))
 
-        # restrict step size
         if cand > dose + 1:
             cand = dose + 1
         if cand < dose - 1:
             cand = dose - 1
         dose = int(np.clip(cand, 0, n_dose - 1))
 
-    # final MTD: closest to target by posterior mean
     a = a0 + dlts
     b = b0 + treated - dlts
     p_mean = a / (a + b)
