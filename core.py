@@ -130,6 +130,8 @@ def init_state() -> None:
     s.setdefault("results_meta", None)
     s.setdefault("last_error", None)
     s.setdefault("is_running", False)
+    sync_widget_keys()
+
 
 def sync_widget_keys(force_defaults: bool = False) -> None:
     s = st.session_state
