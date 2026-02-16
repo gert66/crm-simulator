@@ -1,199 +1,246 @@
-# pages/Playground.py
+# pages/2_Playground.py
 from __future__ import annotations
 
 import streamlit as st
 import numpy as np
 import matplotlib.pyplot as plt
 
-import core
+from core import (
+    DEFAULTS,
+    init_state,
+    get_true_curve_from_state,
+    get_skeleton_from_state,
+    run_simulations,
+)
+
+st.set_page_config(page_title="Playground", layout="wide")
+
+init_state(st, DEFAULTS)
+
+# Compact padding + slightly smaller headers
+st.markdown(
+    """
+    <style>
+    .block-container { padding-top: 0.8rem; padding-bottom: 0.6rem; }
+    h2 { margin-top: 0.2rem; margin-bottom: 0.4rem; }
+    h3 { margin-top: 0.2rem; margin-bottom: 0.35rem; font-size: 1.08rem; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+dose_labels = st.session_state["dose_labels"]
+x = np.arange(len(dose_labels), dtype=int)
 
 
-st.set_page_config(layout="wide")
-
-
-def inject_compact_css() -> None:
-    st.markdown(
-        """
-        <style>
-        /* hide main H1 title (Playground) */
-        h1 { display:none; }
-
-        /* tighten top padding */
-        section.main > div { padding-top: 0.6rem; }
-
-        /* slightly smaller section headers */
-        h2, h3 { margin-top: 0.4rem; }
-
-        /* make widgets a bit tighter */
-        .stSlider, .stNumberInput, .stSelectbox { margin-bottom: 0.35rem; }
-
-        /* reduce gap between blocks */
-        div.block-container { padding-bottom: 0.6rem; }
-
-        /* compact metric cards */
-        [data-testid="stMetric"] { padding: 0.2rem 0.2rem; }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-def plot_prior_vs_true(true_p, prior_p, target, true_mtd_idx):
-    fig = plt.figure(figsize=(4.8, 2.3), dpi=160)
+def plot_true_vs_skeleton(true_curve: np.ndarray, skeleton: np.ndarray, target: float, true_mtd_idx: int):
+    fig = plt.figure(figsize=(5.3, 2.6), dpi=140)
     ax = fig.add_subplot(111)
-    x = np.arange(len(true_p))
-    ax.plot(x, true_p, marker="o", label="True P(DLT)")
-    ax.plot(x, prior_p, marker="o", label="Prior (skeleton)")
-    ax.axhline(target, linewidth=1)
-    ax.axvline(true_mtd_idx, linewidth=1)
+    ax.plot(x, true_curve, marker="o", label="True P(DLT)")
+    ax.plot(x, skeleton, marker="o", label="Prior (skeleton)")
+    ax.axhline(float(target), linewidth=1)
+    ax.axvline(int(true_mtd_idx), linewidth=1)
     ax.set_xticks(x)
-    ax.set_xticklabels([lbl.split("\n")[0] for lbl in core.DOSE_LABELS])
+    ax.set_xticklabels(dose_labels, fontsize=8)
     ax.set_ylabel("Probability")
-    ax.legend(loc="upper left", fontsize=7)
+    ax.legend(fontsize=8, loc="upper left")
     fig.tight_layout()
     return fig
 
 
-def plot_bars(title, p6, pc, true_mtd_idx):
-    fig = plt.figure(figsize=(5.2, 2.2), dpi=160)
+def bar_prob_mtd(prob6: list[float], probc: list[float], true_mtd_idx: int):
+    fig = plt.figure(figsize=(5.2, 2.6), dpi=140)
     ax = fig.add_subplot(111)
-    x = np.arange(len(p6))
-    w = 0.35
-    ax.bar(x - w/2, p6, width=w, label="6+3")
-    ax.bar(x + w/2, pc, width=w, label="CRM")
-    ax.axvline(true_mtd_idx, linewidth=1)
+    w = 0.38
+    ax.bar(x - w / 2, prob6, width=w, label="6+3")
+    ax.bar(x + w / 2, probc, width=w, label="CRM")
+    ax.axvline(int(true_mtd_idx), linewidth=1)
     ax.set_xticks(x)
-    ax.set_xticklabels([lbl.split("\n")[0] for lbl in core.DOSE_LABELS])
-    ax.set_title(title, fontsize=10)
-    ax.legend(fontsize=7)
+    ax.set_xticklabels([d.replace("\n", " ") for d in dose_labels], fontsize=8)
+    ax.set_title("P(select dose as MTD)", fontsize=10)
+    ax.set_ylabel("Probability")
+    ax.legend(fontsize=8)
     fig.tight_layout()
     return fig
 
 
-def plot_patients(title, n6, nc):
-    fig = plt.figure(figsize=(5.2, 2.2), dpi=160)
+def bar_avg_n(avg6: list[float], avgc: list[float]):
+    fig = plt.figure(figsize=(5.2, 2.6), dpi=140)
     ax = fig.add_subplot(111)
-    x = np.arange(len(n6))
-    w = 0.35
-    ax.bar(x - w/2, n6, width=w, label="6+3")
-    ax.bar(x + w/2, nc, width=w, label="CRM")
+    w = 0.38
+    ax.bar(x - w / 2, avg6, width=w, label="6+3")
+    ax.bar(x + w / 2, avgc, width=w, label="CRM")
     ax.set_xticks(x)
-    ax.set_xticklabels([lbl.split("\n")[0] for lbl in core.DOSE_LABELS])
-    ax.set_title(title, fontsize=10)
-    ax.legend(fontsize=7)
+    ax.set_xticklabels([d.replace("\n", " ") for d in dose_labels], fontsize=8)
+    ax.set_title("Avg patients treated per dose", fontsize=10)
+    ax.set_ylabel("Patients")
+    ax.legend(fontsize=8)
     fig.tight_layout()
     return fig
 
 
-def main():
-    core.init_state(st)
-    inject_compact_css()
+# -------------------------
+# Playground controls (FORM)
+# -------------------------
+col1, col2, col3 = st.columns([1.05, 1.05, 1.25], gap="large")
 
-    # ---------- Top row: 3 columns ----------
-    c1, c2, c3 = st.columns([1.05, 1.05, 1.15], gap="large")
-
-    with c1:
+with st.form("playground_form", border=False):
+    with col1:
         st.subheader("True acute DLT curve")
-        st.toggle("Edit true curve", key="edit_true_curve", help="When off, the true curve is locked.")
 
-        true_p = st.session_state["true_p"]
-        new_true = []
-        for i, lbl in enumerate(core.DOSE_LABELS):
-            new_true.append(
-                st.number_input(
-                    lbl.replace("\n", " "),
-                    min_value=0.0,
-                    max_value=1.0,
-                    step=0.01,
-                    value=float(true_p[i]),
-                    key=f"true_p_{i}",
-                    disabled=not st.session_state["edit_true_curve"],
-                    help="True probability of acute DLT at this dose (used to simulate outcomes).",
-                )
-            )
-        # write back only if editing enabled
-        if st.session_state["edit_true_curve"]:
-            st.session_state["true_p"] = [float(x) for x in new_true]
+        st.toggle(
+            "Edit true curve",
+            key="edit_true_curve",
+            help="Turn on editing of the true acute DLT probabilities used to generate outcomes.",
+        )
 
-        true_mtd_idx = core.true_mtd_index(st.session_state["true_p"], st.session_state["target"])
-        st.caption(f"True MTD (closest to target) = {core.DOSE_LABELS[true_mtd_idx].split()[0]}")
+        disabled = not bool(st.session_state["edit_true_curve"])
 
-    with c2:
+        st.number_input("L0 5×4 Gy", min_value=0.00, max_value=0.95, step=0.01, key="true_p0", disabled=disabled)
+        st.number_input("L1 5×5 Gy", min_value=0.00, max_value=0.95, step=0.01, key="true_p1", disabled=disabled)
+        st.number_input("L2 5×6 Gy", min_value=0.00, max_value=0.95, step=0.01, key="true_p2", disabled=disabled)
+        st.number_input("L3 5×7 Gy", min_value=0.00, max_value=0.95, step=0.01, key="true_p3", disabled=disabled)
+        st.number_input("L4 5×8 Gy", min_value=0.00, max_value=0.95, step=0.01, key="true_p4", disabled=disabled)
+
+        true_curve_preview = get_true_curve_from_state(st)
+        true_mtd_idx_preview = int(np.argmin(np.abs(true_curve_preview - float(st.session_state["target"]))))
+        st.caption(f"True MTD (closest to target) = {dose_labels[true_mtd_idx_preview].splitlines()[0]}")
+
+    with col2:
         st.subheader("Prior playground")
+
         st.radio(
             "Skeleton model",
-            ["empiric", "logistic"],
+            options=["empiric", "logistic"],
             key="skeleton_model",
             horizontal=True,
-            help="Empiric makes a simple ladder around the prior target. Logistic makes a smooth curve.",
+            help="Empiric: monotone skeleton anchored at prior target. Logistic: alternative monotone skeleton.",
         )
-        st.slider("Prior target", 0.01, 0.40, key="prior_target", step=0.01, help="Target toxicity used to build the prior skeleton.")
-        st.slider("Halfwidth (delta)", 0.01, 0.20, key="delta", step=0.01, help="Controls how steep the empiric skeleton steps are.")
-        st.slider("Prior MTD (nu, 1-based)", 1, 5, key="prior_mtd_nu", help="Dose index that the prior believes is closest to target.")
-        st.slider("Logistic intercept", -5.0, 5.0, key="logistic_intercept", step=0.5, help="Only used for the logistic skeleton.")
 
-        prior_p = core.build_skeleton_from_controls(st)
-        st.caption("Skeleton: " + ", ".join([f"{p:.3f}" for p in prior_p]))
+        st.slider(
+            "Prior target",
+            min_value=0.05,
+            max_value=0.35,
+            step=0.01,
+            key="prior_target",
+            help="Target toxicity level used to anchor the prior skeleton.",
+        )
+        st.slider(
+            "Halfwidth (delta)",
+            min_value=0.01,
+            max_value=0.25,
+            step=0.01,
+            key="prior_halfwidth",
+            help="Controls how steep the empiric skeleton is around the prior target.",
+        )
+        st.slider(
+            "Prior MTD (nu, 1-based)",
+            min_value=1,
+            max_value=5,
+            step=1,
+            key="prior_mtd_nu",
+            help="Dose index (1..5) that the skeleton treats as the prior MTD location.",
+        )
+        st.slider(
+            "Logistic intercept",
+            min_value=-5.0,
+            max_value=5.0,
+            step=0.1,
+            key="logistic_intercept",
+            help="Only used when Skeleton model is logistic.",
+        )
 
-        # Run button moved here (middle column), as you asked
-        st.write("")
-        if st.button("Run simulations", use_container_width=True):
-            st.session_state["last_results"] = core.run_simulations_stub(st)
+        # Put the RUN button under the middle column
+        run_clicked = st.form_submit_button("Run simulations", type="primary", use_container_width=True)
 
-    with c3:
+        # compact skeleton preview line
+        sk_preview = get_skeleton_from_state(st)
+        st.caption("Skeleton: " + ", ".join(f"{v:.3f}" for v in sk_preview))
+
+    with col3:
         st.subheader("CRM knobs + preview")
+
         st.slider(
             "Prior sigma on theta",
-            0.05, 3.0,
-            key="sigma_theta",
+            min_value=0.10,
+            max_value=3.00,
             step=0.05,
-            help="Controls how concentrated the CRM prior is around the skeleton.",
+            key="prior_sigma_theta",
+            help="Prior SD for theta in the CRM one-parameter power model.",
         )
-        st.toggle("Burn-in until first DLT", key="burn_in_first_dlt", help="If enabled, constrain early escalation until a DLT is observed.")
-        st.toggle("Enable EWOC overdose control", key="ewoc", help="If enabled, apply an overdose control rule.")
-        st.slider("EWOC alpha", 0.01, 0.50, key="ewoc_alpha", step=0.01, disabled=not st.session_state["ewoc"], help="Overdose tolerance level.")
 
-        fig = plot_prior_vs_true(
-            true_p=np.array(st.session_state["true_p"], dtype=float),
-            prior_p=np.array(prior_p, dtype=float),
-            target=float(st.session_state["target"]),
-            true_mtd_idx=true_mtd_idx,
+        st.toggle(
+            "Burn-in until first DLT",
+            key="burn_in_until_first_dlt",
+            help="If on: CRM treats at the start dose until the first DLT is observed.",
         )
-        st.pyplot(fig, use_container_width=True)
 
-    # ---------- Results (compact) ----------
-    if "last_results" in st.session_state:
-        res = st.session_state["last_results"]
-        st.markdown("### Results (6+3 vs CRM)")
+        st.toggle(
+            "Enable EWOC overdose control",
+            key="enable_ewoc",
+            help="If on: restrict doses where posterior P(p > target) is above EWOC alpha.",
+        )
 
-        # 2 plots + metrics column (DLT probs right)
-        r1, r2, r3 = st.columns([1.1, 1.1, 0.7], gap="large")
+        st.slider(
+            "EWOC alpha",
+            min_value=0.05,
+            max_value=0.50,
+            step=0.01,
+            key="ewoc_alpha",
+            disabled=not bool(st.session_state["enable_ewoc"]),
+            help="Upper bound for overdose probability under the posterior.",
+        )
 
-        with r1:
-            fig1 = plot_bars(
-                "P(select dose as MTD)",
-                np.array(res.p_select_6p3),
-                np.array(res.p_select_crm),
-                true_mtd_idx,
-            )
-            st.pyplot(fig1, use_container_width=True)
+        # Plot preview (true vs skeleton)
+        true_curve = get_true_curve_from_state(st)
+        skeleton = get_skeleton_from_state(st)
+        target = float(st.session_state["target"])
+        true_mtd_idx = int(np.argmin(np.abs(true_curve - target)))
+        st.pyplot(plot_true_vs_skeleton(true_curve, skeleton, target, true_mtd_idx), use_container_width=True)
 
-        with r2:
-            fig2 = plot_patients(
-                "Avg patients treated per dose",
-                np.array(res.mean_n_6p3),
-                np.array(res.mean_n_crm),
-            )
-            st.pyplot(fig2, use_container_width=True)
+# -------------------------
+# Run simulations (only when submitted)
+# -------------------------
+if run_clicked:
+    true_curve = get_true_curve_from_state(st)
+    skeleton = get_skeleton_from_state(st)
 
-        with r3:
-            st.metric("DLT prob per patient (6+3)", f"{res.dlt_prob_6p3:.3f}")
-            st.metric("DLT prob per patient (CRM)", f"{res.dlt_prob_crm:.3f}")
-            st.caption(f"n_sims={st.session_state['n_sims']} | seed={st.session_state['seed']} | True MTD marker={core.DOSE_LABELS[true_mtd_idx].split()[0]}")
+    res = run_simulations(
+        true_curve=true_curve,
+        skeleton=skeleton,
+        dose_labels=dose_labels,
+        target=float(st.session_state["target"]),
+        start_idx=int(st.session_state["start_dose_idx"]),
+        n_sims=int(st.session_state["n_sims"]),
+        seed=int(st.session_state["seed"]),
+        six_max_n=int(st.session_state["sixplus3_max_n"]),
+        crm_max_n=int(st.session_state["crm_max_n"]),
+        crm_cohort=int(st.session_state["crm_cohort"]),
+        prior_sigma_theta=float(st.session_state["prior_sigma_theta"]),
+        burn_in_until_first_dlt=bool(st.session_state["burn_in_until_first_dlt"]),
+        enable_ewoc=bool(st.session_state["enable_ewoc"]),
+        ewoc_alpha=float(st.session_state["ewoc_alpha"]),
+    )
+    st.session_state["last_results"] = res
 
-    else:
-        st.caption("Run simulations to populate results.")
+# -------------------------
+# Results (compact, no big title)
+# -------------------------
+res = st.session_state.get("last_results", None)
 
+if res is None:
+    st.caption("Run simulations to populate results.")
+else:
+    # very small vertical footprint
+    r1, r2, r3 = st.columns([1.0, 1.0, 0.8], gap="large")
 
-if __name__ == "__main__":
-    main()
+    with r3:
+        st.metric("DLT prob per patient (6+3)", f"{res.dlt_prob_per_patient_six:.3f}")
+        st.metric("DLT prob per patient (CRM)", f"{res.dlt_prob_per_patient_crm:.3f}")
+        st.caption(f"n_sims={res.n_sims} | seed={res.seed} | True MTD marker={dose_labels[res.true_mtd_idx].splitlines()[0]}")
+
+    with r1:
+        st.pyplot(bar_prob_mtd(res.prob_mtd_six, res.prob_mtd_crm, res.true_mtd_idx), use_container_width=True)
+
+    with r2:
+        st.pyplot(bar_avg_n(res.avg_n_six, res.avg_n_crm), use_container_width=True)
