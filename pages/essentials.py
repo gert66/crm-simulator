@@ -1,86 +1,108 @@
+# pages/1_Essentials.py
+from __future__ import annotations
+
 import streamlit as st
-from ui_state import ensure_state, reset_all, DOSE_LABELS
+from core import DEFAULTS, init_state, reset_to_defaults
 
-ensure_state()
+st.set_page_config(page_title="Essentials", layout="wide")
 
+init_state(st, DEFAULTS)
+
+# Compact padding
 st.markdown(
     """
     <style>
-      .block-container { padding-top: 1.0rem; padding-bottom: 1.0rem; }
+    .block-container { padding-top: 1.2rem; padding-bottom: 0.8rem; }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
-st.title("Essentials")
-
-c1, c2, c3, c4 = st.columns([1.0, 1.2, 1.0, 1.0], gap="small")
-
+# Put reset BEFORE widgets so it never triggers "set after widget" issues.
+c1, c2, _ = st.columns([1, 1, 3])
 with c1:
+    if st.button("Reset to defaults", use_container_width=True):
+        reset_to_defaults(st, DEFAULTS)
+with c2:
+    st.caption("Essentials for the simulation run.")
+
+st.subheader("Essentials")
+
+colA, colB, colC, colD = st.columns([1.2, 1.2, 1.2, 1.2])
+
+with colA:
     st.number_input(
         "Study target (acute)",
-        min_value=0.01, max_value=0.50, step=0.01,
+        min_value=0.01,
+        max_value=0.40,
+        step=0.01,
         key="target",
-        help="Target acute DLT probability used to define the MTD (closest-to-target).",
+        help="Target acute DLT probability used for 'true MTD' and CRM dose selection.",
     )
 
-with c2:
     st.selectbox(
         "Start dose",
-        options=list(range(len(DOSE_LABELS))),
-        format_func=lambda i: DOSE_LABELS[i],
-        key="start_dose",
-        help="Dose level where escalation begins.",
+        options=list(range(len(st.session_state["dose_labels"]))),
+        format_func=lambda i: st.session_state["dose_labels"][i].replace("\n", " "),
+        key="start_dose_idx",
+        help="Starting dose level for both 6+3 and CRM.",
     )
 
-with c3:
+with colB:
     st.number_input(
         "Max sample size (CRM)",
-        min_value=3, max_value=120, step=3,
+        min_value=6,
+        max_value=120,
+        step=1,
         key="crm_max_n",
-        help="Maximum total number of patients for CRM simulations.",
+        help="Maximum number of patients enrolled under CRM.",
     )
-
-with c4:
     st.number_input(
         "CRM cohort size",
-        min_value=1, max_value=12, step=1,
+        min_value=1,
+        max_value=12,
+        step=1,
         key="crm_cohort",
-        help="Number of patients treated per CRM cohort.",
+        help="Patients per CRM cohort.",
     )
 
-c5, c6, c7, c8 = st.columns([1.0, 1.0, 1.0, 1.0], gap="small")
-
-with c5:
+with colC:
     st.number_input(
         "Max sample size (6+3)",
-        min_value=3, max_value=120, step=3,
+        min_value=9,
+        max_value=120,
+        step=1,
         key="sixplus3_max_n",
-        help="Maximum total number of patients for the 6+3 design. Default is 27.",
+        help="Maximum number of patients enrolled under the 6+3 design.",
     )
-
-with c6:
     st.number_input(
         "Number of simulated trials",
-        min_value=50, max_value=5000, step=50,
+        min_value=50,
+        max_value=5000,
+        step=50,
         key="n_sims",
-        help="How many independent simulated trials to run.",
+        help="Number of Monte Carlo trials.",
     )
 
-with c7:
+with colD:
     st.number_input(
         "Random seed",
-        min_value=0, max_value=999999, step=1,
+        min_value=0,
+        max_value=10_000_000,
+        step=1,
         key="seed",
-        help="Reproducibility seed for the simulator.",
+        help="Seed for reproducible simulation runs.",
     )
+    st.caption("Tip: run simulations from the Playground page.")
 
-with c8:
-    st.button(
-        "Reset to defaults",
-        on_click=reset_all,
-        help="Restore all parameters to built-in defaults.",
-        use_container_width=True,
-    )
+st.divider()
 
-st.info("Go to **Playground** to tune the true curve, priors, CRM knobs, and run simulations.")
+with st.expander("Current settings (from code)", expanded=False):
+    keys = [
+        "target", "start_dose_idx", "crm_max_n", "crm_cohort", "sixplus3_max_n",
+        "n_sims", "seed",
+        "prior_sigma_theta", "burn_in_until_first_dlt", "enable_ewoc", "ewoc_alpha",
+        "skeleton_model", "prior_target", "prior_halfwidth", "prior_mtd_nu", "logistic_intercept",
+        "true_p0", "true_p1", "true_p2", "true_p3", "true_p4",
+    ]
+    st.json({k: st.session_state[k] for k in keys})
