@@ -102,7 +102,7 @@ def init_state() -> None:
     s.setdefault("results_meta", None)
     s.setdefault("last_error", None)
     s.setdefault("is_running", False)
-    s.setdefault("cohort_size_6p3", DEFAULTS.cohort_size_6p3)
+
 
 
     # keep true curve widget keys alive if user edited curve length/values
