@@ -13,6 +13,15 @@ from core import (
 
 init_state()
 
+st.caption(
+    f"_initialized={st.session_state.get('_initialized')} | "
+    f"_do_reset={st.session_state.get('_do_reset')} | "
+    f"prior_target={st.session_state.get('prior_target')} | "
+    f"delta={st.session_state.get('delta')} | "
+    f"prior_mtd={st.session_state.get('prior_mtd')} | "
+    f"prior_sigma_theta={st.session_state.get('prior_sigma_theta')}"
+)
+
 st.markdown(
     """
     <style>
