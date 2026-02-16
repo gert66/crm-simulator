@@ -199,6 +199,10 @@ def run_simulations(payload: Dict[str, Any]) -> Dict[str, Any]:
     n_sims = int(payload["n_sims"])
     seed = int(payload["seed"])
 
+    prior_sigma_theta = float(payload.get("prior_sigma_theta", 1.0))
+    n_prior_start_no_dlt = int(payload.get("n_prior_start_no_dlt", 0))
+
+
     max_n_6p3 = int(payload["max_n_6p3"])
     cohort_size_6p3 = int(payload["cohort_size_6p3"])
 
@@ -234,17 +238,21 @@ def run_simulations(payload: Dict[str, Any]) -> Dict[str, Any]:
         total_treated_6 += n6
         total_dlts_6 += d6
 
-        mtdc, trc, nc, dc = _simulate_crm_trial(
-            rng=rng,
-            true_curve=true_curve,
-            skeleton=skeleton,
-            target=target,
-            start_idx=start_idx,
-            cohort_size=cohort_size_6p3,
-            max_n=max_n_6p3,
-            burnin_until_first_dlt=burnin_until_first_dlt,
-            ewoc_enable=ewoc_enable,
-            ewoc_alpha=ewoc_alpha,
+    mtdc, trc, nc, dc = _simulate_crm_trial(
+        rng=rng,
+        true_curve=true_curve,
+        skeleton=skeleton,
+        target=target,
+        start_idx=start_idx,
+        cohort_size=cohort_size_6p3,
+        max_n=max_n_6p3,
+        burnin_until_first_dlt=burnin_until_first_dlt,
+        ewoc_enable=ewoc_enable,
+        ewoc_alpha=ewoc_alpha,
+        prior_sigma_theta=prior_sigma_theta,
+        n_prior_start_no_dlt=n_prior_start_no_dlt,
+    )
+
         )
         mtd_counts_c[mtdc] += 1
         treated_sum_c += trc
