@@ -19,14 +19,12 @@ class Defaults:
     n_sims: int = 500
     seed: int = 123
 
-    # 6+3
+    # Sample size / cohorts
     max_n_6p3: int = 27
-    cohort_size_6p3: int = 3
-
-    # CRM (separate max)
     max_n_crm: int = 27
+    cohort_size: int = 3
 
-    # Prior info already observed at start dose (0 DLTs)
+    # Prior info already observed at start dose (dose = start_dose_level), with 0 DLT
     n_prior_start_no_dlt: int = 0
 
     # Prior playground
@@ -49,22 +47,21 @@ class Defaults:
 DEFAULTS = Defaults()
 
 
-def _hard_apply_defaults() -> None:
+# -------------------------
+# Session state management
+# -------------------------
+def _apply_defaults() -> None:
     s = st.session_state
-
-    # Apply defaults
     for k, v in asdict(DEFAULTS).items():
         if k == "true_curve":
             s["true_curve"] = list(v)
         else:
             s[k] = v
 
-    # Remove widget-shadow keys for true curve inputs
-    for k in list(s.keys()):
-        if k.startswith("true_p_"):
-            del s[k]
+    # widget keys for true curve inputs
+    _sync_true_curve_widget_keys()
 
-    # Clear results + flags
+    # housekeeping
     s["results"] = None
     s["results_meta"] = None
     s["last_error"] = None
@@ -72,83 +69,48 @@ def _hard_apply_defaults() -> None:
 
 
 def reset_to_defaults() -> None:
-    # set a flag and rerun, so we do not mutate widget state mid-run
+    # do NOT delete all keys (that tends to cause weird cross-page behavior)
     st.session_state["_do_reset"] = True
     st.rerun()
 
 
 def init_state() -> None:
+    """
+    Single source of truth.
+    Called at top of every page. Never overwrites user values unless a reset was requested.
+    """
     s = st.session_state
 
+    # first ever init
+    if not s.get("_initialized", False):
+        _apply_defaults()
+        s["_initialized"] = True
+
+    # reset requested
     if s.get("_do_reset", False):
         s["_do_reset"] = False
-        _hard_apply_defaults()
+        _apply_defaults()
 
-    # Essentials
-    s.setdefault("target", DEFAULTS.target)
-    s.setdefault("start_dose_level", DEFAULTS.start_dose_level)
-    s.setdefault("n_sims", DEFAULTS.n_sims)
-    s.setdefault("seed", DEFAULTS.seed)
+    # setdefault for any missing keys (safe across page nav)
+    for k, v in asdict(DEFAULTS).items():
+        if k == "true_curve":
+            s.setdefault("true_curve", list(v))
+        else:
+            s.setdefault(k, v)
 
-    # 6+3
-    s.setdefault("max_n_6p3", DEFAULTS.max_n_6p3)
-    s.setdefault("cohort_size_6p3", DEFAULTS.cohort_size_6p3)
-
-    # CRM
-    s.setdefault("max_n_crm", DEFAULTS.max_n_crm)
-
-    # Prior already observed
-    s.setdefault("n_prior_start_no_dlt", DEFAULTS.n_prior_start_no_dlt)
-
-    # Prior playground
-    s.setdefault("skeleton_model", DEFAULTS.skeleton_model)
-    s.setdefault("prior_target", DEFAULTS.prior_target)
-    s.setdefault("delta", DEFAULTS.delta)
-    s.setdefault("prior_mtd", DEFAULTS.prior_mtd)
-    s.setdefault("logistic_intercept", DEFAULTS.logistic_intercept)
-
-    # CRM knobs
-    s.setdefault("prior_sigma_theta", DEFAULTS.prior_sigma_theta)
-    s.setdefault("burnin_until_first_dlt", DEFAULTS.burnin_until_first_dlt)
-    s.setdefault("ewoc_enable", DEFAULTS.ewoc_enable)
-    s.setdefault("ewoc_alpha", DEFAULTS.ewoc_alpha)
-
-    # True curve
-    s.setdefault("true_curve", list(DEFAULTS.true_curve))
-    _sync_true_curve_widget_keys()
-
-    # Results/meta/error
     s.setdefault("results", None)
     s.setdefault("results_meta", None)
     s.setdefault("last_error", None)
     s.setdefault("is_running", False)
 
-def sync_widget_keys(force_defaults: bool = False) -> None:
-    """
-    Keeps widget shadow-keys (true_p_0, true_p_1, ...) consistent with session_state["true_curve"].
-    Optionally hard-reset all state values to Defaults first (force_defaults=True).
-    """
-    s = st.session_state
-
-    if force_defaults:
-        # Apply defaults without clearing results here (Playground uses this once on first open)
-        for k, v in asdict(DEFAULTS).items():
-            if k == "true_curve":
-                s["true_curve"] = list(v)
-            else:
-                s[k] = v
-
-        # Ensure any old true_p_* keys don't fight the defaults
-        for k in list(s.keys()):
-            if k.startswith("true_p_"):
-                del s[k]
-
+    # keep true curve widget keys alive if user edited curve length/values
     _sync_true_curve_widget_keys()
 
 
 def _sync_true_curve_widget_keys() -> None:
     s = st.session_state
     tc = list(s.get("true_curve", []))
+    # ensure widget keys exist and match current true_curve values
     for i, v in enumerate(tc):
         key = f"true_p_{i}"
         if key not in s:
@@ -160,9 +122,10 @@ def sync_true_curve_from_widgets() -> None:
     tc = list(s.get("true_curve", []))
     if not tc:
         return
-    new_vals = []
+    new_vals: List[float] = []
     for i in range(len(tc)):
-        v = s.get(f"true_p_{i}", tc[i])
+        key = f"true_p_{i}"
+        v = s.get(key, tc[i])
         try:
             new_vals.append(float(v))
         except Exception:
@@ -170,6 +133,9 @@ def sync_true_curve_from_widgets() -> None:
     s["true_curve"] = new_vals
 
 
+# -------------------------
+# Helpers: labels + skeleton
+# -------------------------
 def dose_labels(n: int) -> List[str]:
     base = ["5×4 Gy", "5×5 Gy", "5×6 Gy", "5×7 Gy", "5×8 Gy"]
     if n <= len(base):
@@ -177,7 +143,7 @@ def dose_labels(n: int) -> List[str]:
     return [f"L{i}" for i in range(n)]
 
 
-def clamp(x: float, lo: float, hi: float) -> float:
+def _clamp(x: float, lo: float, hi: float) -> float:
     return float(max(lo, min(hi, x)))
 
 
@@ -185,9 +151,8 @@ def build_empiric_skeleton(n_dose: int, prior_target: float, delta: float, prior
     m = int(prior_mtd_1based) - 1
     m = max(0, min(n_dose - 1, m))
     vals = [prior_target + (i - m) * delta for i in range(n_dose)]
-    sk = np.array([clamp(v, 0.0001, 0.9999) for v in vals], dtype=float)
-    sk = np.maximum.accumulate(sk)
-    return sk
+    sk = np.array([_clamp(v, 0.0001, 0.9999) for v in vals], dtype=float)
+    return np.maximum.accumulate(sk)
 
 
 def build_logistic_skeleton(n_dose: int, prior_target: float, prior_mtd_1based: int, intercept: float) -> np.ndarray:
@@ -198,8 +163,7 @@ def build_logistic_skeleton(n_dose: int, prior_target: float, prior_mtd_1based: 
     xs = np.arange(n_dose, dtype=float)
     z = intercept + b * xs
     sk = 1.0 / (1.0 + np.exp(-z))
-    sk = np.maximum.accumulate(sk)
-    return sk
+    return np.maximum.accumulate(sk)
 
 
 def get_skeleton_from_state(n_dose: int) -> np.ndarray:
@@ -207,9 +171,11 @@ def get_skeleton_from_state(n_dose: int) -> np.ndarray:
     model = s.get("skeleton_model", DEFAULTS.skeleton_model)
     prior_target = float(s.get("prior_target", DEFAULTS.prior_target))
     prior_mtd = int(s.get("prior_mtd", DEFAULTS.prior_mtd))
+
     if model == "logistic":
         intercept = float(s.get("logistic_intercept", DEFAULTS.logistic_intercept))
         return build_logistic_skeleton(n_dose, prior_target, prior_mtd, intercept)
+
     delta = float(s.get("delta", DEFAULTS.delta))
     return build_empiric_skeleton(n_dose, prior_target, delta, prior_mtd)
 
@@ -232,45 +198,37 @@ def plot_true_vs_prior(true_p: List[float], prior_p: np.ndarray, target: float, 
     return fig
 
 
+# -------------------------
+# Sim runner
+# -------------------------
 def _import_simplesim():
     if "" not in sys.path:
         sys.path.insert(0, "")
-    for name in ["simplesim", "simpleSim", "SimpleSim"]:
-        try:
-            return importlib.import_module(name)
-        except ModuleNotFoundError:
-            continue
-    raise ModuleNotFoundError("Could not import simplesim module. Ensure simplesim.py is in repo root.")
+    return importlib.import_module("simplesim")
 
 
 def build_payload() -> Dict[str, Any]:
     s = st.session_state
-    payload = {
+    return {
         "target": float(s["target"]),
-        "start_dose_level": int(s["start_dose_level"]) - 1,  # 0-based inside simulator
+        "start_dose_level": int(s["start_dose_level"]) - 1,  # to 0-based
         "n_sims": int(s["n_sims"]),
         "seed": int(s["seed"]),
-
         "max_n_6p3": int(s["max_n_6p3"]),
-        "cohort_size_6p3": int(s["cohort_size_6p3"]),
         "max_n_crm": int(s["max_n_crm"]),
-
+        "cohort_size": int(s["cohort_size"]),
         "n_prior_start_no_dlt": int(s.get("n_prior_start_no_dlt", 0)),
-
         "true_curve": list(map(float, s["true_curve"])),
-
         "skeleton_model": s["skeleton_model"],
         "prior_target": float(s["prior_target"]),
         "delta": float(s["delta"]),
         "prior_mtd_1based": int(s["prior_mtd"]),
         "logistic_intercept": float(s["logistic_intercept"]),
-
         "prior_sigma_theta": float(s["prior_sigma_theta"]),
         "burnin_until_first_dlt": bool(s["burnin_until_first_dlt"]),
         "ewoc_enable": bool(s["ewoc_enable"]),
         "ewoc_alpha": float(s["ewoc_alpha"]),
     }
-    return payload
 
 
 def run_simulations() -> None:
@@ -284,25 +242,9 @@ def run_simulations() -> None:
     try:
         sim = _import_simplesim()
         payload = build_payload()
-
-        fn = None
-        for cand in ["run_simulations", "simulate", "run", "main"]:
-            if hasattr(sim, cand):
-                fn = getattr(sim, cand)
-                break
-        if fn is None:
-            raise AttributeError("simplesim.py must define one of: run_simulations / simulate / run / main")
-
-        out = fn(payload)
-
+        out = sim.run_simulations(payload)
         s["results"] = out
-        s["results_meta"] = {
-            "n_sims": payload["n_sims"],
-            "seed": payload["seed"],
-            "max_n_6p3": payload["max_n_6p3"],
-            "max_n_crm": payload["max_n_crm"],
-            "n_prior_start_no_dlt": payload["n_prior_start_no_dlt"],
-        }
+        s["results_meta"] = {"n_sims": payload["n_sims"], "seed": payload["seed"]}
     except Exception as e:
         s["last_error"] = f"{type(e).__name__}: {e}"
     finally:
