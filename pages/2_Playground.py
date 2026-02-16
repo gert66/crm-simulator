@@ -114,7 +114,6 @@ with col2:
 
     if st.button("Run simulations", use_container_width=True):
         run_simulations()
-        st.rerun()
 
 with col3:
     st.subheader("CRM knobs + preview")
@@ -140,6 +139,14 @@ with col3:
         help="Enable EWOC overdose control.\nR default: OFF",
     )
 
+
+st.caption(
+    f"DEBUG ewoc_enable={st.session_state.get('ewoc_enable')} "
+    f"ewoc_alpha={st.session_state.get('ewoc_alpha')}"
+
+st.caption(
+    f"DEBUG ewoc_enable={st.session_state.get('ewoc_enable')} "
+    f"ewoc_alpha={st.session_state.get('ewoc_alpha')}"
     st.slider(
         "EWOC alpha",
         0.01,
