@@ -14,6 +14,15 @@ from core import (
 st.set_page_config(page_title="Playground", layout="wide")
 init_state()
 
+# ---- force correct widget defaults on first load ----
+from core import sync_widget_keys
+
+if not st.session_state.get("_playground_synced", False):
+    sync_widget_keys(force_defaults=True)
+    st.session_state["_playground_synced"] = True
+    st.rerun()
+
+
 true_curve = list(st.session_state["true_curve"])
 n_dose = len(true_curve)
 labels = dose_labels(n_dose)
