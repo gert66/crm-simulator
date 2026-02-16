@@ -101,8 +101,8 @@ with c3:
         min_value=1,
         max_value=12,
         step=1,
-        key="cohort_size",
-        help=f"Cohort size used in both designs.\nR default: 3\nApp default: {DEFAULTS.cohort_size}",
+        key="cohort_size_6p3",
+        help=f"Cohort size used in both designs.\nR default: 3\nApp default: {DEFAULTS.cohort_size_6p3}",
     )
 
 st.divider()
