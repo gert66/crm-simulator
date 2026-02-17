@@ -12,11 +12,11 @@ RESULT_W_PX  = 380        # results plots (bigger)
 
 # Matplotlib figure sizes (in inches) + dpi -> pixel geometry is fixed.
 # If you want “more square / taller” results, increase RESULT_H_IN.
-PREVIEW_W_IN, PREVIEW_H_IN, PREVIEW_DPI = 2.7, 2.7, 160
+PREVIEW_W_IN, PREVIEW_H_IN, PREVIEW_DPI = 3.5, 2.7, 160
 
 # Results: make height ~ width (or a bit taller). With dpi=160 and 7.0" width -> ~1120 px wide,
 # but we still display at RESULT_W_PX; the aspect ratio stays correct and stable.
-RESULT_W_IN, RESULT_H_IN, RESULT_DPI = 5.0, 5.0, 160
+RESULT_W_IN, RESULT_H_IN, RESULT_DPI = 6.0, 5.0, 160
 
 # ============================================================
 # Helpers
