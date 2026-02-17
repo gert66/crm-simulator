@@ -7,16 +7,16 @@ from io import BytesIO
 # Plot sizing (ONE place to tune)
 # ============================================================
 # Fixed pixel widths used by st.image(). Height is controlled by figsize.
-PREVIEW_W_PX = 400        # small plot in CRM knobs panel
+PREVIEW_W_PX = 250        # small plot in CRM knobs panel
 RESULT_W_PX  = 400        # results plots (bigger)
 
 # Matplotlib figure sizes (in inches) + dpi -> pixel geometry is fixed.
 # If you want “more square / taller” results, increase RESULT_H_IN.
-PREVIEW_W_IN, PREVIEW_H_IN, PREVIEW_DPI = 5.2, 2.7, 160
+PREVIEW_W_IN, PREVIEW_H_IN, PREVIEW_DPI = 2.7, 2.7, 160
 
 # Results: make height ~ width (or a bit taller). With dpi=160 and 7.0" width -> ~1120 px wide,
 # but we still display at RESULT_W_PX; the aspect ratio stays correct and stable.
-RESULT_W_IN, RESULT_H_IN, RESULT_DPI = 7.0, 7.8, 160
+RESULT_W_IN, RESULT_H_IN, RESULT_DPI = 5.0, 5.0, 160
 
 # ============================================================
 # Helpers
