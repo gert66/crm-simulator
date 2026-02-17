@@ -7,8 +7,8 @@ from io import BytesIO
 # Plot sizing (ONE place to tune)
 # ============================================================
 # Fixed pixel widths used by st.image(). Height is controlled by figsize.
-PREVIEW_W_PX = 250        # small plot in CRM knobs panel
-RESULT_W_PX  = 400        # results plots (bigger)
+PREVIEW_W_PX = 200        # small plot in CRM knobs panel
+RESULT_W_PX  = 380        # results plots (bigger)
 
 # Matplotlib figure sizes (in inches) + dpi -> pixel geometry is fixed.
 # If you want “more square / taller” results, increase RESULT_H_IN.
