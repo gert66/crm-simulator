@@ -187,8 +187,10 @@ def crm_choose_next(
 
     k_star = int(allowed[np.argmin(np.abs(post_mean[allowed] - target))])
 
+    # step limiting
     k_star = int(np.clip(k_star, current_level - int(max_step), current_level + int(max_step)))
 
+    # guardrail
     if enforce_highest_tried_plus_one and highest_tried is not None:
         k_star = int(min(k_star, int(highest_tried) + 1))
 
@@ -328,7 +330,7 @@ def run_crm_trial(
     return int(selected), n_per, int(y_per.sum()), debug_rows
 
 # ============================================================
-# App config (compact, hide sidebar navigation where possible)
+# App config (compact)
 # ============================================================
 
 st.set_page_config(
@@ -337,14 +339,14 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-# Safety net: hide sidebar area (useful if Streamlit still shows it)
 st.markdown(
     """
     <style>
       [data-testid="stSidebar"] { display: none; }
       [data-testid="stSidebarNav"] { display: none; }
       [data-testid="collapsedControl"] { display: none; }
-      .block-container { padding-top: 1rem; }
+      .block-container { padding-top: 2.6rem; padding-bottom: 1.2rem; }
+      .element-container { margin-bottom: 0.35rem; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -353,39 +355,34 @@ st.markdown(
 dose_labels = ["5×4 Gy", "5×5 Gy", "5×6 Gy", "5×7 Gy", "5×8 Gy"]
 DEFAULT_TRUE_P = [0.01, 0.02, 0.12, 0.20, 0.35]
 
-# Sama R defaults
+# Sama/R-aligned defaults
 R_DEFAULTS = {
-    # Essentials
     "target": 0.15,
-    "start_level_1b": 2,            # R: p <- 2 (1-based)
-    "already_treated_start": 0,
+    "start_level_1b": 2,            # R burning: p <- 2 (1-based)
+    "already_treated_start": 0,      # extension
     "n_sims": 1000,                 # R: NREP
     "seed": 123,                    # R: set.seed(123)
     "max_n_63": 27,                 # R: N.patient
     "max_n_crm": 27,                # R: N.patient
     "cohort_size": 3,               # R: CO
 
-    # Priors
     "prior_model": "empiric",
     "prior_target": 0.15,           # R: prior.target.acute
-    "halfwidth": 0.10,              # R: getprior halfwidth
-    "prior_nu": 3,                  # R: prior.MTD.acute (1-based)
+    "halfwidth": 0.10,              # R: getprior(halfwidth=0.1)
+    "prior_nu": 3,                  # R: prior.MTD.acute
     "logistic_intcpt": 3.0,
 
-    # CRM knobs
-    "sigma": 1.0,                   # not explicit in R snippet
-    "burn_in": True,                # burning phase exists in Sama code
+    "sigma": 1.0,                   # not explicit in Sama snippet
+    "burn_in": True,                # burning phase exists
     "ewoc_on": False,
     "ewoc_alpha": 0.25,
 
-    # Previously "Advanced", now in Essentials
     "gh_n": 61,
     "max_step": 1,
     "enforce_guardrail": True,
     "restrict_final_mtd": True,
     "show_debug": False,
 
-    # 6+3 rule
     "accept_rule_63": 1,
 }
 
@@ -398,12 +395,12 @@ def init_state():
 def reset_defaults():
     for k, v in R_DEFAULTS.items():
         st.session_state[k] = v
-    # True curve not reset on purpose
+    # true curve intentionally not reset
 
 init_state()
 
 # ============================================================
-# Essentials (now includes former advanced settings)
+# Essentials
 # ============================================================
 
 with st.expander("Essentials", expanded=False):
@@ -415,7 +412,7 @@ with st.expander("Essentials", expanded=False):
             "Target DLT rate",
             min_value=0.05, max_value=0.50, step=0.01,
             key="target",
-            help="R mapping: target.acute / prior.target.acute. In Sama’s example: 0.15."
+            help="R mapping: target.acute / prior.target.acute. Sama example: 0.15."
         )
         st.number_input(
             "Start dose level (1-based)",
@@ -427,10 +424,7 @@ with st.expander("Essentials", expanded=False):
             "Already treated at start dose (0 DLT)",
             min_value=0, max_value=500, step=1,
             key="already_treated_start",
-            help=(
-                "Adds N patients at the start dose with 0 acute DLT into the CRM data before simulation. "
-                "This is an extension to allow 'already safe starters'."
-            )
+            help="Extension: add N patients at start dose with 0 acute DLT before CRM starts."
         )
 
     with c2:
@@ -439,7 +433,7 @@ with st.expander("Essentials", expanded=False):
             "Number of simulated trials",
             min_value=50, max_value=5000, step=50,
             key="n_sims",
-            help="R mapping: NREP <- 1000 in Sama’s Final.Fun()."
+            help="R mapping: NREP <- 1000."
         )
         st.number_input(
             "Random seed",
@@ -454,14 +448,14 @@ with st.expander("Essentials", expanded=False):
             options=[31, 41, 61, 81],
             index=[31, 41, 61, 81].index(int(st.session_state["gh_n"])),
             key="gh_n",
-            help="Numerical integration for posterior. Higher is slower, more accurate."
+            help="Posterior integration accuracy vs speed."
         )
         st.selectbox(
             "Max dose step per update",
             options=[1, 2],
             index=[1, 2].index(int(st.session_state["max_step"])),
             key="max_step",
-            help="Step-size limit per cohort decision."
+            help="Dose movement limit per CRM update."
         )
 
     with c3:
@@ -470,7 +464,7 @@ with st.expander("Essentials", expanded=False):
             "Maximum sample size (6+3)",
             min_value=6, max_value=200, step=3,
             key="max_n_63",
-            help="R mapping: N.patient = 27 (default here as well)."
+            help="R mapping: N.patient = 27."
         )
         st.number_input(
             "Maximum sample size (CRM)",
@@ -499,7 +493,7 @@ with st.expander("Essentials", expanded=False):
         st.toggle(
             "Show CRM debug (first simulated trial)",
             key="show_debug",
-            help="Prints allowed set and posterior summaries for the first simulated trial."
+            help="Print admissible set and posterior summaries for the first trial."
         )
 
     st.write("")
@@ -534,13 +528,13 @@ with st.expander("Playground", expanded=True):
             options=["empiric", "logistic"],
             horizontal=True,
             key="prior_model",
-            help="R mapping: dfcrm::getprior() generates a skeleton. This mimics it."
+            help="R mapping: dfcrm::getprior() skeleton generation."
         )
         st.slider(
             "Prior target",
             min_value=0.05, max_value=0.50, step=0.01,
             key="prior_target",
-            help="R mapping: prior.target.acute (Sama: 0.15)."
+            help="R mapping: prior.target.acute (0.15)."
         )
         st.slider(
             "Halfwidth (delta)",
@@ -577,19 +571,19 @@ with st.expander("Playground", expanded=True):
             min_value=0.2, max_value=5.0, step=0.1,
             key="sigma",
             help=(
-                "Theta prior: theta ~ N(0, sigma^2). Controls how strongly the model can deviate from the skeleton.\n\n"
-                "R note: sigma is not exposed directly in Sama’s snippet."
+                "Theta prior: theta ~ N(0, sigma^2). Larger sigma => weaker prior around the skeleton.\n\n"
+                "R note: sigma is not explicitly exposed in Sama’s snippet."
             )
         )
         st.toggle(
             "Burn-in until first DLT",
             key="burn_in",
-            help="R mapping: Sama’s script has a burning phase before CRM starts."
+            help="R mapping: Sama’s script includes a burning phase before CRM."
         )
         st.toggle(
             "Enable EWOC overdose control",
             key="ewoc_on",
-            help="EWOC rule: allowed doses satisfy P(p_k > target | data) < alpha."
+            help="EWOC rule: allow doses with P(p_k > target | data) < alpha."
         )
         st.slider(
             "EWOC alpha",
@@ -610,7 +604,7 @@ with st.expander("Playground", expanded=True):
         ax.set_ylim(0, min(1.0, max(max(true_p), max(skeleton), target_val) * 1.25 + 0.02))
         compact_style(ax)
         ax.legend(fontsize=8, frameon=False, loc="upper left")
-        st.pyplot(fig, clear_figure=True)
+        st.pyplot(fig, use_container_width=False, clear_figure=True)
 
         st.write("")
         run = st.button("Run simulations", use_container_width=True)
@@ -693,12 +687,11 @@ if "run" in locals() and run:
     dlt_prob_crm = float(np.mean(dlt_crm) / max(1e-9, mean_ncrm))
 
     st.markdown("---")
-    st.subheader("Results")
 
     r1, r2, r3 = st.columns([1.1, 1.1, 0.8], gap="large")
 
     with r1:
-        fig, ax = plt.subplots(figsize=(6.0, 2.6), dpi=160)
+        fig, ax = plt.subplots(figsize=(7.2, 3.2), dpi=160)
         xx = np.arange(5)
         w = 0.38
         ax.bar(xx - w/2, p63, w, label="6+3")
@@ -711,10 +704,10 @@ if "run" in locals() and run:
         ax.axvline(true_mtd, linewidth=1, alpha=0.6)
         compact_style(ax)
         ax.legend(fontsize=8, frameon=False, loc="upper right")
-        st.pyplot(fig, clear_figure=True)
+        st.pyplot(fig, use_container_width=False, clear_figure=True)
 
     with r2:
-        fig, ax = plt.subplots(figsize=(6.0, 2.6), dpi=160)
+        fig, ax = plt.subplots(figsize=(7.2, 3.2), dpi=160)
         xx = np.arange(5)
         w = 0.38
         ax.bar(xx - w/2, avg63, w, label="6+3")
@@ -725,7 +718,7 @@ if "run" in locals() and run:
         ax.set_ylabel("Patients", fontsize=9)
         compact_style(ax)
         ax.legend(fontsize=8, frameon=False, loc="upper right")
-        st.pyplot(fig, clear_figure=True)
+        st.pyplot(fig, use_container_width=False, clear_figure=True)
 
     with r3:
         st.metric("DLT prob per patient (6+3)", f"{dlt_prob_63:.3f}")
