@@ -1,6 +1,22 @@
 import numpy as np
 import streamlit as st
 import matplotlib.pyplot as plt
+from io import BytesIO
+
+# ============================================================
+# Plot sizing (ONE place to tune)
+# ============================================================
+# Fixed pixel widths used by st.image(). Height is controlled by figsize.
+PREVIEW_W_PX = 520        # small plot in CRM knobs panel
+RESULT_W_PX  = 720        # results plots (bigger)
+
+# Matplotlib figure sizes (in inches) + dpi -> pixel geometry is fixed.
+# If you want “more square / taller” results, increase RESULT_H_IN.
+PREVIEW_W_IN, PREVIEW_H_IN, PREVIEW_DPI = 5.2, 2.7, 160
+
+# Results: make height ~ width (or a bit taller). With dpi=160 and 7.0" width -> ~1120 px wide,
+# but we still display at RESULT_W_PX; the aspect ratio stays correct and stable.
+RESULT_W_IN, RESULT_H_IN, RESULT_DPI = 7.0, 7.8, 160
 
 # ============================================================
 # Helpers
@@ -21,6 +37,13 @@ def compact_style(ax):
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
     ax.grid(axis="y", linewidth=0.5, alpha=0.25)
+
+def fig_to_png_bytes(fig):
+    buf = BytesIO()
+    fig.savefig(buf, format="png", bbox_inches="tight")
+    plt.close(fig)
+    buf.seek(0)
+    return buf
 
 # ============================================================
 # dfcrm getprior port
@@ -187,10 +210,8 @@ def crm_choose_next(
 
     k_star = int(allowed[np.argmin(np.abs(post_mean[allowed] - target))])
 
-    # step limiting
     k_star = int(np.clip(k_star, current_level - int(max_step), current_level + int(max_step)))
 
-    # guardrail
     if enforce_highest_tried_plus_one and highest_tried is not None:
         k_star = int(min(k_star, int(highest_tried) + 1))
 
@@ -330,7 +351,7 @@ def run_crm_trial(
     return int(selected), n_per, int(y_per.sum()), debug_rows
 
 # ============================================================
-# App config (compact)
+# Defaults (R-aligned)
 # ============================================================
 
 st.set_page_config(
@@ -347,6 +368,13 @@ st.markdown(
       [data-testid="collapsedControl"] { display: none; }
       .block-container { padding-top: 2.6rem; padding-bottom: 1.2rem; }
       .element-container { margin-bottom: 0.35rem; }
+
+      /* Keep images from stretching with container width */
+      [data-testid="stImage"] img {
+        max-width: none !important;
+        width: auto !important;
+        height: auto !important;
+      }
     </style>
     """,
     unsafe_allow_html=True,
@@ -355,25 +383,24 @@ st.markdown(
 dose_labels = ["5×4 Gy", "5×5 Gy", "5×6 Gy", "5×7 Gy", "5×8 Gy"]
 DEFAULT_TRUE_P = [0.01, 0.02, 0.12, 0.20, 0.35]
 
-# Sama/R-aligned defaults
 R_DEFAULTS = {
     "target": 0.15,
-    "start_level_1b": 2,            # R burning: p <- 2 (1-based)
-    "already_treated_start": 0,      # extension
-    "n_sims": 1000,                 # R: NREP
-    "seed": 123,                    # R: set.seed(123)
-    "max_n_63": 27,                 # R: N.patient
-    "max_n_crm": 27,                # R: N.patient
-    "cohort_size": 3,               # R: CO
+    "start_level_1b": 2,           # Sama: p <- 2 (1-based)
+    "already_treated_start": 0,
+    "n_sims": 1000,
+    "seed": 123,
+    "max_n_63": 27,
+    "max_n_crm": 27,
+    "cohort_size": 3,
 
     "prior_model": "empiric",
-    "prior_target": 0.15,           # R: prior.target.acute
-    "halfwidth": 0.10,              # R: getprior(halfwidth=0.1)
-    "prior_nu": 3,                  # R: prior.MTD.acute
+    "prior_target": 0.15,
+    "halfwidth": 0.10,
+    "prior_nu": 3,
     "logistic_intcpt": 3.0,
 
-    "sigma": 1.0,                   # not explicit in Sama snippet
-    "burn_in": True,                # burning phase exists
+    "sigma": 1.0,
+    "burn_in": True,
     "ewoc_on": False,
     "ewoc_alpha": 0.25,
 
@@ -395,7 +422,6 @@ def init_state():
 def reset_defaults():
     for k, v in R_DEFAULTS.items():
         st.session_state[k] = v
-    # true curve intentionally not reset
 
 init_state()
 
@@ -418,13 +444,13 @@ with st.expander("Essentials", expanded=False):
             "Start dose level (1-based)",
             min_value=1, max_value=5, step=1,
             key="start_level_1b",
-            help="R mapping: burning phase uses p <- 2 (1-based)."
+            help="R mapping: burning phase start is p <- 2 (1-based)."
         )
         st.number_input(
             "Already treated at start dose (0 DLT)",
             min_value=0, max_value=500, step=1,
             key="already_treated_start",
-            help="Extension: add N patients at start dose with 0 acute DLT before CRM starts."
+            help="Adds N patients treated at start dose with 0 acute DLT before CRM starts."
         )
 
     with c2:
@@ -441,7 +467,6 @@ with st.expander("Essentials", expanded=False):
             key="seed",
             help="R mapping: set.seed(123)."
         )
-
         st.markdown("#### CRM integration")
         st.selectbox(
             "Gauss–Hermite points",
@@ -478,7 +503,6 @@ with st.expander("Essentials", expanded=False):
             key="cohort_size",
             help="R mapping: CO = 3."
         )
-
         st.markdown("#### CRM safety / selection")
         st.toggle(
             "Guardrail: next dose ≤ highest tried + 1",
@@ -536,12 +560,24 @@ with st.expander("Playground", expanded=True):
             key="prior_target",
             help="R mapping: prior.target.acute (0.15)."
         )
+
+        # Dynamic halfwidth bounds so we never crash
+        prior_target = float(st.session_state["prior_target"])
+        max_hw = min(0.30, prior_target - 0.001, 1.0 - prior_target - 0.001)
+        max_hw = max(0.01, max_hw)
+
+        if float(st.session_state["halfwidth"]) > max_hw:
+            st.session_state["halfwidth"] = float(max_hw)
+
         st.slider(
             "Halfwidth (delta)",
-            min_value=0.01, max_value=0.30, step=0.01,
+            min_value=0.01,
+            max_value=float(max_hw),
+            step=0.01,
             key="halfwidth",
-            help="R mapping: getprior(halfwidth = 0.1)."
+            help="R mapping: getprior(halfwidth = 0.1). Must satisfy target±halfwidth within (0,1)."
         )
+
         st.slider(
             "Prior MTD (1-based)",
             min_value=1, max_value=5, step=1,
@@ -555,14 +591,26 @@ with st.expander("Playground", expanded=True):
             help="Only used if skeleton model is logistic."
         )
 
-        skeleton = dfcrm_getprior(
-            halfwidth=float(st.session_state["halfwidth"]),
-            target=float(st.session_state["prior_target"]),
-            nu=int(st.session_state["prior_nu"]),
-            nlevel=5,
-            model=str(st.session_state["prior_model"]),
-            intcpt=float(st.session_state["logistic_intcpt"]),
-        ).tolist()
+        try:
+            skeleton = dfcrm_getprior(
+                halfwidth=float(st.session_state["halfwidth"]),
+                target=float(st.session_state["prior_target"]),
+                nu=int(st.session_state["prior_nu"]),
+                nlevel=5,
+                model=str(st.session_state["prior_model"]),
+                intcpt=float(st.session_state["logistic_intcpt"]),
+            ).tolist()
+        except ValueError as e:
+            st.warning(str(e))
+            st.session_state["halfwidth"] = min(0.10, max_hw)
+            skeleton = dfcrm_getprior(
+                halfwidth=float(st.session_state["halfwidth"]),
+                target=float(st.session_state["prior_target"]),
+                nu=int(st.session_state["prior_nu"]),
+                nlevel=5,
+                model=str(st.session_state["prior_model"]),
+                intcpt=float(st.session_state["logistic_intcpt"]),
+            ).tolist()
 
     with right:
         st.markdown("#### CRM knobs")
@@ -570,15 +618,12 @@ with st.expander("Playground", expanded=True):
             "Prior sigma on theta",
             min_value=0.2, max_value=5.0, step=0.1,
             key="sigma",
-            help=(
-                "Theta prior: theta ~ N(0, sigma^2). Larger sigma => weaker prior around the skeleton.\n\n"
-                "R note: sigma is not explicitly exposed in Sama’s snippet."
-            )
+            help="Theta prior: theta ~ N(0, sigma^2). Larger sigma => weaker prior around the skeleton."
         )
         st.toggle(
             "Burn-in until first DLT",
             key="burn_in",
-            help="R mapping: Sama’s script includes a burning phase before CRM."
+            help="Sama’s R code includes a burning phase before CRM."
         )
         st.toggle(
             "Enable EWOC overdose control",
@@ -593,7 +638,7 @@ with st.expander("Playground", expanded=True):
             help="Only active when EWOC is enabled."
         )
 
-        fig, ax = plt.subplots(figsize=(5.2, 2.6), dpi=160)
+        fig, ax = plt.subplots(figsize=(PREVIEW_W_IN, PREVIEW_H_IN), dpi=PREVIEW_DPI)
         x = np.arange(5)
         ax.plot(x, true_p, marker="o", linewidth=1.6, label="True P(DLT)")
         ax.plot(x, skeleton, marker="o", linewidth=1.6, label="Prior (skeleton)")
@@ -604,7 +649,7 @@ with st.expander("Playground", expanded=True):
         ax.set_ylim(0, min(1.0, max(max(true_p), max(skeleton), target_val) * 1.25 + 0.02))
         compact_style(ax)
         ax.legend(fontsize=8, frameon=False, loc="upper left")
-        st.pyplot(fig, use_container_width=False, clear_figure=True)
+        st.image(fig_to_png_bytes(fig), width=PREVIEW_W_PX)
 
         st.write("")
         run = st.button("Run simulations", use_container_width=True)
@@ -688,10 +733,10 @@ if "run" in locals() and run:
 
     st.markdown("---")
 
-    r1, r2, r3 = st.columns([1.1, 1.1, 0.8], gap="large")
+    r1, r2, r3 = st.columns([1.2, 1.2, 0.8], gap="large")
 
     with r1:
-        fig, ax = plt.subplots(figsize=(7.2, 3.2), dpi=160)
+        fig, ax = plt.subplots(figsize=(RESULT_W_IN, RESULT_H_IN), dpi=RESULT_DPI)
         xx = np.arange(5)
         w = 0.38
         ax.bar(xx - w/2, p63, w, label="6+3")
@@ -704,10 +749,10 @@ if "run" in locals() and run:
         ax.axvline(true_mtd, linewidth=1, alpha=0.6)
         compact_style(ax)
         ax.legend(fontsize=8, frameon=False, loc="upper right")
-        st.pyplot(fig, use_container_width=False, clear_figure=True)
+        st.image(fig_to_png_bytes(fig), width=RESULT_W_PX)
 
     with r2:
-        fig, ax = plt.subplots(figsize=(7.2, 3.2), dpi=160)
+        fig, ax = plt.subplots(figsize=(RESULT_W_IN, RESULT_H_IN), dpi=RESULT_DPI)
         xx = np.arange(5)
         w = 0.38
         ax.bar(xx - w/2, avg63, w, label="6+3")
@@ -718,7 +763,7 @@ if "run" in locals() and run:
         ax.set_ylabel("Patients", fontsize=9)
         compact_style(ax)
         ax.legend(fontsize=8, frameon=False, loc="upper right")
-        st.pyplot(fig, use_container_width=False, clear_figure=True)
+        st.image(fig_to_png_bytes(fig), width=RESULT_W_PX)
 
     with r3:
         st.metric("DLT prob per patient (6+3)", f"{dlt_prob_63:.3f}")
