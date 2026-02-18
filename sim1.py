@@ -616,7 +616,7 @@ with st.expander("Playground", expanded=True):
         run = st.button(
             "Run simulations",
             use_container_width=True,
-            help="Runs nsim simulated trials for both designs using the current inputs and updates the results section below."
+   #        help="Runs nsim simulated trials for both designs using the current inputs and updates the results section below."
         )
 
     # ---- Mid: Priors
