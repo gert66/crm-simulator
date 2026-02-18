@@ -7,7 +7,7 @@ from io import BytesIO
 # 0) Fixed sizing knobs (ONE place to tune)
 # ============================================================
 PREVIEW_W_PX = 240
-RESULT_W_PX  = 320
+RESULT_W_PX  = 460
 
 PREVIEW_W_IN, PREVIEW_H_IN, PREVIEW_DPI = 3.4, 2.2, 170
 RESULT_W_IN,  RESULT_H_IN,  RESULT_DPI  = 6.0, 4.4, 170
