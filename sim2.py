@@ -360,7 +360,7 @@ st.markdown(
       [data-testid="collapsedControl"] { display: none; }
 
       /* push content a bit down so the top expander is never clipped */
-      .block-container { padding-top: 1.55rem; padding-bottom: 0.9rem; }
+      .block-container { padding-top: 2.1rem; padding-bottom: 0.9rem; }
 
       .element-container { margin-bottom: 0.20rem; }
 
