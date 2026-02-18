@@ -3,81 +3,29 @@ import streamlit as st
 import matplotlib.pyplot as plt
 
 # ============================================================
-# Plot sizing (ONE place to tune)
-# ============================================================
-# Fixed pixel widths used by st.image(). Height is controlled by figsize.
-PREVIEW_W_PX = 200        # small plot in CRM knobs panel
-RESULT_W_PX  = 380        # results plots (bigger)
-
-# Matplotlib figure sizes (in inches) + dpi -> pixel geometry is fixed.
-# If you want “more square / taller” results, increase RESULT_H_IN.
-PREVIEW_W_IN, PREVIEW_H_IN, PREVIEW_DPI = 3.5, 2.7, 160
-
-# Results: make height ~ width (or a bit taller). With dpi=160 and 7.0" width -> ~1120 px wide,
-# but we still display at RESULT_W_PX; the aspect ratio stays correct and stable.
-RESULT_W_IN, RESULT_H_IN, RESULT_DPI = 6.0, 5.0, 160
-
-# ============================================================
-# Page config + CSS (hide sidebar + tighten top padding)
-# ============================================================
-st.set_page_config(
-    page_title="6+3 vs CRM",
-    layout="wide",
-    initial_sidebar_state="collapsed"
-)
-
-st.markdown(
-    """
-    <style>
-      /* Hide Streamlit sidebar entirely (also hides multi-page list) */
-      [data-testid="stSidebar"] { display: none; }
-
-      /* Reduce top padding so the Essentials expander is fully visible */
-      .block-container { padding-top: 1.1rem; padding-bottom: 1.0rem; }
-
-      /* Slightly tighter expander header spacing */
-      div[data-testid="stExpander"] details summary { padding-top: 0.35rem; padding-bottom: 0.35rem; }
-    </style>
-    """,
-    unsafe_allow_html=True
-)
-
-# ============================================================
 # Helpers
 # ============================================================
+
 def safe_probs(x):
     x = np.asarray(x, dtype=float)
     return np.clip(x, 1e-6, 1 - 1e-6)
 
 def simulate_bernoulli(n, p, rng):
-    return rng.binomial(1, float(p), size=int(n))
+    return rng.binomial(1, p, size=int(n))
 
 def find_true_mtd(true_p, target):
     true_p = np.asarray(true_p, dtype=float)
-    return int(np.argmin(np.abs(true_p - float(target))))
+    return int(np.argmin(np.abs(true_p - target)))
 
 def compact_style(ax):
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
     ax.grid(axis="y", linewidth=0.5, alpha=0.25)
 
-def clamp_halfwidth(target, halfwidth, eps=1e-3):
-    """
-    Ensure target±halfwidth stays inside (0,1). If not, clamp halfwidth.
-    Returns (halfwidth_clamped, was_clamped, max_allowed).
-    """
-    target = float(target)
-    halfwidth = float(halfwidth)
-    max_allowed = max(eps, min(target - eps, 1.0 - target - eps))
-    if halfwidth > max_allowed:
-        return max_allowed, True, max_allowed
-    if halfwidth <= 0:
-        return max(eps, min(max_allowed, 0.01)), True, max_allowed
-    return halfwidth, False, max_allowed
+# ============================================================
+# dfcrm getprior port (empiric + logistic)
+# ============================================================
 
-# ============================================================
-# dfcrm getprior port
-# ============================================================
 def dfcrm_getprior(halfwidth, target, nu, nlevel, model="empiric", intcpt=3.0):
     halfwidth = float(halfwidth)
     target = float(target)
@@ -120,13 +68,16 @@ def dfcrm_getprior(halfwidth, target, nu, nlevel, model="empiric", intcpt=3.0):
     raise ValueError('model must be "empiric" or "logistic".')
 
 # ============================================================
-# 6+3 design (simple) + optional "already treated at start"
+# 6+3 design (simple)
 # ============================================================
-def run_6plus3(true_p, start_level=1, max_n=27, accept_max_dlt=1, already_n0=0, rng=None):
+
+def run_6plus3(true_p, start_level=1, max_n=27, accept_max_dlt=1, rng=None):
     """
     Simple 6+3:
-      - Work in blocks aiming for 6 patients at current level; if 1/6 expand to 9.
-      - already_n0: number already treated at start_level with 0 DLT (counts toward sample size).
+      - Treat 6 at current level.
+      - If 0/6 DLT: escalate.
+      - If 1/6 DLT: expand by 3 (total 9); accept if <= accept_max_dlt.
+      - If >=2/6 DLT OR expansion fails: de-escalate and stop.
     Returns:
       selected_level (0-based), n_per_level, total_dlts
     """
@@ -140,42 +91,21 @@ def run_6plus3(true_p, start_level=1, max_n=27, accept_max_dlt=1, already_n0=0, 
     n_per = np.zeros(n_levels, dtype=int)
     y_per = np.zeros(n_levels, dtype=int)
 
-    # preload already-treated
-    already_n0 = int(max(0, already_n0))
-    if already_n0 > 0:
-        n_add0 = min(already_n0, int(max_n))
-        n_per[level] += n_add0
-        # y_per += 0
-    total_n = int(n_per.sum())
-
+    total_n = 0
     last_acceptable = None
 
     while total_n < int(max_n):
-        # fill up to 6 at this level (or treat 6 if starting fresh)
-        need_for_6 = max(0, 6 - int(n_per[level]))
-        if need_for_6 == 0:
-            # if already >=6, treat in chunks of 6 for simplicity
-            need_for_6 = 6
-
-        n_add = min(need_for_6, int(max_n) - total_n)
-        out = simulate_bernoulli(n_add, true_p[level], rng)
+        n_add = min(6, int(max_n) - total_n)
+        out6 = simulate_bernoulli(n_add, true_p[level], rng)
 
         n_per[level] += n_add
-        y_per[level] += int(out.sum())
+        y_per[level] += int(out6.sum())
         total_n += n_add
 
-        if n_add < need_for_6:
+        if n_add < 6:
             break
 
-        # evaluate first 6 at this level (approx by looking at first 6 treated count)
-        # Since we don't track order, use current cumulative when it just reached >=6.
-        # This keeps behavior stable for simulation purposes.
-        if int(n_per[level]) < 6:
-            break
-
-        # approximate "d6" using binomial draw from current batch if it completed the 6 target
-        # For stable behavior: compute d6 based on the most recent n_add when it exactly completes 6.
-        d6 = int(out.sum()) if need_for_6 <= n_add else int(out.sum())
+        d6 = int(out6.sum())
 
         if d6 == 0:
             last_acceptable = level
@@ -207,7 +137,6 @@ def run_6plus3(true_p, start_level=1, max_n=27, accept_max_dlt=1, already_n0=0, 
                     level -= 1
                 break
 
-        # d6 >= 2
         if level > 0:
             level -= 1
         break
@@ -219,6 +148,7 @@ def run_6plus3(true_p, start_level=1, max_n=27, accept_max_dlt=1, already_n0=0, 
 # CRM posterior via Gauss–Hermite quadrature (acute-only)
 # p_k(theta) = skeleton_k ^ exp(theta), theta ~ N(0, sigma^2)
 # ============================================================
+
 def posterior_via_gh(sigma, skeleton, n_per_level, dlt_per_level, gh_n=61):
     sk = safe_probs(skeleton)
     n = np.asarray(n_per_level, dtype=float)
@@ -241,7 +171,7 @@ def posterior_via_gh(sigma, skeleton, n_per_level, dlt_per_level, gh_n=61):
 def crm_posterior_summaries(sigma, skeleton, n_per_level, dlt_per_level, target, gh_n=61):
     post_w, P = posterior_via_gh(sigma, skeleton, n_per_level, dlt_per_level, gh_n=gh_n)
     post_mean = (post_w[:, None] * P).sum(axis=0)
-    overdose_prob = (post_w[:, None] * (P > float(target))).sum(axis=0)
+    overdose_prob = (post_w[:, None] * (P > target)).sum(axis=0)
     return post_mean, overdose_prob
 
 def crm_choose_next(
@@ -261,13 +191,15 @@ def crm_choose_next(
     else:
         allowed = np.where(overdose_prob < float(ewoc_alpha))[0]
 
+    # Safe fallback if EWOC makes allowed empty:
+    # go to the lowest dose (clinically conservative), but still obey step/guardrail later.
     if allowed.size == 0:
-        return 0, post_mean, overdose_prob, allowed
+        allowed = np.array([0], dtype=int)
 
-    k_star = int(allowed[np.argmin(np.abs(post_mean[allowed] - float(target)))])
+    k_star = int(allowed[np.argmin(np.abs(post_mean[allowed] - target))])
 
     # step limiting
-    k_star = int(np.clip(k_star, int(current_level) - int(max_step), int(current_level) + int(max_step)))
+    k_star = int(np.clip(k_star, current_level - int(max_step), current_level + int(max_step)))
 
     # guardrail
     if enforce_highest_tried_plus_one and highest_tried is not None:
@@ -291,21 +223,26 @@ def crm_select_mtd(
         allowed = np.where(overdose_prob < float(ewoc_alpha))[0]
 
     if allowed.size == 0:
+        # If EWOC is extremely tight, be conservative.
         return 0
 
     if restrict_to_tried:
         tried = np.where(np.asarray(n_per_level) > 0)[0]
         if tried.size > 0:
-            allowed = np.intersect1d(allowed, tried)
-            if allowed.size == 0:
-                return int(tried[0])
+            allowed2 = np.intersect1d(allowed, tried)
+            if allowed2.size > 0:
+                allowed = allowed2
+            else:
+                # If none of the tried are allowed, choose lowest tried
+                return int(tried.min())
 
-    return int(allowed[np.argmin(np.abs(post_mean[allowed] - float(target)))])
+    return int(allowed[np.argmin(np.abs(post_mean[allowed] - target))])
 
 def run_crm_trial(
     true_p, target, skeleton,
     sigma=1.0,
     start_level=1,
+    already_treated_start=0,
     max_n=27,
     cohort_size=3,
     max_step=1,
@@ -315,10 +252,14 @@ def run_crm_trial(
     ewoc_on=False,
     ewoc_alpha=0.25,
     burn_in_until_first_dlt=True,
-    already_n0=0,
     rng=None,
     debug=False
 ):
+    """
+    already_treated_start:
+      - number of patients already treated at the start dose with 0 DLT (acute),
+        added to the data BEFORE any new cohorts are simulated.
+    """
     if rng is None:
         rng = np.random.default_rng()
 
@@ -329,15 +270,18 @@ def run_crm_trial(
     n_per = np.zeros(n_levels, dtype=int)
     y_per = np.zeros(n_levels, dtype=int)
 
-    # preload already-treated at start with 0 DLT
-    already_n0 = int(max(0, already_n0))
-    if already_n0 > 0:
-        n_add0 = min(already_n0, int(max_n))
-        n_per[level] += n_add0
+    # Inject already-treated safe patients at start dose
+    already_treated_start = int(max(0, already_treated_start))
+    if already_treated_start > 0:
+        n_per[level] += already_treated_start
+        # y_per[level] += 0  # explicit
 
-    highest_tried = level if int(n_per.sum()) > 0 else -1
+    highest_tried = level if (already_treated_start > 0) else -1
     any_dlt_seen = False
     debug_rows = []
+
+    # Burn-in is only meaningful when we have no prior treated patients at start
+    burn_in_active = bool(burn_in_until_first_dlt and already_treated_start == 0)
 
     while int(n_per.sum()) < int(max_n):
         n_add = min(int(cohort_size), int(max_n) - int(n_per.sum()))
@@ -356,16 +300,17 @@ def run_crm_trial(
                 "cohort_n": int(n_add),
                 "cohort_dlts": int(out.sum()),
                 "any_dlt_seen": bool(any_dlt_seen),
+                "n_per": [int(x) for x in n_per],
+                "y_per": [int(x) for x in y_per],
             })
 
         if n_add < int(cohort_size):
             break
 
-        # simplified R-like burning phase: escalate cohort-wise until first DLT
-        if burn_in_until_first_dlt and (not any_dlt_seen):
+        if burn_in_active and (not any_dlt_seen):
             if level < n_levels - 1:
                 level = level + 1
-            continue
+                continue
 
         ewoc_alpha_eff = float(ewoc_alpha) if ewoc_on else None
         next_level, post_mean, od_prob, allowed = crm_choose_next(
@@ -408,146 +353,313 @@ def run_crm_trial(
     return int(selected), n_per, int(y_per.sum()), debug_rows
 
 # ============================================================
-# Defaults aligned to your R context
+# Defaults aligned to Sama's R code
 # ============================================================
+
+st.set_page_config(page_title="6+3 vs CRM (Playground)", layout="wide")
+
 dose_labels = ["5×4 Gy", "5×5 Gy", "5×6 Gy", "5×7 Gy", "5×8 Gy"]
+
+# Sama R: P.acute.real <- c(0.01,0.02,0.12, 0.2, 0.35)
 DEFAULT_TRUE_P = [0.01, 0.02, 0.12, 0.20, 0.35]
 
-DEFAULTS = {
-    # Essentials (R example)
-    "target": 0.15,
-    "start_level_1based": 2,        # R burn-in p <- 2 (1-based)
-    "already_n0": 0,                # additional "already treated at start dose (0 DLT)"
-    "n_sims": 200,
-    "seed": 123,
-    "max_n_63": 27,
-    "max_n_crm": 27,
-    "cohort_size": 3,
+R_DEFAULTS = {
+    # Essentials (R)
+    "target": 0.15,                 # R: prior.target.acute (also used as target in your earlier example)
+    "start_level_1b": 2,            # R: burning phase p <- 2 (1-based). This equals 0-based level 1.
+    "already_treated_start": 0,     # extra feature requested
+    "n_sims": 1000,                 # R: NREP <- 1000
+    "seed": 123,                    # R: set.seed(123)
+    "max_n_63": 27,                 # R: N.patient = 27 (using same cap for 6+3 by default)
+    "max_n_crm": 27,                # R: N.patient = 27
+    "cohort_size": 3,               # R: CO = 3
 
-    # Prior playground
-    "prior_model": "empiric",
-    "prior_target": 0.15,
-    "halfwidth": 0.10,
-    "prior_nu": 3,
+    # Prior playground (R)
+    "prior_model": "empiric",       # R: getprior() default is power/empiric-style skeleton
+    "prior_target": 0.15,           # R: prior.target.acute
+    "halfwidth": 0.10,              # R: getprior halfwidth = 0.1
+    "prior_nu": 3,                  # R: prior.MTD.acute = 3 (1-based)
     "logistic_intcpt": 3.0,
 
-    # CRM knobs
+    # CRM knobs (sigma not explicit in Sama R snippet)
     "sigma": 1.0,
     "burn_in": True,
     "ewoc_on": False,
     "ewoc_alpha": 0.25,
 
-    # CRM integration + selection
+    # Advanced
     "gh_n": 61,
     "max_step": 1,
     "enforce_guardrail": True,
     "restrict_final_mtd": True,
     "show_debug": False,
 
-    # 6+3 acceptance rule
+    # 6+3 advanced
     "accept_rule_63": 1,
 }
 
-TRUE_KEYS = [f"true_{i}" for i in range(5)]
-ALL_KEYS = list(DEFAULTS.keys()) + TRUE_KEYS
-
-def apply_defaults():
-    for k, v in DEFAULTS.items():
-        st.session_state[k] = v
+def init_state():
+    for k, v in R_DEFAULTS.items():
+        st.session_state.setdefault(k, v)
     for i in range(5):
-        st.session_state[f"true_{i}"] = float(DEFAULT_TRUE_P[i])
+        st.session_state.setdefault(f"true_{i}", float(DEFAULT_TRUE_P[i]))
 
-# Reset flag logic: ensure reset happens BEFORE widgets are created
-if st.session_state.get("_do_reset", False):
-    apply_defaults()
-    st.session_state["_do_reset"] = False
-    st.rerun()
+def reset_all_defaults():
+    for k, v in R_DEFAULTS.items():
+        st.session_state[k] = v
+    # True curve intentionally NOT reset by default.
 
-# Initialize if missing
-for k, v in DEFAULTS.items():
-    st.session_state.setdefault(k, v)
-for i in range(5):
-    st.session_state.setdefault(f"true_{i}", float(DEFAULT_TRUE_P[i]))
+init_state()
 
 # ============================================================
-# Essentials expander (top)
+# Header
 # ============================================================
+
+st.title("Dose Escalation Simulator (acute-only): 6+3 vs CRM")
+st.caption("Single-window app: Essentials (top) + Playground + Results below.")
+
+# ============================================================
+# Essentials (top expander)
+# ============================================================
+
 with st.expander("Essentials", expanded=True):
-    c1, c2, c3 = st.columns([1.25, 1.25, 1.25], gap="large")
+    c1, c2, c3 = st.columns(3, gap="large")
 
     with c1:
-        st.subheader("Study")
+        st.markdown("### Study")
         st.number_input(
             "Target DLT rate",
             min_value=0.05, max_value=0.50, step=0.01,
             key="target",
-            help="R: target.acute is the target used by titecrm(prior, target=...). In your R example it is 0.15."
+            help=(
+                "This is the target toxicity probability used to define the MTD.\n\n"
+                "R mapping: in your scripts you use target.acute / prior.target.acute. "
+                "Here it drives CRM dose selection and the 'True MTD' marker."
+            )
         )
         st.number_input(
             "Start dose level (1-based)",
             min_value=1, max_value=5, step=1,
-            key="start_level_1based",
-            help="R: burning phase uses p <- 2 (1-based). Here you enter 1..5. Internally we convert to 0-based."
+            key="start_level_1b",
+            help=(
+                "Dose level where the trial starts (1-based indexing).\n\n"
+                "R mapping: burning phase uses p <- 2 (1-based) in Sama’s code."
+            )
         )
         st.number_input(
             "Already treated at start dose (0 DLT)",
-            min_value=0, max_value=200, step=1,
-            key="already_n0",
-            help="Preloads x patients at the start dose with 0 DLT before simulation starts. Useful if you already treated patients safely at the starting dose."
+            min_value=0, max_value=500, step=1,
+            key="already_treated_start",
+            help=(
+                "Adds N patients at the start dose with 0 acute DLT to the CRM data before simulation.\n\n"
+                "R mapping: this does not exist as a direct parameter in Sama’s code. "
+                "It is a practical extension for 'we already treated x patients safely at the starting dose'."
+            )
         )
 
     with c2:
-        st.subheader("Simulation")
+        st.markdown("### Simulation")
         st.number_input(
             "Number of simulated trials",
             min_value=50, max_value=5000, step=50,
             key="n_sims",
-            help="R: NREP is the number of replications. You used NREP=1000; here default is 200 for speed."
+            help=(
+                "How many simulated trials to run.\n\n"
+                "R mapping: NREP <- 1000 in Sama’s Final.Fun()."
+            )
         )
         st.number_input(
             "Random seed",
             min_value=1, max_value=10_000_000, step=1,
             key="seed",
-            help="R: set.seed(...). Controls reproducibility."
-        )
-        st.subheader("CRM integration")
-        st.selectbox(
-            "Gauss–Hermite points",
-            options=[31, 41, 61, 81],
-            index=[31, 41, 61, 81].index(int(st.session_state["gh_n"])),
-            key="gh_n",
-            help="Numerical integration accuracy for the CRM posterior. More points = slower but more accurate."
-        )
-        st.selectbox(
-            "Max dose step per update",
-            options=[1, 2],
-            index=[1, 2].index(int(st.session_state["max_step"])),
-            key="max_step",
-            help="Dose movement limit per CRM update (step limiting)."
+            help=(
+                "Controls reproducibility.\n\n"
+                "R mapping: set.seed(123) in Sama’s code."
+            )
         )
 
     with c3:
-        st.subheader("Sample size")
+        st.markdown("### Sample size")
         st.number_input(
             "Maximum sample size (6+3)",
             min_value=6, max_value=200, step=3,
             key="max_n_63",
-            help="Cap on total patients for 6+3 simulations."
+            help=(
+                "Hard cap for the 6+3 design.\n\n"
+                "R mapping: Sama’s acute/subacute simulation uses N.patient = 27."
+            )
         )
         st.number_input(
             "Maximum sample size (CRM)",
             min_value=6, max_value=200, step=3,
             key="max_n_crm",
-            help="R: N.patient = 27 in your example."
+            help=(
+                "Hard cap for the CRM trial.\n\n"
+                "R mapping: N.patient = 27 in Sama’s code."
+            )
         )
         st.number_input(
             "Cohort size",
             min_value=1, max_value=12, step=1,
             key="cohort_size",
-            help="R: CO = 3 in your example."
+            help=(
+                "Patients treated per CRM cohort update.\n\n"
+                "R mapping: CO = 3 in Sama’s code."
+            )
         )
 
-        st.subheader("CRM safety / selection")
+    st.write("")
+    if st.button("Reset to defaults"):
+        reset_all_defaults()
+        st.rerun()
+
+# ============================================================
+# Playground expander
+# ============================================================
+
+with st.expander("Playground", expanded=True):
+    left, mid, right = st.columns([1.0, 1.0, 1.2], gap="large")
+
+    # ---- True curve
+    with left:
+        st.markdown("### True acute DLT curve")
+        true_p = []
+        for i, lab in enumerate(dose_labels):
+            true_p.append(float(st.number_input(
+                f"L{i} {lab}",
+                min_value=0.0, max_value=1.0, step=0.01,
+                key=f"true_{i}",
+                help="Ground truth acute DLT probability used to simulate Bernoulli outcomes."
+            )))
+        target_val = float(st.session_state["target"])
+        true_mtd = find_true_mtd(true_p, target_val)
+        st.caption(f"True MTD (closest to target) = L{true_mtd}")
+
+    # ---- Prior playground
+    with mid:
+        st.markdown("### Prior playground")
+        st.radio(
+            "Skeleton model",
+            options=["empiric", "logistic"],
+            horizontal=True,
+            key="prior_model",
+            help=(
+                "Controls how the skeleton is generated.\n\n"
+                "R mapping: dfcrm::getprior() generates a prior skeleton; this mimics that behavior."
+            )
+        )
+        st.slider(
+            "Prior target",
+            min_value=0.05, max_value=0.50, step=0.01,
+            key="prior_target",
+            help="R mapping: prior.target.acute (Sama code: prior.target.acute = 0.15)."
+        )
+        st.slider(
+            "Halfwidth (delta)",
+            min_value=0.01, max_value=0.30, step=0.01,
+            key="halfwidth",
+            help="R mapping: getprior(halfwidth = 0.1)."
+        )
+        st.slider(
+            "Prior MTD (1-based)",
+            min_value=1, max_value=5, step=1,
+            key="prior_nu",
+            help="R mapping: prior.MTD.acute = 3 (1-based)."
+        )
+        st.slider(
+            "Logistic intercept",
+            min_value=-10.0, max_value=10.0, step=0.1,
+            key="logistic_intcpt",
+            help="Only used for logistic skeleton generation."
+        )
+
+        skeleton = dfcrm_getprior(
+            halfwidth=float(st.session_state["halfwidth"]),
+            target=float(st.session_state["prior_target"]),
+            nu=int(st.session_state["prior_nu"]),
+            nlevel=5,
+            model=str(st.session_state["prior_model"]),
+            intcpt=float(st.session_state["logistic_intcpt"]),
+        ).tolist()
+
+    # ---- CRM knobs + preview
+    with right:
+        st.markdown("### CRM knobs + preview")
+        st.slider(
+            "Prior sigma on theta",
+            min_value=0.2, max_value=5.0, step=0.1,
+            key="sigma",
+            help=(
+                "Prior SD for theta in theta ~ N(0, sigma^2).\n\n"
+                "R mapping: sigma is not shown explicitly in Sama’s snippet; dfcrm has default priors. "
+                "Here it controls how strongly the model can move away from the skeleton."
+            )
+        )
+        st.toggle(
+            "Burn-in until first DLT",
+            key="burn_in",
+            help=(
+                "If enabled: escalate cohort-wise until the first observed acute DLT, then use CRM.\n\n"
+                "R mapping: Sama’s script has a burning phase before running TITE-CRM.\n\n"
+                "Note: if you set 'Already treated at start dose' > 0, burn-in is skipped automatically."
+            )
+        )
+        st.toggle(
+            "Enable EWOC overdose control",
+            key="ewoc_on",
+            help=(
+                "EWOC rule: allowed doses satisfy P(p_k > target | data) < alpha.\n\n"
+                "R mapping: overdose control is an optional concept; your Python CRM implements it directly."
+            )
+        )
+        st.slider(
+            "EWOC alpha",
+            min_value=0.01, max_value=0.99, step=0.01,
+            key="ewoc_alpha",
+            disabled=(not st.session_state["ewoc_on"]),
+            help="Only used if EWOC is enabled."
+        )
+
+        fig, ax = plt.subplots(figsize=(5.4, 2.8), dpi=160)
+        x = np.arange(5)
+        ax.plot(x, true_p, marker="o", linewidth=1.6, label="True P(DLT)")
+        ax.plot(x, skeleton, marker="o", linewidth=1.6, label="Prior (skeleton)")
+        ax.axhline(target_val, linewidth=1, alpha=0.6)
+        ax.set_xticks(x)
+        ax.set_xticklabels([f"L{i}" for i in range(5)], fontsize=9)
+        ax.set_ylabel("Probability", fontsize=9)
+        ax.set_ylim(0, min(1.0, max(max(true_p), max(skeleton), target_val) * 1.25 + 0.02))
+        compact_style(ax)
+        ax.legend(fontsize=8, frameon=False, loc="upper left")
+        st.pyplot(fig, clear_figure=True)
+
+        st.write("")
+        run = st.button("Run simulations", use_container_width=True)
+
+# ============================================================
+# Advanced settings (collapsed, below playground)
+# ============================================================
+
+with st.expander("Advanced settings", expanded=False):
+    a1, a2, a3 = st.columns([1.0, 1.0, 1.0], gap="large")
+
+    with a1:
+        st.selectbox(
+            "Gauss–Hermite points",
+            options=[31, 41, 61, 81],
+            index=[31, 41, 61, 81].index(int(st.session_state["gh_n"])),
+            key="gh_n",
+            help="Posterior integration accuracy vs speed."
+        )
+        st.selectbox(
+            "Max dose step per CRM update",
+            options=[1, 2],
+            index=[1, 2].index(int(st.session_state["max_step"])),
+            key="max_step",
+            help="Limits how far the CRM can move per cohort update."
+        )
+
+    with a2:
         st.toggle(
             "Guardrail: next dose ≤ highest tried + 1",
             key="enforce_guardrail",
@@ -556,159 +668,36 @@ with st.expander("Essentials", expanded=True):
         st.toggle(
             "Final MTD must be among tried doses",
             key="restrict_final_mtd",
-            help="Restrict final MTD selection to dose levels that were actually treated."
+            help="Restricts final MTD selection to doses that were actually treated."
         )
+
+    with a3:
         st.toggle(
-            "Show CRM debug (first simulated trial)",
+            "Show CRM decision debug (first simulated trial)",
             key="show_debug",
-            help="Shows admissible set and posterior summaries for the first simulated trial."
+            help="Shows admissible set and posterior summaries for the first trial."
         )
 
-    st.write("")
-    if st.button("Reset to defaults", use_container_width=False):
-        st.session_state["_do_reset"] = True
-        st.rerun()
+    st.markdown("---")
+    st.markdown("**6+3 design settings**")
+    st.selectbox(
+        "Acceptance rule after expansion to 9",
+        options=[1, 2],
+        index=[1, 2].index(int(st.session_state["accept_rule_63"])),
+        key="accept_rule_63",
+        help="If 1/6 DLT, expand to 9; accept if total DLTs <= this threshold."
+    )
 
 # ============================================================
-# Playground expander (main)
+# Results
 # ============================================================
-with st.expander("Playground", expanded=True):
-    col_true, col_prior, col_knobs = st.columns([1.05, 1.10, 1.25], gap="large")
 
-    # ---- True curve
-    with col_true:
-        st.subheader("True acute DLT")
-        true_p = []
-        for i, lab in enumerate(dose_labels):
-            true_p.append(float(st.number_input(
-                f"L{i} {lab}",
-                min_value=0.0, max_value=1.0, step=0.01,
-                key=f"true_{i}",
-                help="Ground truth P(DLT) used to simulate Bernoulli outcomes."
-            )))
-        true_mtd = find_true_mtd(true_p, float(st.session_state["target"]))
-        st.caption(f"True MTD (closest to target) = L{true_mtd}")
-
-    # ---- Priors
-    with col_prior:
-        st.subheader("Priors")
-        st.radio(
-            "Skeleton model",
-            options=["empiric", "logistic"],
-            horizontal=True,
-            key="prior_model",
-            help="R: dfcrm::getprior(...) returns a skeleton (power model). Here we support empiric and logistic options."
-        )
-        st.slider(
-            "Prior target",
-            min_value=0.05, max_value=0.50, step=0.01,
-            key="prior_target",
-            help="R: getprior(target=prior.target.acute). In your R example: 0.15."
-        )
-
-        # clamp halfwidth to avoid hard crash
-        hw_raw = float(st.session_state["halfwidth"])
-        tgt_raw = float(st.session_state["prior_target"])
-        hw_clamped, was_clamped, hw_max = clamp_halfwidth(tgt_raw, hw_raw, eps=1e-3)
-        if was_clamped and abs(hw_clamped - hw_raw) > 1e-12:
-            st.session_state["halfwidth"] = float(hw_clamped)
-            st.warning(f"Halfwidth was adjusted to {hw_clamped:.3f} so that target±halfwidth stays inside (0,1). Max allowed here is {hw_max:.3f}.")
-
-        st.slider(
-            "Halfwidth (delta)",
-            min_value=0.01, max_value=0.30, step=0.01,
-            key="halfwidth",
-            help="R: getprior(halfwidth=0.1). Must satisfy target±halfwidth within (0,1)."
-        )
-        st.slider(
-            "Prior MTD (1-based)",
-            min_value=1, max_value=5, step=1,
-            key="prior_nu",
-            help="R: getprior(nu=prior.MTD.acute). In your R example: 3."
-        )
-        st.slider(
-            "Logistic intercept",
-            min_value=0.0, max_value=10.0, step=0.1,
-            key="logistic_intcpt",
-            help="Only used for logistic skeleton generation."
-        )
-
-        # build skeleton safely (with clamped halfwidth)
-        try:
-            skeleton = dfcrm_getprior(
-                halfwidth=float(st.session_state["halfwidth"]),
-                target=float(st.session_state["prior_target"]),
-                nu=int(st.session_state["prior_nu"]),
-                nlevel=5,
-                model=str(st.session_state["prior_model"]),
-                intcpt=float(st.session_state["logistic_intcpt"]),
-            ).tolist()
-        except Exception as e:
-            # fallback safe skeleton (very conservative)
-            skeleton = [0.05, 0.08, 0.12, 0.18, 0.25]
-            st.error(f"Could not build skeleton from current settings. Using fallback. Details: {e}")
-
-    # ---- CRM knobs + preview plot
-    with col_knobs:
-        st.subheader("CRM knobs")
-        st.slider(
-            "Prior sigma on theta",
-            min_value=0.2, max_value=5.0, step=0.1,
-            key="sigma",
-            help="R: dfcrm::titecrm uses a prior skeleton; sigma is the prior SD on theta in the power model integration here. Default 1.0."
-        )
-        st.toggle(
-            "Burn-in until first DLT",
-            key="burn_in",
-            help="Mimics the idea of a burning phase: escalate cohort-wise until the first DLT is observed, then use CRM rules."
-        )
-        st.toggle(
-            "Enable EWOC overdose control",
-            key="ewoc_on",
-            help="If enabled, admissible doses satisfy P(p_k > target | data) < alpha."
-        )
-        st.slider(
-            "EWOC alpha",
-            min_value=0.05, max_value=0.99, step=0.01,
-            key="ewoc_alpha",
-            disabled=(not st.session_state["ewoc_on"]),
-            help="Only used when EWOC is enabled."
-        )
-
-        # fixed-size preview plot -> rendered as fixed-width image
-        fig, ax = plt.subplots(figsize=(PREVIEW_W_IN, PREVIEW_H_IN), dpi=PREVIEW_DPI)
-        x = np.arange(5)
-        target_val = float(st.session_state["target"])
-        ax.plot(x, true_p, marker="o", linewidth=1.6, label="True P(DLT)")
-        ax.plot(x, skeleton, marker="o", linewidth=1.6, label="Prior (skeleton)")
-        ax.axhline(target_val, linewidth=1, alpha=0.6)
-        ax.set_xticks(x)
-        ax.set_xticklabels([f"L{i}" for i in range(5)], fontsize=8)
-        ax.set_ylabel("Probability", fontsize=9)
-        ax.set_ylim(0, min(1.0, max(max(true_p), max(skeleton), target_val) * 1.25 + 0.02))
-        compact_style(ax)
-        ax.legend(fontsize=8, frameon=False, loc="upper left")
-
-        fig.tight_layout()
-        st.image(fig, width=PREVIEW_W_PX)
-        plt.close(fig)
-
-        run = st.button("Run simulations", use_container_width=True)
-
-# ============================================================
-# Run simulations + Results (no "Results" header)
-# ============================================================
-if "run" not in locals():
-    run = False
-
-if run:
+if "run" in locals() and run:
     rng = np.random.default_rng(int(st.session_state["seed"]))
     ns = int(st.session_state["n_sims"])
 
-    start_level0 = int(st.session_state["start_level_1based"]) - 1
-    start_level0 = int(np.clip(start_level0, 0, 4))
-
-    already_n0 = int(st.session_state["already_n0"])
+    start_0b = int(st.session_state["start_level_1b"]) - 1
+    start_0b = int(np.clip(start_0b, 0, 4))
 
     sel_63 = np.zeros(5, dtype=int)
     sel_crm = np.zeros(5, dtype=int)
@@ -724,20 +713,21 @@ if run:
     for s in range(ns):
         chosen63, n63, y63 = run_6plus3(
             true_p=true_p,
-            start_level=start_level0,
+            start_level=start_0b,
             max_n=int(st.session_state["max_n_63"]),
             accept_max_dlt=int(st.session_state["accept_rule_63"]),
-            already_n0=already_n0,
             rng=rng
         )
 
         debug_flag = bool(st.session_state["show_debug"] and s == 0)
+
         chosenc, nc, yc, dbg = run_crm_trial(
             true_p=true_p,
             target=float(st.session_state["target"]),
             skeleton=skeleton,
             sigma=float(st.session_state["sigma"]),
-            start_level=start_level0,
+            start_level=start_0b,
+            already_treated_start=int(st.session_state["already_treated_start"]),
             max_n=int(st.session_state["max_n_crm"]),
             cohort_size=int(st.session_state["cohort_size"]),
             max_step=int(st.session_state["max_step"]),
@@ -747,7 +737,6 @@ if run:
             ewoc_on=bool(st.session_state["ewoc_on"]),
             ewoc_alpha=float(st.session_state["ewoc_alpha"]),
             burn_in_until_first_dlt=bool(st.session_state["burn_in"]),
-            already_n0=already_n0,
             rng=rng,
             debug=debug_flag
         )
@@ -770,58 +759,57 @@ if run:
     avg63 = np.mean(nmat_63, axis=0)
     avgcrm = np.mean(nmat_crm, axis=0)
 
-    # DLT prob per patient (mean total DLTs / mean total patients)
     mean_n63 = float(np.mean(nmat_63.sum(axis=1)))
     mean_ncrm = float(np.mean(nmat_crm.sum(axis=1)))
-    mean_dlt63 = float(np.mean(dlt_63))
-    mean_dltcrm = float(np.mean(dlt_crm))
-    dltpp_63 = (mean_dlt63 / mean_n63) if mean_n63 > 0 else 0.0
-    dltpp_crm = (mean_dltcrm / mean_ncrm) if mean_ncrm > 0 else 0.0
 
-    # Layout: two plots + metrics
-    r1, r2, r3 = st.columns([1.10, 1.10, 0.80], gap="large")
+    # DLT probability per patient (average DLTs / average N)
+    dlt_prob_63 = float(np.mean(dlt_63) / max(1e-9, mean_n63))
+    dlt_prob_crm = float(np.mean(dlt_crm) / max(1e-9, mean_ncrm))
+
+    st.markdown("---")
+    st.subheader("Results")
+
+    r1, r2, r3 = st.columns([1.1, 1.1, 0.8], gap="large")
 
     with r1:
-        fig, ax = plt.subplots(figsize=(RESULT_W_IN, RESULT_H_IN), dpi=RESULT_DPI)
+        fig, ax = plt.subplots(figsize=(6.2, 2.8), dpi=160)
         xx = np.arange(5)
         w = 0.38
         ax.bar(xx - w/2, p63, w, label="6+3")
         ax.bar(xx + w/2, pcrm, w, label="CRM")
         ax.set_title("P(select dose as MTD)", fontsize=10)
         ax.set_xticks(xx)
-        ax.set_xticklabels([f"L{i}" for i in range(5)], fontsize=8)
+        ax.set_xticklabels([f"L{i}" for i in range(5)], fontsize=9)
         ax.set_ylabel("Probability", fontsize=9)
         ax.set_ylim(0, max(p63.max(), pcrm.max()) * 1.15 + 1e-6)
         ax.axvline(true_mtd, linewidth=1, alpha=0.6)
         compact_style(ax)
         ax.legend(fontsize=8, frameon=False, loc="upper right")
-        fig.tight_layout()
-        st.image(fig, width=RESULT_W_PX)
-        plt.close(fig)
+        st.pyplot(fig, clear_figure=True)
 
     with r2:
-        fig, ax = plt.subplots(figsize=(RESULT_W_IN, RESULT_H_IN), dpi=RESULT_DPI)
+        fig, ax = plt.subplots(figsize=(6.2, 2.8), dpi=160)
         xx = np.arange(5)
         w = 0.38
         ax.bar(xx - w/2, avg63, w, label="6+3")
         ax.bar(xx + w/2, avgcrm, w, label="CRM")
         ax.set_title("Avg patients treated per dose", fontsize=10)
         ax.set_xticks(xx)
-        ax.set_xticklabels([f"L{i}" for i in range(5)], fontsize=8)
+        ax.set_xticklabels([f"L{i}" for i in range(5)], fontsize=9)
         ax.set_ylabel("Patients", fontsize=9)
         compact_style(ax)
         ax.legend(fontsize=8, frameon=False, loc="upper right")
-        fig.tight_layout()
-        st.image(fig, width=RESULT_W_PX)
-        plt.close(fig)
+        st.pyplot(fig, clear_figure=True)
 
     with r3:
-        st.metric("DLT prob per patient (6+3)", f"{dltpp_63:.3f}")
-        st.metric("DLT prob per patient (CRM)", f"{dltpp_crm:.3f}")
-        st.caption(f"n_sims={ns} | seed={int(st.session_state['seed'])} | True MTD marker=L{true_mtd}")
+        st.metric("DLT prob per patient (6+3)", f"{dlt_prob_63:.3f}")
+        st.metric("DLT prob per patient (CRM)", f"{dlt_prob_crm:.3f}")
+        st.caption(
+            f"n_sims={ns} | seed={int(st.session_state['seed'])} | "
+            f"True MTD marker=L{true_mtd}"
+        )
 
     if st.session_state["show_debug"] and debug_dump:
-        st.write("")
         st.subheader("CRM debug (first simulated trial)")
         for i, row in enumerate(debug_dump, start=1):
             st.write(
