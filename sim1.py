@@ -4,19 +4,13 @@ import matplotlib.pyplot as plt
 from io import BytesIO
 
 # ============================================================
-# Plot sizing (ONE place to tune)
+# 0) Fixed sizing knobs (ONE place to tune)
 # ============================================================
-# Fixed pixel widths used by st.image(). Height is controlled by figsize.
-PREVIEW_W_PX = 200        # small plot in CRM knobs panel
-RESULT_W_PX  = 380        # results plots (bigger)
+PREVIEW_W_PX = 240
+RESULT_W_PX  = 460
 
-# Matplotlib figure sizes (in inches) + dpi -> pixel geometry is fixed.
-# If you want “more square / taller” results, increase RESULT_H_IN.
-PREVIEW_W_IN, PREVIEW_H_IN, PREVIEW_DPI = 3.5, 2.7, 160
-
-# Results: make height ~ width (or a bit taller). With dpi=160 and 7.0" width -> ~1120 px wide,
-# but we still display at RESULT_W_PX; the aspect ratio stays correct and stable.
-RESULT_W_IN, RESULT_H_IN, RESULT_DPI = 6.0, 5.0, 160
+PREVIEW_W_IN, PREVIEW_H_IN, PREVIEW_DPI = 3.4, 2.2, 170
+RESULT_W_IN,  RESULT_H_IN,  RESULT_DPI  = 6.0, 4.4, 170
 
 # ============================================================
 # Helpers
@@ -160,7 +154,6 @@ def run_6plus3(true_p, start_level=1, max_n=27, accept_max_dlt=1, rng=None):
 
 # ============================================================
 # CRM posterior via Gauss–Hermite quadrature (acute-only)
-# p_k(theta) = skeleton_k ^ exp(theta), theta ~ N(0, sigma^2)
 # ============================================================
 
 def posterior_via_gh(sigma, skeleton, n_per_level, dlt_per_level, gh_n=61):
@@ -209,7 +202,6 @@ def crm_choose_next(
         allowed = np.array([0], dtype=int)
 
     k_star = int(allowed[np.argmin(np.abs(post_mean[allowed] - target))])
-
     k_star = int(np.clip(k_star, current_level - int(max_step), current_level + int(max_step)))
 
     if enforce_highest_tried_plus_one and highest_tried is not None:
@@ -329,9 +321,9 @@ def run_crm_trial(
             debug_rows[-1].update({
                 "next_level": int(next_level),
                 "allowed_levels": ",".join([str(int(a)) for a in allowed]),
+                "highest_tried": int(highest_tried),
                 "post_mean": [float(x) for x in post_mean],
                 "od_prob": [float(x) for x in od_prob],
-                "highest_tried": int(highest_tried),
             })
 
         level = int(next_level)
@@ -351,7 +343,7 @@ def run_crm_trial(
     return int(selected), n_per, int(y_per.sum()), debug_rows
 
 # ============================================================
-# Defaults (R-aligned)
+# Streamlit config + CSS
 # ============================================================
 
 st.set_page_config(
@@ -366,10 +358,12 @@ st.markdown(
       [data-testid="stSidebar"] { display: none; }
       [data-testid="stSidebarNav"] { display: none; }
       [data-testid="collapsedControl"] { display: none; }
-      .block-container { padding-top: 2.6rem; padding-bottom: 1.2rem; }
-      .element-container { margin-bottom: 0.35rem; }
 
-      /* Keep images from stretching with container width */
+      /* push content a bit down so the top expander is never clipped */
+      .block-container { padding-top: 2.8rem; padding-bottom: 0.9rem; }
+
+      .element-container { margin-bottom: 0.20rem; }
+
       [data-testid="stImage"] img {
         max-width: none !important;
         width: auto !important;
@@ -380,12 +374,16 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# ============================================================
+# Defaults (R-aligned)
+# ============================================================
+
 dose_labels = ["5×4 Gy", "5×5 Gy", "5×6 Gy", "5×7 Gy", "5×8 Gy"]
 DEFAULT_TRUE_P = [0.01, 0.02, 0.12, 0.20, 0.35]
 
 R_DEFAULTS = {
     "target": 0.15,
-    "start_level_1b": 2,           # Sama: p <- 2 (1-based)
+    "start_level_1b": 2,
     "already_treated_start": 0,
     "n_sims": 200,
     "seed": 123,
@@ -411,19 +409,45 @@ R_DEFAULTS = {
     "show_debug": False,
 
     "accept_rule_63": 1,
+
+    "preview_w_px": PREVIEW_W_PX,
+    "result_w_px": RESULT_W_PX,
 }
+
+TRUE_KEYS = [f"true_{i}" for i in range(5)]
 
 def init_state():
     for k, v in R_DEFAULTS.items():
         st.session_state.setdefault(k, v)
     for i in range(5):
-        st.session_state.setdefault(f"true_{i}", float(DEFAULT_TRUE_P[i]))
+        st.session_state.setdefault(TRUE_KEYS[i], float(DEFAULT_TRUE_P[i]))
 
-def reset_defaults():
+if st.session_state.get("_do_reset", False):
     for k, v in R_DEFAULTS.items():
         st.session_state[k] = v
+    for i in range(5):
+        st.session_state[TRUE_KEYS[i]] = float(DEFAULT_TRUE_P[i])
+    st.session_state["_do_reset"] = False
+    st.rerun()
 
 init_state()
+
+# ============================================================
+# Help text helpers (keeps widget calls clean)
+# ============================================================
+
+def h(key, meaning, r_name=None):
+    r_def = R_DEFAULTS.get(key, None)
+    r_bits = []
+    if r_name:
+        r_bits.append(f"R: {r_name}")
+    if r_def is not None:
+        r_bits.append(f"Default (R): {r_def}")
+    suffix = (" | " + " | ".join(r_bits)) if r_bits else ""
+    return f"{meaning}{suffix}"
+
+def h_true(i):
+    return f"True acute DLT probability at dose level L{i}. Default (R scenario): {DEFAULT_TRUE_P[i]}"
 
 # ============================================================
 # Essentials
@@ -436,93 +460,125 @@ with st.expander("Essentials", expanded=False):
         st.markdown("#### Study")
         st.number_input(
             "Target DLT rate",
-            min_value=0.05, max_value=0.50, step=0.01,
-            key="target",
-            help="R mapping: target.acute / prior.target.acute. Sama example: 0.15."
+            min_value=0.05, max_value=0.50, step=0.01, key="target",
+            help=h("target",
+                   "Target acute DLT probability used for MTD definition and CRM decision rules.",
+                   r_name="target.acute (or target.acute.dlt)")
         )
         st.number_input(
             "Start dose level (1-based)",
-            min_value=1, max_value=5, step=1,
-            key="start_level_1b",
-            help="R mapping: burning phase start is p <- 2 (1-based)."
+            min_value=1, max_value=5, step=1, key="start_level_1b",
+            help=h("start_level_1b",
+                   "Starting dose level for both designs (entered as 1-based level).",
+                   r_name="p (start dose index, 1-based)")
         )
         st.number_input(
             "Already treated at start dose (0 DLT)",
-            min_value=0, max_value=500, step=1,
-            key="already_treated_start",
-            help="Adds N patients treated at start dose with 0 acute DLT before CRM starts."
+            min_value=0, max_value=500, step=1, key="already_treated_start",
+            help=h("already_treated_start",
+                   "Adds N patients treated at the start dose with 0 acute DLT before CRM begins updating.",
+                   r_name="alreadytreated / pretreated at start dose")
         )
 
     with c2:
         st.markdown("#### Simulation")
         st.number_input(
             "Number of simulated trials",
-            min_value=50, max_value=5000, step=50,
-            key="n_sims",
-            help="R mapping: NREP <- 1000."
+            min_value=50, max_value=5000, step=50, key="n_sims",
+            help=h("n_sims",
+                   "Number of simulated trials (replicates) used to estimate operating characteristics.",
+                   r_name="NREP")
         )
         st.number_input(
             "Random seed",
-            min_value=1, max_value=10_000_000, step=1,
-            key="seed",
-            help="R mapping: set.seed(123)."
+            min_value=1, max_value=10_000_000, step=1, key="seed",
+            help=h("seed",
+                   "Random seed for reproducibility.",
+                   r_name="set.seed()")
         )
+
         st.markdown("#### CRM integration")
         st.selectbox(
             "Gauss–Hermite points",
-            options=[31, 41, 61, 81],
-            index=[31, 41, 61, 81].index(int(st.session_state["gh_n"])),
-            key="gh_n",
-            help="Posterior integration accuracy vs speed."
+            options=[31, 41, 61, 81], key="gh_n",
+            help=h("gh_n",
+                   "Number of Gauss–Hermite quadrature points for integrating the CRM posterior. Higher is more accurate but slower.",
+                   r_name="gh.n / quadrature points")
         )
         st.selectbox(
             "Max dose step per update",
-            options=[1, 2],
-            index=[1, 2].index(int(st.session_state["max_step"])),
-            key="max_step",
-            help="Dose movement limit per CRM update."
+            options=[1, 2], key="max_step",
+            help=h("max_step",
+                   "Maximum number of dose levels the CRM can move up or down per cohort update.",
+                   r_name="step.size / maxstep")
         )
 
     with c3:
         st.markdown("#### Sample size")
         st.number_input(
             "Maximum sample size (6+3)",
-            min_value=6, max_value=200, step=3,
-            key="max_n_63",
-            help="R mapping: N.patient = 27."
+            min_value=6, max_value=200, step=3, key="max_n_63",
+            help=h("max_n_63",
+                   "Maximum total number of patients enrolled under the 6+3 design.",
+                   r_name="N.patient (6+3)")
         )
         st.number_input(
             "Maximum sample size (CRM)",
-            min_value=6, max_value=200, step=3,
-            key="max_n_crm",
-            help="R mapping: N.patient = 27."
+            min_value=6, max_value=200, step=3, key="max_n_crm",
+            help=h("max_n_crm",
+                   "Maximum total number of patients enrolled under CRM.",
+                   r_name="N.patient (CRM)")
         )
         st.number_input(
             "Cohort size",
-            min_value=1, max_value=12, step=1,
-            key="cohort_size",
-            help="R mapping: CO = 3."
+            min_value=1, max_value=12, step=1, key="cohort_size",
+            help=h("cohort_size",
+                   "Number of patients per cohort update in CRM.",
+                   r_name="CO")
         )
+
         st.markdown("#### CRM safety / selection")
         st.toggle(
             "Guardrail: next dose ≤ highest tried + 1",
             key="enforce_guardrail",
-            help="Prevents skipping untried dose levels."
+            help=h("enforce_guardrail",
+                   "Prevents skipping untried dose levels by limiting escalation to at most one level above the highest tried dose.",
+                   r_name="guardrail / no skipping")
         )
         st.toggle(
             "Final MTD must be among tried doses",
             key="restrict_final_mtd",
-            help="Restricts final MTD to doses with n>0."
+            help=h("restrict_final_mtd",
+                   "Restricts final MTD selection to dose levels that were actually treated (n > 0).",
+                   r_name="final.mtd.restrict.to.tried")
         )
         st.toggle(
             "Show CRM debug (first simulated trial)",
             key="show_debug",
-            help="Print admissible set and posterior summaries for the first trial."
+            help=h("show_debug",
+                   "Shows detailed CRM internals for the first simulated trial only (allowed set, posterior summaries, chosen next dose).",
+                   r_name="debug")
+        )
+
+    with st.expander("Figure sizing", expanded=False):
+        st.number_input(
+            "Preview plot width (px)",
+            min_value=180, max_value=500, step=10, key="preview_w_px",
+            help=h("preview_w_px",
+                   "Fixed pixel width for the small preview plot in the CRM knobs panel.",
+                   r_name="(UI only)")
+        )
+        st.number_input(
+            "Results plot width (px)",
+            min_value=220, max_value=600, step=10, key="result_w_px",
+            help=h("result_w_px",
+                   "Fixed pixel width for each results histogram.",
+                   r_name="(UI only)")
         )
 
     st.write("")
-    if st.button("Reset to defaults"):
-        reset_defaults()
+    if st.button("Reset to defaults", help="Resets Essentials, Priors, CRM knobs, and True acute DLT values back to the R defaults defined in this script."):
+        st.session_state["_do_reset"] = True
         st.rerun()
 
 # ============================================================
@@ -530,38 +586,62 @@ with st.expander("Essentials", expanded=False):
 # ============================================================
 
 with st.expander("Playground", expanded=True):
-    left, mid, right = st.columns([1.0, 1.0, 1.15], gap="large")
+    left, mid, right = st.columns([1.05, 1.00, 1.15], gap="large")
 
+    # ---- Left: True acute DLT + RUN BUTTON (moved here)
     with left:
         st.markdown("#### True acute DLT")
+
         true_p = []
         for i, lab in enumerate(dose_labels):
-            true_p.append(float(st.number_input(
-                f"L{i} {lab}",
-                min_value=0.0, max_value=1.0, step=0.01,
-                key=f"true_{i}",
-            )))
+            rL, rR = st.columns([0.55, 0.45], gap="small")
+            with rL:
+                st.markdown(f"<div style='font-size:0.86rem; padding-top:0.2rem;'>L{i} {lab}</div>", unsafe_allow_html=True)
+            with rR:
+                val = st.number_input(
+                    f"L{i}",
+                    min_value=0.0, max_value=1.0, step=0.01,
+                    key=f"true_{i}",
+                    label_visibility="collapsed",
+                    help=h_true(i)
+                )
+                true_p.append(float(val))
+
         target_val = float(st.session_state["target"])
         true_mtd = find_true_mtd(true_p, target_val)
         st.caption(f"True MTD (closest to target) = L{true_mtd}")
 
+        # moved button here:
+        st.write("")
+        run = st.button(
+            "Run simulations",
+            use_container_width=True,
+            help="Runs nsim simulated trials for both designs using the current inputs and updates the results section below."
+        )
+
+    # ---- Mid: Priors
     with mid:
         st.markdown("#### Priors")
+
         st.radio(
             "Skeleton model",
             options=["empiric", "logistic"],
             horizontal=True,
             key="prior_model",
-            help="R mapping: dfcrm::getprior() skeleton generation."
+            help=h("prior_model",
+                   "Method used to generate the prior skeleton with dfcrm_getprior().",
+                   r_name="skeleton model (empiric/logistic)")
         )
+
         st.slider(
             "Prior target",
             min_value=0.05, max_value=0.50, step=0.01,
             key="prior_target",
-            help="R mapping: prior.target.acute (0.15)."
+            help=h("prior_target",
+                   "Target probability used when building the prior skeleton (independent from the study target if you choose).",
+                   r_name="prior.target.acute")
         )
 
-        # Dynamic halfwidth bounds so we never crash
         prior_target = float(st.session_state["prior_target"])
         max_hw = min(0.30, prior_target - 0.001, 1.0 - prior_target - 0.001)
         max_hw = max(0.01, max_hw)
@@ -571,25 +651,30 @@ with st.expander("Playground", expanded=True):
 
         st.slider(
             "Halfwidth (delta)",
-            min_value=0.01,
-            max_value=float(max_hw),
-            step=0.01,
+            min_value=0.01, max_value=float(max_hw), step=0.01,
             key="halfwidth",
-            help="R mapping: getprior(halfwidth = 0.1). Must satisfy target±halfwidth within (0,1)."
+            help=h("halfwidth",
+                   "Controls how steep the skeleton is around the prior MTD. Must satisfy prior_target ± halfwidth within (0,1).",
+                   r_name="halfwidth")
         )
-
         st.slider(
             "Prior MTD (1-based)",
             min_value=1, max_value=5, step=1,
             key="prior_nu",
-            help="R mapping: prior.MTD.acute = 3."
+            help=h("prior_nu",
+                   "Dose level assumed (a priori) to be closest to the target, used as the anchor for the skeleton.",
+                   r_name="prior.MTD.acute")
         )
-        st.slider(
-            "Logistic intercept",
-            min_value=-10.0, max_value=10.0, step=0.1,
-            key="logistic_intcpt",
-            help="Only used if skeleton model is logistic."
-        )
+
+        if st.session_state["prior_model"] == "logistic":
+            st.slider(
+                "Logistic intercept",
+                min_value=-10.0, max_value=10.0, step=0.1,
+                key="logistic_intcpt",
+                help=h("logistic_intcpt",
+                       "Intercept used only for the logistic skeleton construction in dfcrm_getprior().",
+                       r_name="intcpt")
+            )
 
         try:
             skeleton = dfcrm_getprior(
@@ -602,7 +687,7 @@ with st.expander("Playground", expanded=True):
             ).tolist()
         except ValueError as e:
             st.warning(str(e))
-            st.session_state["halfwidth"] = min(0.10, max_hw)
+            st.session_state["halfwidth"] = float(min(0.10, max_hw))
             skeleton = dfcrm_getprior(
                 halfwidth=float(st.session_state["halfwidth"]),
                 target=float(st.session_state["prior_target"]),
@@ -612,30 +697,40 @@ with st.expander("Playground", expanded=True):
                 intcpt=float(st.session_state["logistic_intcpt"]),
             ).tolist()
 
+    # ---- Right: CRM knobs + preview
     with right:
         st.markdown("#### CRM knobs")
+
         st.slider(
             "Prior sigma on theta",
             min_value=0.2, max_value=5.0, step=0.1,
             key="sigma",
-            help="Theta prior: theta ~ N(0, sigma^2). Larger sigma => weaker prior around the skeleton."
+            help=h("sigma",
+                   "Standard deviation of theta in the CRM prior: theta ~ Normal(0, sigma^2). Larger sigma means a weaker prior around the skeleton.",
+                   r_name="prior.sigma / sigma")
         )
         st.toggle(
             "Burn-in until first DLT",
             key="burn_in",
-            help="Sama’s R code includes a burning phase before CRM."
+            help=h("burn_in",
+                   "If enabled, keep escalating one level at a time until the first observed DLT, then switch to CRM updates.",
+                   r_name="burnin / burning.phase")
         )
         st.toggle(
             "Enable EWOC overdose control",
             key="ewoc_on",
-            help="EWOC rule: allow doses with P(p_k > target | data) < alpha."
+            help=h("ewoc_on",
+                   "If enabled, restricts dose choices to those with posterior overdose probability below EWOC alpha.",
+                   r_name="EWOC on/off")
         )
         st.slider(
             "EWOC alpha",
             min_value=0.01, max_value=0.99, step=0.01,
             key="ewoc_alpha",
             disabled=(not st.session_state["ewoc_on"]),
-            help="Only active when EWOC is enabled."
+            help=h("ewoc_alpha",
+                   "EWOC threshold: allow dose k only if P(p_k > target | data) < alpha.",
+                   r_name="alpha")
         )
 
         fig, ax = plt.subplots(figsize=(PREVIEW_W_IN, PREVIEW_H_IN), dpi=PREVIEW_DPI)
@@ -649,13 +744,10 @@ with st.expander("Playground", expanded=True):
         ax.set_ylim(0, min(1.0, max(max(true_p), max(skeleton), target_val) * 1.25 + 0.02))
         compact_style(ax)
         ax.legend(fontsize=8, frameon=False, loc="upper left")
-        st.image(fig_to_png_bytes(fig), width=PREVIEW_W_PX)
-
-        st.write("")
-        run = st.button("Run simulations", use_container_width=True)
+        st.image(fig_to_png_bytes(fig), width=int(st.session_state["preview_w_px"]))
 
 # ============================================================
-# Results
+# Results (will move up now because button moved left)
 # ============================================================
 
 if "run" in locals() and run:
@@ -709,10 +801,8 @@ if "run" in locals() and run:
 
         sel_63[chosen63] += 1
         sel_crm[chosenc] += 1
-
         nmat_63[s, :] = n63
         nmat_crm[s, :] = nc
-
         dlt_63[s] = y63
         dlt_crm[s] = yc
 
@@ -731,9 +821,9 @@ if "run" in locals() and run:
     dlt_prob_63 = float(np.mean(dlt_63) / max(1e-9, mean_n63))
     dlt_prob_crm = float(np.mean(dlt_crm) / max(1e-9, mean_ncrm))
 
-    st.markdown("---")
+    st.write("")
 
-    r1, r2, r3 = st.columns([1.2, 1.2, 0.8], gap="large")
+    r1, r2, r3 = st.columns([1.05, 1.05, 0.90], gap="large")
 
     with r1:
         fig, ax = plt.subplots(figsize=(RESULT_W_IN, RESULT_H_IN), dpi=RESULT_DPI)
@@ -749,7 +839,7 @@ if "run" in locals() and run:
         ax.axvline(true_mtd, linewidth=1, alpha=0.6)
         compact_style(ax)
         ax.legend(fontsize=8, frameon=False, loc="upper right")
-        st.image(fig_to_png_bytes(fig), width=RESULT_W_PX)
+        st.image(fig_to_png_bytes(fig), width=int(st.session_state["result_w_px"]))
 
     with r2:
         fig, ax = plt.subplots(figsize=(RESULT_W_IN, RESULT_H_IN), dpi=RESULT_DPI)
@@ -763,7 +853,7 @@ if "run" in locals() and run:
         ax.set_ylabel("Patients", fontsize=9)
         compact_style(ax)
         ax.legend(fontsize=8, frameon=False, loc="upper right")
-        st.image(fig_to_png_bytes(fig), width=RESULT_W_PX)
+        st.image(fig_to_png_bytes(fig), width=int(st.session_state["result_w_px"]))
 
     with r3:
         st.metric("DLT prob per patient (6+3)", f"{dlt_prob_63:.3f}")
