@@ -433,6 +433,23 @@ if st.session_state.get("_do_reset", False):
 init_state()
 
 # ============================================================
+# Help text helpers (keeps widget calls clean)
+# ============================================================
+
+def h(key, meaning, r_name=None):
+    r_def = R_DEFAULTS.get(key, None)
+    r_bits = []
+    if r_name:
+        r_bits.append(f"R: {r_name}")
+    if r_def is not None:
+        r_bits.append(f"Default (R): {r_def}")
+    suffix = (" | " + " | ".join(r_bits)) if r_bits else ""
+    return f"{meaning}{suffix}"
+
+def h_true(i):
+    return f"True acute DLT probability at dose level L{i}. Default (R scenario): {DEFAULT_TRUE_P[i]}"
+
+# ============================================================
 # Essentials
 # ============================================================
 
@@ -441,36 +458,126 @@ with st.expander("Essentials", expanded=False):
 
     with c1:
         st.markdown("#### Study")
-        st.number_input("Target DLT rate", min_value=0.05, max_value=0.50, step=0.01, key="target")
-        st.number_input("Start dose level (1-based)", min_value=1, max_value=5, step=1, key="start_level_1b")
-        st.number_input("Already treated at start dose (0 DLT)", min_value=0, max_value=500, step=1, key="already_treated_start")
+        st.number_input(
+            "Target DLT rate",
+            min_value=0.05, max_value=0.50, step=0.01, key="target",
+            help=h("target",
+                   "Target acute DLT probability used for MTD definition and CRM decision rules.",
+                   r_name="target.acute (or target.acute.dlt)")
+        )
+        st.number_input(
+            "Start dose level (1-based)",
+            min_value=1, max_value=5, step=1, key="start_level_1b",
+            help=h("start_level_1b",
+                   "Starting dose level for both designs (entered as 1-based level).",
+                   r_name="p (start dose index, 1-based)")
+        )
+        st.number_input(
+            "Already treated at start dose (0 DLT)",
+            min_value=0, max_value=500, step=1, key="already_treated_start",
+            help=h("already_treated_start",
+                   "Adds N patients treated at the start dose with 0 acute DLT before CRM begins updating.",
+                   r_name="alreadytreated / pretreated at start dose")
+        )
 
     with c2:
         st.markdown("#### Simulation")
-        st.number_input("Number of simulated trials", min_value=50, max_value=5000, step=50, key="n_sims")
-        st.number_input("Random seed", min_value=1, max_value=10_000_000, step=1, key="seed")
+        st.number_input(
+            "Number of simulated trials",
+            min_value=50, max_value=5000, step=50, key="n_sims",
+            help=h("n_sims",
+                   "Number of simulated trials (replicates) used to estimate operating characteristics.",
+                   r_name="NREP")
+        )
+        st.number_input(
+            "Random seed",
+            min_value=1, max_value=10_000_000, step=1, key="seed",
+            help=h("seed",
+                   "Random seed for reproducibility.",
+                   r_name="set.seed()")
+        )
 
         st.markdown("#### CRM integration")
-        st.selectbox("Gauss–Hermite points", options=[31, 41, 61, 81], key="gh_n")
-        st.selectbox("Max dose step per update", options=[1, 2], key="max_step")
+        st.selectbox(
+            "Gauss–Hermite points",
+            options=[31, 41, 61, 81], key="gh_n",
+            help=h("gh_n",
+                   "Number of Gauss–Hermite quadrature points for integrating the CRM posterior. Higher is more accurate but slower.",
+                   r_name="gh.n / quadrature points")
+        )
+        st.selectbox(
+            "Max dose step per update",
+            options=[1, 2], key="max_step",
+            help=h("max_step",
+                   "Maximum number of dose levels the CRM can move up or down per cohort update.",
+                   r_name="step.size / maxstep")
+        )
 
     with c3:
         st.markdown("#### Sample size")
-        st.number_input("Maximum sample size (6+3)", min_value=6, max_value=200, step=3, key="max_n_63")
-        st.number_input("Maximum sample size (CRM)", min_value=6, max_value=200, step=3, key="max_n_crm")
-        st.number_input("Cohort size", min_value=1, max_value=12, step=1, key="cohort_size")
+        st.number_input(
+            "Maximum sample size (6+3)",
+            min_value=6, max_value=200, step=3, key="max_n_63",
+            help=h("max_n_63",
+                   "Maximum total number of patients enrolled under the 6+3 design.",
+                   r_name="N.patient (6+3)")
+        )
+        st.number_input(
+            "Maximum sample size (CRM)",
+            min_value=6, max_value=200, step=3, key="max_n_crm",
+            help=h("max_n_crm",
+                   "Maximum total number of patients enrolled under CRM.",
+                   r_name="N.patient (CRM)")
+        )
+        st.number_input(
+            "Cohort size",
+            min_value=1, max_value=12, step=1, key="cohort_size",
+            help=h("cohort_size",
+                   "Number of patients per cohort update in CRM.",
+                   r_name="CO")
+        )
 
         st.markdown("#### CRM safety / selection")
-        st.toggle("Guardrail: next dose ≤ highest tried + 1", key="enforce_guardrail")
-        st.toggle("Final MTD must be among tried doses", key="restrict_final_mtd")
-        st.toggle("Show CRM debug (first simulated trial)", key="show_debug")
+        st.toggle(
+            "Guardrail: next dose ≤ highest tried + 1",
+            key="enforce_guardrail",
+            help=h("enforce_guardrail",
+                   "Prevents skipping untried dose levels by limiting escalation to at most one level above the highest tried dose.",
+                   r_name="guardrail / no skipping")
+        )
+        st.toggle(
+            "Final MTD must be among tried doses",
+            key="restrict_final_mtd",
+            help=h("restrict_final_mtd",
+                   "Restricts final MTD selection to dose levels that were actually treated (n > 0).",
+                   r_name="final.mtd.restrict.to.tried")
+        )
+        st.toggle(
+            "Show CRM debug (first simulated trial)",
+            key="show_debug",
+            help=h("show_debug",
+                   "Shows detailed CRM internals for the first simulated trial only (allowed set, posterior summaries, chosen next dose).",
+                   r_name="debug")
+        )
 
     with st.expander("Figure sizing", expanded=False):
-        st.number_input("Preview plot width (px)", min_value=180, max_value=500, step=10, key="preview_w_px")
-        st.number_input("Results plot width (px)", min_value=220, max_value=600, step=10, key="result_w_px")
+        st.number_input(
+            "Preview plot width (px)",
+            min_value=180, max_value=500, step=10, key="preview_w_px",
+            help=h("preview_w_px",
+                   "Fixed pixel width for the small preview plot in the CRM knobs panel.",
+                   r_name="(UI only)")
+        )
+        st.number_input(
+            "Results plot width (px)",
+            min_value=220, max_value=600, step=10, key="result_w_px",
+            help=h("result_w_px",
+                   "Fixed pixel width for each results histogram.",
+                   r_name="(UI only)")
+        )
 
     st.write("")
-    if st.button("Reset to defaults"):
+    if st.button("Reset to defaults", help="Resets Essentials, Priors, CRM knobs, and True acute DLT values back to the R defaults defined in this script."):
         st.session_state["_do_reset"] = True
         st.rerun()
 
@@ -496,6 +603,7 @@ with st.expander("Playground", expanded=True):
                     min_value=0.0, max_value=1.0, step=0.01,
                     key=f"true_{i}",
                     label_visibility="collapsed",
+                    help=h_true(i)
                 )
                 true_p.append(float(val))
 
@@ -505,15 +613,34 @@ with st.expander("Playground", expanded=True):
 
         # moved button here:
         st.write("")
-        run = st.button("Run simulations", use_container_width=True)
+        run = st.button(
+            "Run simulations",
+            use_container_width=True,
+   #        help="Runs nsim simulated trials for both designs using the current inputs and updates the results section below."
+        )
 
     # ---- Mid: Priors
     with mid:
         st.markdown("#### Priors")
 
-        st.radio("Skeleton model", options=["empiric", "logistic"], horizontal=True, key="prior_model")
+        st.radio(
+            "Skeleton model",
+            options=["empiric", "logistic"],
+            horizontal=True,
+            key="prior_model",
+            help=h("prior_model",
+                   "Method used to generate the prior skeleton with dfcrm_getprior().",
+                   r_name="skeleton model (empiric/logistic)")
+        )
 
-        st.slider("Prior target", min_value=0.05, max_value=0.50, step=0.01, key="prior_target")
+        st.slider(
+            "Prior target",
+            min_value=0.05, max_value=0.50, step=0.01,
+            key="prior_target",
+            help=h("prior_target",
+                   "Target probability used when building the prior skeleton (independent from the study target if you choose).",
+                   r_name="prior.target.acute")
+        )
 
         prior_target = float(st.session_state["prior_target"])
         max_hw = min(0.30, prior_target - 0.001, 1.0 - prior_target - 0.001)
@@ -522,11 +649,32 @@ with st.expander("Playground", expanded=True):
         if float(st.session_state["halfwidth"]) > max_hw:
             st.session_state["halfwidth"] = float(max_hw)
 
-        st.slider("Halfwidth (delta)", min_value=0.01, max_value=float(max_hw), step=0.01, key="halfwidth")
-        st.slider("Prior MTD (1-based)", min_value=1, max_value=5, step=1, key="prior_nu")
+        st.slider(
+            "Halfwidth (delta)",
+            min_value=0.01, max_value=float(max_hw), step=0.01,
+            key="halfwidth",
+            help=h("halfwidth",
+                   "Controls how steep the skeleton is around the prior MTD. Must satisfy prior_target ± halfwidth within (0,1).",
+                   r_name="halfwidth")
+        )
+        st.slider(
+            "Prior MTD (1-based)",
+            min_value=1, max_value=5, step=1,
+            key="prior_nu",
+            help=h("prior_nu",
+                   "Dose level assumed (a priori) to be closest to the target, used as the anchor for the skeleton.",
+                   r_name="prior.MTD.acute")
+        )
 
         if st.session_state["prior_model"] == "logistic":
-            st.slider("Logistic intercept", min_value=-10.0, max_value=10.0, step=0.1, key="logistic_intcpt")
+            st.slider(
+                "Logistic intercept",
+                min_value=-10.0, max_value=10.0, step=0.1,
+                key="logistic_intcpt",
+                help=h("logistic_intcpt",
+                       "Intercept used only for the logistic skeleton construction in dfcrm_getprior().",
+                       r_name="intcpt")
+            )
 
         try:
             skeleton = dfcrm_getprior(
@@ -553,10 +701,37 @@ with st.expander("Playground", expanded=True):
     with right:
         st.markdown("#### CRM knobs")
 
-        st.slider("Prior sigma on theta", min_value=0.2, max_value=5.0, step=0.1, key="sigma")
-        st.toggle("Burn-in until first DLT", key="burn_in")
-        st.toggle("Enable EWOC overdose control", key="ewoc_on")
-        st.slider("EWOC alpha", min_value=0.01, max_value=0.99, step=0.01, key="ewoc_alpha", disabled=(not st.session_state["ewoc_on"]))
+        st.slider(
+            "Prior sigma on theta",
+            min_value=0.2, max_value=5.0, step=0.1,
+            key="sigma",
+            help=h("sigma",
+                   "Standard deviation of theta in the CRM prior: theta ~ Normal(0, sigma^2). Larger sigma means a weaker prior around the skeleton.",
+                   r_name="prior.sigma / sigma")
+        )
+        st.toggle(
+            "Burn-in until first DLT",
+            key="burn_in",
+            help=h("burn_in",
+                   "If enabled, keep escalating one level at a time until the first observed DLT, then switch to CRM updates.",
+                   r_name="burnin / burning.phase")
+        )
+        st.toggle(
+            "Enable EWOC overdose control",
+            key="ewoc_on",
+            help=h("ewoc_on",
+                   "If enabled, restricts dose choices to those with posterior overdose probability below EWOC alpha.",
+                   r_name="EWOC on/off")
+        )
+        st.slider(
+            "EWOC alpha",
+            min_value=0.01, max_value=0.99, step=0.01,
+            key="ewoc_alpha",
+            disabled=(not st.session_state["ewoc_on"]),
+            help=h("ewoc_alpha",
+                   "EWOC threshold: allow dose k only if P(p_k > target | data) < alpha.",
+                   r_name="alpha")
+        )
 
         fig, ax = plt.subplots(figsize=(PREVIEW_W_IN, PREVIEW_H_IN), dpi=PREVIEW_DPI)
         x = np.arange(5)
