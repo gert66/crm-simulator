@@ -560,26 +560,29 @@ with st.expander("Essentials", expanded=False):
                    r_name="debug")
         )
 
+    st.markdown("#### Figure sizing")
+    fs1, fs2 = st.columns(2, gap="large")
+    with fs1:
+        st.number_input(
+            "Preview plot width (px)",
+            min_value=180, max_value=500, step=10, key="preview_w_px",
+            help=h("preview_w_px",
+                   "Fixed pixel width for the small preview plot in the CRM knobs panel.",
+                   r_name="(UI only)")
+        )
+    with fs2:
+        st.number_input(
+            "Results plot width (px)",
+            min_value=220, max_value=600, step=10, key="result_w_px",
+            help=h("result_w_px",
+                   "Fixed pixel width for each results histogram.",
+                   r_name="(UI only)")
+        )
+
     st.write("")
     if st.button("Reset to defaults", help="Resets Essentials, Priors, CRM knobs, and True acute DLT values back to the R defaults defined in this script."):
         st.session_state["_do_reset"] = True
         st.rerun()
-
-with st.expander("Figure sizing", expanded=False):
-    st.number_input(
-        "Preview plot width (px)",
-        min_value=180, max_value=500, step=10, key="preview_w_px",
-        help=h("preview_w_px",
-               "Fixed pixel width for the small preview plot in the CRM knobs panel.",
-               r_name="(UI only)")
-    )
-    st.number_input(
-        "Results plot width (px)",
-        min_value=220, max_value=600, step=10, key="result_w_px",
-        help=h("result_w_px",
-               "Fixed pixel width for each results histogram.",
-               r_name="(UI only)")
-    )
 
 # ============================================================
 # Playground
