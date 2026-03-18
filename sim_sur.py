@@ -37,10 +37,13 @@ from io import BytesIO
 # 0) Fixed sizing knobs (ONE place to tune)
 #    Fixed pixel widths prevent plots from resizing with browser width.
 # ============================================================
-PREVIEW_W_PX = 240
+# Preview: larger defaults so the Playground preview is easier to read.
+# Burn-in and EWOC controls moved to Essentials, freeing vertical space in
+# the CRM panel and allowing a taller/wider preview figure.
+PREVIEW_W_PX = 310
 RESULT_W_PX  = 460
 
-PREVIEW_W_IN, PREVIEW_H_IN, PREVIEW_DPI = 3.4, 3.4, 170
+PREVIEW_W_IN, PREVIEW_H_IN, PREVIEW_DPI = 4.2, 5.0, 150
 RESULT_W_IN,  RESULT_H_IN,  RESULT_DPI  = 6.0, 4.4, 170
 
 # ============================================================
@@ -552,8 +555,18 @@ st.markdown(
       [data-testid="stSidebar"]       { display: none; }
       [data-testid="stSidebarNav"]    { display: none; }
       [data-testid="collapsedControl"]{ display: none; }
-      .block-container { padding-top: 2.8rem; padding-bottom: 0.9rem; }
-      .element-container { margin-bottom: 0.20rem; }
+
+      /* Tighter page padding — reduces scrolling on standard monitors */
+      .block-container { padding-top: 1.6rem; padding-bottom: 0.5rem; }
+      .element-container { margin-bottom: 0.12rem; }
+
+      /* Compact metric cards so they stack without excess whitespace */
+      [data-testid="stMetric"]           { padding: 0.15rem 0 0.05rem 0 !important; }
+      [data-testid="metric-container"]   { gap: 0 !important; }
+      [data-testid="stMetricLabel"]      { font-size: 0.78rem !important; }
+      [data-testid="stMetricValue"]      { font-size: 1.05rem !important; line-height: 1.2 !important; }
+
+      /* Fixed-size images don't stretch with browser width */
       [data-testid="stImage"] img {
         max-width: none !important;
         width: auto  !important;
@@ -807,6 +820,34 @@ with st.expander("Essentials", expanded=False):
                    "Show detailed CRM internals for the first simulated trial.",
                    r_name="debug")
         )
+        # CRM behaviour toggles moved here from Playground to free preview space
+        st.markdown("#### CRM behaviour")
+        st.toggle(
+            "Burn-in until first acute DLT",
+            key="burn_in",
+            help=h("burn_in",
+                   "Escalate one level at a time until the first acute DLT, "
+                   "then switch to CRM updates. Surgery/subacute events do not "
+                   "trigger burn-in termination.",
+                   r_name="burnin / burning.phase")
+        )
+        st.toggle(
+            "Enable EWOC joint overdose control",
+            key="ewoc_on",
+            help=h("ewoc_on",
+                   "Restrict doses to those where BOTH acute OD prob and "
+                   "conditional subacute OD prob are < EWOC alpha.",
+                   r_name="EWOC on/off")
+        )
+        st.number_input(
+            "EWOC alpha",
+            min_value=0.01, max_value=0.99, step=0.01, key="ewoc_alpha",
+            disabled=(not bool(st.session_state["ewoc_on"])),
+            help=h("ewoc_alpha",
+                   "EWOC threshold applied to both endpoints independently. "
+                   "Disabled when EWOC is off.",
+                   r_name="alpha")
+        )
 
     # 6+3 dual stopping rules (acute + subacute)
     st.markdown("#### 6+3 stopping rules")
@@ -926,8 +967,10 @@ with st.expander("Essentials", expanded=False):
 # Playground
 # ============================================================
 
+# Playground column ratios: right column is slightly wider to accommodate
+# the enlarged preview now that burn-in and EWOC toggles live in Essentials.
 with st.expander("Playground", expanded=True):
-    left, mid, right = st.columns([1.15, 1.05, 1.00], gap="large")
+    left, mid, right = st.columns([1.00, 1.02, 1.12], gap="large")
 
     # ---- Left: true curves + Run button
     with left:
@@ -1119,9 +1162,11 @@ with st.expander("Playground", expanded=True):
                 nlevel=5, model=prior_model_val, intcpt=intcpt_val,
             ).tolist()
 
-    # ---- Right: CRM knobs + preview plots
+    # ---- Right: CRM prior sigma + preview plots
+    # Burn-in and EWOC toggles moved to Essentials → more vertical space here
+    # for the preview plots (taller figures, easier to read skeletons).
     with right:
-        st.markdown("#### CRM knobs")
+        st.markdown("#### CRM prior + preview")
 
         st.slider(
             "Prior sigma on theta",
@@ -1129,31 +1174,6 @@ with st.expander("Playground", expanded=True):
             help=h("sigma",
                    "SD of theta in the CRM prior (shared). Larger = weaker prior.",
                    r_name="prior.sigma / sigma")
-        )
-        st.toggle(
-            "Burn-in until first acute DLT",
-            key="burn_in",
-            help=h("burn_in",
-                   "Escalate one level at a time until the first acute DLT, "
-                   "then switch to CRM updates. Surgery/subacute events do not "
-                   "trigger burn-in termination.",
-                   r_name="burnin / burning.phase")
-        )
-        st.toggle(
-            "Enable EWOC joint overdose control",
-            key="ewoc_on",
-            help=h("ewoc_on",
-                   "Restrict doses to those where BOTH acute OD prob and "
-                   "conditional subacute OD prob are < EWOC alpha.",
-                   r_name="EWOC on/off")
-        )
-        st.slider(
-            "EWOC alpha",
-            min_value=0.01, max_value=0.99, step=0.01, key="ewoc_alpha",
-            disabled=(not st.session_state["ewoc_on"]),
-            help=h("ewoc_alpha",
-                   "EWOC threshold applied to both endpoints independently.",
-                   r_name="alpha")
         )
 
         # Preview: two stacked mini-plots for clarity
@@ -1320,7 +1340,7 @@ if res is not None:
     with r1:
         fig, ax = plt.subplots(figsize=(RESULT_W_IN, RESULT_H_IN), dpi=RESULT_DPI)
         xx = np.arange(5); w = 0.38
-        ax.bar(xx - w/2, p63,  w, label="6+3 (acute-only)")
+        ax.bar(xx - w/2, p63,  w, label="6+3 (dual)")
         ax.bar(xx + w/2, pcrm, w, label="Conditional CRM")
         ax.set_title("P(select dose as MTD)", fontsize=10)
         ax.set_xticks(xx)
@@ -1359,21 +1379,37 @@ if res is not None:
         fig.tight_layout(pad=0.4)
         st.image(fig_to_png_bytes(fig), width=int(st.session_state["result_w_px"]))
 
+    # Compact metrics: 2-column layout halves the height of the metrics panel
+    # so it better matches the figure heights beside it.
     with r3:
-        st.metric("Acute DLT / all patients (6+3)",  f"{res['acute_rate_63']:.3f}")
-        st.metric("Acute DLT / all patients (CRM)",  f"{res['acute_rate_crm']:.3f}")
         p_surg_input = res.get("p_surgery", float(st.session_state["p_surgery"]))
-        st.metric("Surgery rate (6+3)",
-                  f"{res['surgery_rate_63']:.3f}",
-                  help=f"Expected ≈ {p_surg_input:.2f} (global p_surgery)")
-        st.metric("Surgery rate (CRM)",
-                  f"{res['surgery_rate_crm']:.3f}",
-                  help=f"Expected ≈ {p_surg_input:.2f} (global p_surgery)")
-        st.metric("Subacute / surgery pt (6+3)",     f"{res['sub_gs_rate_63']:.3f}")
-        st.metric("Subacute / surgery pt (CRM)",     f"{res['sub_gs_rate_crm']:.3f}")
+        mc1, mc2 = st.columns(2, gap="small")
+
+        with mc1:
+            st.metric("Acute/pt (6+3)",
+                      f"{res['acute_rate_63']:.3f}",
+                      help="Acute DLT rate per treated patient — 6+3 design")
+            st.metric("Surgery rate (6+3)",
+                      f"{res['surgery_rate_63']:.3f}",
+                      help=f"Expected ≈ {p_surg_input:.2f} (global p_surgery)")
+            st.metric("Sub/surg pt (6+3)",
+                      f"{res['sub_gs_rate_63']:.3f}",
+                      help="Subacute DLT rate per surgery-evaluable patient — 6+3 design")
+
+        with mc2:
+            st.metric("Acute/pt (CRM)",
+                      f"{res['acute_rate_crm']:.3f}",
+                      help="Acute DLT rate per treated patient — conditional CRM")
+            st.metric("Surgery rate (CRM)",
+                      f"{res['surgery_rate_crm']:.3f}",
+                      help=f"Expected ≈ {p_surg_input:.2f} (global p_surgery)")
+            st.metric("Sub/surg pt (CRM)",
+                      f"{res['sub_gs_rate_crm']:.3f}",
+                      help="Subacute DLT rate per surgery-evaluable patient — CRM")
+
         st.caption(
-            f"Subacute / all treated — 6+3: {res['sub_all_rate_63']:.3f}  "
-            f"CRM: {res['sub_all_rate_crm']:.3f}  (secondary; non-surgery pts excluded from primary)"
+            f"Sub / all treated: 6+3={res['sub_all_rate_63']:.3f}  "
+            f"CRM={res['sub_all_rate_crm']:.3f}  (secondary)"
         )
         st.caption(
             f"n_sims={res['ns']} | seed={res['seed']}"
