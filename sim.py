@@ -98,7 +98,20 @@ def dfcrm_getprior(halfwidth, target, nu, nlevel, model="empiric", intcpt=3.0):
 #   else stop (de-escalate to previous dose)
 # ============================================================
 
-def run_dual_6plus3(true_acute, true_subacute, start_level=0, max_n=27, rng=None, debug=False):
+def run_dual_6plus3(
+    true_acute, true_subacute, start_level=0, max_n=27,
+    a6_esc_max=0, s6_esc_max=1, a6_stop_min=2, s6_stop_min=3,
+    a9_esc_max=1, s9_esc_max=3,
+    rng=None, debug=False,
+):
+    """
+    Stopping rules (all thresholds inclusive):
+      After 6 pts — escalate if acute <= a6_esc_max  AND subacute <= s6_esc_max
+                    stop     if acute >= a6_stop_min  OR  subacute >= s6_stop_min
+                    else expand to 9 pts
+      After 9 pts — escalate if acute <= a9_esc_max  AND subacute <= s9_esc_max
+                    else stop
+    """
     if rng is None:
         rng = np.random.default_rng()
 
@@ -134,8 +147,8 @@ def run_dual_6plus3(true_acute, true_subacute, start_level=0, max_n=27, rng=None
         dbg = {"level": level, "phase": "6pt",
                "acute_dlts": a6, "subacute_dlts": s6} if debug else None
 
-        # escalate: 0 acute AND ≤1 subacute
-        if a6 == 0 and s6 <= 1:
+        # escalate after 6
+        if a6 <= int(a6_esc_max) and s6 <= int(s6_esc_max):
             last_acceptable = level
             if dbg is not None:
                 dbg["decision"] = "escalate"
@@ -145,8 +158,8 @@ def run_dual_6plus3(true_acute, true_subacute, start_level=0, max_n=27, rng=None
                 continue
             break
 
-        # stop unsafe: ≥2 acute OR ≥3 subacute
-        if a6 >= 2 or s6 >= 3:
+        # stop unsafe after 6
+        if a6 >= int(a6_stop_min) or s6 >= int(s6_stop_min):
             if dbg is not None:
                 dbg["decision"] = "stop_unsafe"
                 debug_rows.append(dbg)
@@ -175,8 +188,8 @@ def run_dual_6plus3(true_acute, true_subacute, start_level=0, max_n=27, rng=None
             dbg["acute_dlts"] = a9
             dbg["subacute_dlts"] = s9
 
-        # escalate: ≤1 acute AND ≤3 subacute
-        if a9 <= 1 and s9 <= 3:
+        # escalate after 9
+        if a9 <= int(a9_esc_max) and s9 <= int(s9_esc_max):
             last_acceptable = level
             if dbg is not None:
                 dbg["decision"] = "escalate"
@@ -186,7 +199,7 @@ def run_dual_6plus3(true_acute, true_subacute, start_level=0, max_n=27, rng=None
                 continue
             break
 
-        # stop unsafe
+        # stop unsafe after 9
         if dbg is not None:
             dbg["decision"] = "stop_unsafe"
             debug_rows.append(dbg)
@@ -495,6 +508,13 @@ R_DEFAULTS = {
     # CRM integration
     "gh_n":                    61,
     "max_step":                1,
+    # 6+3 stopping rules
+    "a6_esc_max":              0,   # max acute DLTs in 6 pts to escalate
+    "s6_esc_max":              1,   # max subacute DLTs in 6 pts to escalate
+    "a6_stop_min":             2,   # min acute DLTs in 6 pts to stop
+    "s6_stop_min":             3,   # min subacute DLTs in 6 pts to stop
+    "a9_esc_max":              1,   # max acute DLTs in 9 pts to escalate
+    "s9_esc_max":              3,   # max subacute DLTs in 9 pts to escalate
     # Playground prior tab (UI only)
     "prior_endpoint_tab":      "Acute",
     # CRM safety / selection
@@ -701,6 +721,36 @@ with st.expander("Essentials", expanded=False):
                    "Fixed pixel width for each results histogram.",
                    r_name="(UI only)")
         )
+
+    # 6+3 stopping rules — configurable thresholds
+    st.markdown("#### 6+3 stopping rules")
+    r6L, r6A, r6B, r6C, r6D = st.columns([0.30, 0.175, 0.175, 0.175, 0.175], gap="small")
+    with r6L:
+        st.markdown("<div style='font-size:0.82rem; padding-top:0.25rem;'>"
+                    "After <b>6 pts</b> — escalate if</div>", unsafe_allow_html=True)
+    with r6A:
+        st.number_input("Acute ≤ (6)", min_value=0, max_value=5, step=1, key="a6_esc_max",
+                        help=h("a6_esc_max", "Escalate after 6 patients if acute DLTs ≤ this value."))
+    with r6B:
+        st.number_input("Subacute ≤ (6)", min_value=0, max_value=5, step=1, key="s6_esc_max",
+                        help=h("s6_esc_max", "Escalate after 6 patients if subacute DLTs ≤ this value."))
+    with r6C:
+        st.number_input("Stop: acute ≥ (6)", min_value=1, max_value=6, step=1, key="a6_stop_min",
+                        help=h("a6_stop_min", "Stop (declare unsafe) after 6 patients if acute DLTs ≥ this value."))
+    with r6D:
+        st.number_input("Stop: subacute ≥ (6)", min_value=1, max_value=6, step=1, key="s6_stop_min",
+                        help=h("s6_stop_min", "Stop (declare unsafe) after 6 patients if subacute DLTs ≥ this value."))
+
+    r9L, r9A, r9B, _, __ = st.columns([0.30, 0.175, 0.175, 0.175, 0.175], gap="small")
+    with r9L:
+        st.markdown("<div style='font-size:0.82rem; padding-top:0.25rem;'>"
+                    "After <b>9 pts</b> — escalate if</div>", unsafe_allow_html=True)
+    with r9A:
+        st.number_input("Acute ≤ (9)", min_value=0, max_value=8, step=1, key="a9_esc_max",
+                        help=h("a9_esc_max", "Escalate after 9 patients if acute DLTs ≤ this value."))
+    with r9B:
+        st.number_input("Subacute ≤ (9)", min_value=0, max_value=8, step=1, key="s9_esc_max",
+                        help=h("s9_esc_max", "Escalate after 9 patients if subacute DLTs ≤ this value."))
 
     st.write("")
     if st.button("Reset to defaults",
@@ -1012,6 +1062,12 @@ if "run" in locals() and run:
             true_subacute=true_subacute,
             start_level=start_0b,
             max_n=int(st.session_state["max_n_63"]),
+            a6_esc_max=int(st.session_state["a6_esc_max"]),
+            s6_esc_max=int(st.session_state["s6_esc_max"]),
+            a6_stop_min=int(st.session_state["a6_stop_min"]),
+            s6_stop_min=int(st.session_state["s6_stop_min"]),
+            a9_esc_max=int(st.session_state["a9_esc_max"]),
+            s9_esc_max=int(st.session_state["s9_esc_max"]),
             rng=rng,
             debug=debug_flag,
         )
