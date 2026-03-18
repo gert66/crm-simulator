@@ -181,15 +181,28 @@ def run_6plus3_sur(
     patients at that dose, not a fixed cohort of 6.  This is intentional:
     the design prioritises subacute evaluability over fixed cohort sizes.
 
+    Rate-based acute thresholds
+    ----------------------------
+    When HOLD causes nt > 6 (or nt > 9 in phase 2), the acute threshold is
+    scaled proportionally so the original protocol ratio is preserved:
+
+      Phase 1 escalate threshold : floor(nt × a6_esc_max  / 6)
+      Phase 1 stop    threshold  : ceil( nt × a6_stop_min / 6)
+      Phase 2 escalate threshold : floor(nt × a9_esc_max  / 9)
+
+    When nt == 6 (or 9), the adjusted threshold equals the original value.
+    This ensures that extra patients accumulated during a HOLD do not inflate
+    the effective tolerance — the fraction of acute DLTs allowed stays constant.
+
     Decision rules (cumulative counts at evaluation; all thresholds inclusive)
     --------------------------------------------------------------------------
-    Phase 1
-      stop    : y_acute >= a6_stop_min  OR  (n_surgery>=6 AND y_sub >= s6_stop_min)
-      escalate: y_acute <= a6_esc_max  AND  (n_surgery>=6 AND y_sub <= s6_esc_max)
+    Phase 1  (adjusted thresholds a6_esc_adj, a6_stop_adj)
+      stop    : y_acute >= a6_stop_adj  OR  (n_surgery>=6 AND y_sub >= s6_stop_min)
+      escalate: y_acute <= a6_esc_adj  AND  (n_surgery>=6 AND y_sub <= s6_esc_max)
       expand  : neither of the above
 
-    Phase 2 (only reached if phase 1 → expand)
-      escalate: y_acute <= a9_esc_max  AND  (n_surgery>=9 AND y_sub <= s9_esc_max)
+    Phase 2 (only reached if phase 1 → expand; adjusted threshold a9_esc_adj)
+      escalate: y_acute <= a9_esc_adj  AND  (n_surgery>=9 AND y_sub <= s9_esc_max)
       stop    : otherwise  (includes y_sub >= s9_stop_min)
 
     Conservative rule when HOLD hits max_n without reaching threshold:
@@ -261,13 +274,20 @@ def run_6plus3_sur(
         # Subacute evaluable flag for phase 1
         sub_eval_p1 = nsg >= 6
 
+        # Rate-based acute thresholds: scale with actual n_treated so the
+        # protocol ratios (a6_esc_max/6, a6_stop_min/6) are preserved when
+        # HOLD causes nt > 6.  When nt == 6 the adjusted values equal the
+        # original parameters.
+        a6_esc_adj  = int(np.floor(nt * int(a6_esc_max)  / 6.0))
+        a6_stop_adj = int(np.ceil( nt * int(a6_stop_min) / 6.0))
+
         # Phase 1 stop: EITHER acute OR (evaluable) subacute exceeds threshold
-        stop_p1 = (ya >= int(a6_stop_min)
+        stop_p1 = (ya >= a6_stop_adj
                    or (sub_eval_p1 and ys >= int(s6_stop_min)))
 
         # Phase 1 escalate: BOTH acute AND (evaluable) subacute below threshold
         esc_p1 = (nt >= 6 and sub_eval_p1
-                  and ya <= int(a6_esc_max) and ys <= int(s6_esc_max))
+                  and ya <= a6_esc_adj and ys <= int(s6_esc_max))
 
         if stop_p1:
             if dbg is not None:
@@ -300,16 +320,21 @@ def run_6plus3_sur(
         # Subacute evaluable flag for phase 2
         sub_eval_p2 = nsg >= 9
 
+        # Rate-based acute threshold for phase 2: scale with actual n_treated
+        # so the protocol ratio (a9_esc_max/9) is preserved when nt > 9.
+        # When nt == 9 the adjusted value equals the original parameter.
+        a9_esc_adj = int(np.floor(nt * int(a9_esc_max) / 9.0))
+
         # Phase 2 escalate: BOTH acute AND (evaluable) subacute below threshold
         esc_p2 = (sub_eval_p2
-                  and ya <= int(a9_esc_max) and ys <= int(s9_esc_max))
+                  and ya <= a9_esc_adj and ys <= int(s9_esc_max))
 
         # Phase 2 explicit stop: EITHER acute OR subacute exceeds stop threshold
         # (when both thresholds are complementary this is equivalent to "else stop")
         stop_p2 = (not esc_p2
                    and (not sub_eval_p2
                         or ys >= int(s9_stop_min)
-                        or ya > int(a9_esc_max)))
+                        or ya > a9_esc_adj))
 
         if esc_p2:
             last_acceptable = level
@@ -896,6 +921,11 @@ with st.expander("Essentials", expanded=False):
         "so there may be **more than 6 (or 9) acute observations** before the "
         "first (or second) subacute-based decision is made. "
         "This is intentional: subacute evaluability takes precedence over fixed cohort sizes.\n\n"
+        "**Rate-based acute thresholds:** when HOLD causes extra patients to be treated, "
+        "the acute criterion is not applied as a fixed count — it is scaled to the "
+        "actual number treated, preserving the original protocol ratio. "
+        "For example, if the phase-2 escalation threshold is 1/9 and 18 patients have "
+        "been treated, escalation requires acute DLTs ≤ floor(18 × 1/9) = 2, not 1.\n\n"
         "Escalation requires **BOTH** acute AND subacute criteria to be met. "
         "Stopping is triggered by **EITHER** criterion.",
         icon="ℹ️",
