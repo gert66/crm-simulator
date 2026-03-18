@@ -641,7 +641,7 @@ DEFAULT_TRUE_SUB_GS   = [0.02, 0.05, 0.15, 0.25, 0.40]  # subacute given surgery
 R_DEFAULTS = {
     # Study
     "target_acute":            0.15,
-    "target_subacute":         0.20,   # conditional on surgery
+    "target_subacute":         0.33,   # conditional on surgery
     "p_surgery":               0.80,   # global surgery probability (dose-independent)
     "start_level_1b":          2,
     "already_treated_start":   0,
@@ -660,7 +660,7 @@ R_DEFAULTS = {
     "halfwidth_acute":         0.10,
     "prior_nu_acute":          3,
     # Priors – subacute (conditional on surgery)
-    "prior_target_subacute":   0.20,
+    "prior_target_subacute":   0.33,
     "halfwidth_subacute":      0.10,
     "prior_nu_subacute":       3,
     # CRM knobs
@@ -825,6 +825,14 @@ with st.expander("Essentials", expanded=False):
             help=h("max_step",
                    "Max dose levels the CRM can move up or down per cohort update.",
                    r_name="step.size / maxstep")
+        )
+        st.slider(
+            "Prior sigma on theta",
+            min_value=0.2, max_value=5.0, step=0.1, key="sigma",
+            help=h("sigma",
+                   "SD of theta in the CRM prior (shared for both endpoints). "
+                   "Larger = weaker / more diffuse prior.",
+                   r_name="prior.sigma / sigma")
         )
 
     with c3:
@@ -1052,7 +1060,7 @@ with st.expander("Playground", expanded=True):
             st.markdown("<div style='font-size:0.79rem;font-weight:600;'>Acute</div>",
                         unsafe_allow_html=True)
         with hSub:
-            st.markdown("<div style='font-size:0.79rem;font-weight:600;'>Sub|surg</div>",
+            st.markdown("<div style='font-size:0.79rem;font-weight:600;'>Subacute</div>",
                         unsafe_allow_html=True)
 
         true_acute    = []
@@ -1232,19 +1240,9 @@ with st.expander("Playground", expanded=True):
                 nlevel=5, model=prior_model_val, intcpt=intcpt_val,
             ).tolist()
 
-    # ---- Right: CRM prior sigma + preview plots
-    # Burn-in and EWOC toggles moved to Essentials → more vertical space here
-    # for the preview plots (taller figures, easier to read skeletons).
+    # ---- Right: dose-risk preview plots
     with right:
-        st.markdown("#### CRM prior + preview")
-
-        st.slider(
-            "Prior sigma on theta",
-            min_value=0.2, max_value=5.0, step=0.1, key="sigma",
-            help=h("sigma",
-                   "SD of theta in the CRM prior (shared). Larger = weaker prior.",
-                   r_name="prior.sigma / sigma")
-        )
+        st.markdown("#### Dose-risk preview")
 
         # Preview: two stacked mini-plots for clarity
         # Top: acute true + skeleton + target
@@ -1263,7 +1261,7 @@ with st.expander("Playground", expanded=True):
         ax1.legend(fontsize=7, frameon=False, loc="upper left")
         compact_style(ax1)
 
-        ax2.plot(x, true_sub_gs,       "s-",  color="tab:orange", lw=1.5, label="True sub|surg")
+        ax2.plot(x, true_sub_gs,       "s-",  color="tab:orange", lw=1.5, label="True subacute")
         ax2.plot(x, skeleton_subacute, "s--", color="tab:orange", lw=1.5, label="Skel sub")
         ax2.axhline(p_surgery_val, lw=1.2, alpha=0.70, color="tab:green",
                     linestyle="--", label=f"P(surgery)={p_surgery_val:.2f}")
