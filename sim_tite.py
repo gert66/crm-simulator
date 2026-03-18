@@ -707,11 +707,59 @@ def _do_reset():
     for i, v in enumerate(DEFAULT_TRUE_T2):
         st.session_state[TRUE_T2_KEYS[i]] = v
 
-# ==============================================================================
-# ESSENTIALS
-# ==============================================================================
+def _draw_timeline(incl_to_rt, rt_dur, rt_to_surg, tox1_win, tox2_win):
+    """
+    Single-row horizontal timeline with labelled coloured bands.
+    Returns a matplotlib Figure.
+    """
+    fig, ax = plt.subplots(figsize=(9.0, 0.9), dpi=120)
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    ax.axis("off")
 
-st.title("TITE dual-endpoint dose-escalation simulator")
+    rt_start = incl_to_rt
+    rt_end   = rt_start + rt_dur
+    surg     = rt_end   + rt_to_surg
+    t1_end   = rt_start + tox1_win
+    t2_end   = surg     + tox2_win
+    total    = t2_end * 1.05
+
+    def x(d): return float(d) / total
+
+    y0, h_bar = 0.25, 0.50
+    segments = [
+        (0,        rt_start, "#d0d0d0", "Incl→RT"),
+        (rt_start, rt_end,   "#4a90d9", "RT"),
+        (rt_start, t1_end,   "#ff9900", "Tox1 window"),
+        (rt_end,   surg,     "#d0d0d0", "RT end→Surgery"),
+        (surg,     t2_end,   "#e04040", "Tox2 window"),
+    ]
+    plotted_labels = set()
+    handles = []
+    for x0, x1, col, lbl in segments:
+        alpha = 0.55 if "window" in lbl else 0.30
+        bar = mpatches.FancyBboxPatch(
+            (x(x0), y0), x(x1) - x(x0), h_bar,
+            boxstyle="square,pad=0",
+            facecolor=col, alpha=alpha, edgecolor="none",
+        )
+        ax.add_patch(bar)
+        if lbl not in plotted_labels:
+            handles.append(mpatches.Patch(facecolor=col, alpha=alpha, label=lbl))
+            plotted_labels.add(lbl)
+
+    markers = [(0, "Incl"), (rt_start, "RT\nstart"), (rt_end, "RT\nend"),
+               (surg, "Surgery"), (t2_end, "Done")]
+    for d, lbl in markers:
+        xp = x(d)
+        ax.axvline(xp, ymin=0.20, ymax=0.80, color="#555", lw=0.8)
+        ax.text(xp, 0.05, lbl, ha="center", va="bottom", fontsize=6.5, color="#444")
+
+    ax.legend(handles=handles, loc="upper right", fontsize=7,
+              frameon=False, ncol=len(handles), bbox_to_anchor=(1, 1.1))
+    fig.patch.set_facecolor("none")
+    fig.tight_layout(pad=0)
+    return fig
 
 with st.expander("Essentials", expanded=True):
     _c1, _c2, _c3, _c4 = st.columns(4, gap="large")
@@ -932,83 +980,20 @@ with st.expander("Essentials", expanded=True):
         st.write("")
         st.button("Reset to defaults", on_click=_do_reset)
 
-# ==============================================================================
-# COMPACT TIMELINE DISPLAY
-# Horizontal schematic showing when tox1 and tox2 windows open relative
-# to inclusion.  Drawn as a fixed-size matplotlib figure so it never wraps.
-# ==============================================================================
-
-def _draw_timeline(incl_to_rt, rt_dur, rt_to_surg, tox1_win, tox2_win):
-    """
-    Single-row horizontal timeline with labelled coloured bands.
-    Returns a matplotlib Figure.
-    """
-    fig, ax = plt.subplots(figsize=(9.0, 0.9), dpi=120)
-    ax.set_xlim(0, 1)
-    ax.set_ylim(0, 1)
-    ax.axis("off")
-
-    # Convert to fractions of total span shown (end = surgery_day + tox2_win)
-    rt_start    = incl_to_rt
-    rt_end      = rt_start + rt_dur
-    surg        = rt_end + rt_to_surg
-    t1_end      = rt_start + tox1_win
-    t2_end      = surg + tox2_win
-    total       = t2_end * 1.05   # add small right margin
-
-    def x(d): return float(d) / total
-
-    y0, h_bar = 0.25, 0.50
-
-    # Segments
-    segments = [
-        (0,          rt_start, "#d0d0d0", "Incl→RT"),
-        (rt_start,   rt_end,   "#4a90d9", "RT"),
-        (rt_start,   t1_end,   "#ff9900", "Tox1 window"),
-        (rt_end,     surg,     "#d0d0d0", "RT end→Surgery"),
-        (surg,       t2_end,   "#e04040", "Tox2 window"),
-    ]
-    plotted_labels = set()
-    handles = []
-    for x0, x1, col, lbl in segments:
-        alpha = 0.55 if "window" in lbl else 0.30
-        patch = mpatches.FancyArrowPatch(
-            (x(x0), y0), (x(x1), y0),
-            arrowstyle="-",
-            linewidth=0,
-        )
-        bar = mpatches.FancyBboxPatch(
-            (x(x0), y0), x(x1) - x(x0), h_bar,
-            boxstyle="square,pad=0",
-            facecolor=col, alpha=alpha, edgecolor="none",
-        )
-        ax.add_patch(bar)
-        if lbl not in plotted_labels:
-            handles.append(mpatches.Patch(facecolor=col, alpha=alpha, label=lbl))
-            plotted_labels.add(lbl)
-
-    # Key event markers
-    markers = [(0, "Incl"), (rt_start, "RT\nstart"), (rt_end, "RT\nend"),
-               (surg, "Surgery"), (t2_end, "Done")]
-    for d, lbl in markers:
-        xp = x(d)
-        ax.axvline(xp, ymin=0.20, ymax=0.80, color="#555", lw=0.8)
-        ax.text(xp, 0.05, lbl, ha="center", va="bottom", fontsize=6.5, color="#444")
-
-    ax.legend(handles=handles, loc="upper right", fontsize=7,
-              frameon=False, ncol=len(handles), bbox_to_anchor=(1, 1.1))
-    fig.patch.set_facecolor("none")
-    fig.tight_layout(pad=0)
-    return fig
-
-_tl_fig = _draw_timeline(
-    int(st.session_state["incl_to_rt"]),
-    int(st.session_state["rt_dur"]),
-    int(st.session_state["rt_to_surg"]),
-    int(st.session_state["tox1_win"]),
-    int(st.session_state["tox2_win"]),
-)
-st.image(fig_to_png_bytes(_tl_fig), use_container_width=True)
+    # ── Timeline: rendered inside Essentials, spans full width below columns ──
+    st.markdown(
+        "<div style='font-size:0.78rem;font-weight:600;color:#555;margin-top:0.3rem;'>"
+        "Patient timeline (based on current timing settings)</div>",
+        unsafe_allow_html=True,
+    )
+    _tl_fig = _draw_timeline(
+        int(st.session_state["incl_to_rt"]),
+        int(st.session_state["rt_dur"]),
+        int(st.session_state["rt_to_surg"]),
+        int(st.session_state["tox1_win"]),
+        int(st.session_state["tox2_win"]),
+    )
+    st.image(fig_to_png_bytes(_tl_fig), use_container_width=True)
 
 # ==============================================================================
 # PLAYGROUND
