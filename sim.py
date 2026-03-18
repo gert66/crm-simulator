@@ -782,17 +782,30 @@ with st.expander("Playground", expanded=True):
         prior_model_val = str(st.session_state["prior_model"])
         intcpt_val      = float(st.session_state["logistic_intcpt"])
 
-        # Halfwidth clamping for BOTH endpoints, done here before any slider widget
-        # is created — the only safe moment to write widget-backed session_state keys.
+        # Compute max halfwidths rounded to step precision (avoids float-grid issues
+        # where e.g. max_value=0.199 with step=0.01 gives a non-integer step count).
         _pt_A    = float(st.session_state["prior_target_acute"])
-        _max_hwA = max(0.01, min(0.30, _pt_A - 0.001, 1.0 - _pt_A - 0.001))
-        if float(st.session_state["halfwidth_acute"]) > _max_hwA:
-            st.session_state["halfwidth_acute"] = float(_max_hwA)
+        _max_hwA = round(max(0.01, min(0.30, _pt_A - 0.01, 1.0 - _pt_A - 0.01)), 2)
 
         _pt_S    = float(st.session_state["prior_target_subacute"])
-        _max_hwS = max(0.01, min(0.30, _pt_S - 0.001, 1.0 - _pt_S - 0.001))
-        if float(st.session_state["halfwidth_subacute"]) > _max_hwS:
-            st.session_state["halfwidth_subacute"] = float(_max_hwS)
+        _max_hwS = round(max(0.01, min(0.30, _pt_S - 0.01, 1.0 - _pt_S - 0.01)), 2)
+
+        # Force-write all six prior values into session_state (clamped to valid
+        # slider ranges) BEFORE any slider widget is created.
+        # Some Streamlit versions initialise conditional-branch sliders to
+        # min_value instead of reading a key set via setdefault; explicit
+        # assignment here (before the widget exists in this run) prevents that.
+        _prior_init = [
+            ("prior_target_acute",    float, 0.05, 0.50,    R_DEFAULTS["prior_target_acute"]),
+            ("halfwidth_acute",       float, 0.01, _max_hwA, R_DEFAULTS["halfwidth_acute"]),
+            ("prior_nu_acute",        int,   1,    5,        R_DEFAULTS["prior_nu_acute"]),
+            ("prior_target_subacute", float, 0.05, 0.50,    R_DEFAULTS["prior_target_subacute"]),
+            ("halfwidth_subacute",    float, 0.01, _max_hwS, R_DEFAULTS["halfwidth_subacute"]),
+            ("prior_nu_subacute",     int,   1,    5,        R_DEFAULTS["prior_nu_subacute"]),
+        ]
+        for _k, _typ, _lo, _hi, _def in _prior_init:
+            _v = _typ(st.session_state.get(_k, _def))
+            st.session_state[_k] = _typ(np.clip(_v, _lo, _hi))
 
         # Toggle between endpoint parameter sets — shows only 3 sliders at a time
         ep_tab = st.radio(
