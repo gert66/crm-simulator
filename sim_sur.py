@@ -1262,13 +1262,11 @@ with st.expander("Playground", expanded=True):
         compact_style(ax1)
 
         ax2.plot(x, true_sub_gs,       "s-",  color="tab:orange", lw=1.5, label="True subacute")
-        ax2.plot(x, skeleton_subacute, "s--", color="tab:orange", lw=1.5, label="Skel sub")
-        ax2.axhline(p_surgery_val, lw=1.2, alpha=0.70, color="tab:green",
-                    linestyle="--", label=f"P(surgery)={p_surgery_val:.2f}")
+        ax2.plot(x, skeleton_subacute, "s--", color="tab:orange", lw=1.5, label="Skel subacute")
         ax2.axhline(target_subacute_val, lw=1, alpha=0.55, color="tab:orange")
-        ax2.set_ylabel("Probability", fontsize=8)
+        ax2.set_ylabel("P(subacute)", fontsize=8)
         ax2.set_xticks(x); ax2.set_xticklabels([f"L{i}" for i in range(5)], fontsize=8)
-        _y2 = max(max(true_sub_gs), max(skeleton_subacute), target_subacute_val, p_surgery_val)
+        _y2 = max(max(true_sub_gs), max(skeleton_subacute), target_subacute_val)
         ax2.set_ylim(0, min(1.0, _y2 * 1.25 + 0.02))
         ax2.legend(fontsize=7, frameon=False, loc="upper left")
         compact_style(ax2)
