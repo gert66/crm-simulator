@@ -135,22 +135,44 @@ def dfcrm_getprior(halfwidth, target, nu, nlevel, model="empiric", intcpt=3.0):
 
 def run_6plus3_sur(
     true_acute, p_surgery, true_sub_gs,
-    start_level=0, max_n=27,
-    a6_esc_max=0, a6_stop_min=2, a9_esc_max=1,
+    start_level=0, max_n=36,
+    a6_esc_max=0,  a6_stop_min=2, a9_esc_max=1,
+    s6_esc_max=1,  s6_stop_min=3, s9_esc_max=3, s9_stop_min=4,
     rng=None, debug=False,
 ):
     """
-    6+3 with decisions based on acute DLTs.
+    Dual 6+3 with joint acute + subacute decision rules.
 
-    Hold rule: before escalating (acute criterion met), require that at least
-    6 surgery-evaluable patients have been observed at the current dose level.
-    If not, add cohorts of 3 until the threshold is met or max_n is reached.
+    Separate denominators
+    ---------------------
+    acute   : all treated patients at current dose  (n_per)
+    subacute: surgery-evaluable patients only        (n_sub_per)
+    Non-surgery patients are NOT counted as subacute = 0.
 
-    p_surgery: scalar probability of surgery, same for all doses.
+    HOLD rule
+    ---------
+    Additional single-patient accruals continue at the current dose
+    whenever the surgery-evaluable count is below the required threshold
+    for the current phase.  Both endpoints accumulate during a hold.
 
-    Thresholds (all inclusive):
-      After 6 — escalate if acute <= a6_esc_max; stop if acute >= a6_stop_min; else expand
-      After 9 — escalate if acute <= a9_esc_max; else stop
+    Phase 1 decision: triggered once n_treated >= 6  AND n_surgery >= 6.
+    Phase 2 decision: triggered once n_treated >= 9  AND n_surgery >= 9.
+    (Total treated may exceed 6 or 9 due to HOLD; counts are cumulative.)
+
+    Decision rules (counts, not rates; all thresholds inclusive)
+    ------------------------------------------------------------
+    Phase 1
+      stop    : y_acute >= a6_stop_min  OR  (n_surgery>=6 AND y_sub >= s6_stop_min)
+      escalate: y_acute <= a6_esc_max  AND  (n_surgery>=6 AND y_sub <= s6_esc_max)
+      expand  : neither of the above
+
+    Phase 2 (only reached if phase 1 → expand)
+      escalate: y_acute <= a9_esc_max  AND  (n_surgery>=9 AND y_sub <= s9_esc_max)
+      stop    : otherwise  (includes y_sub >= s9_stop_min)
+
+    Conservative rule when HOLD hits max_n without reaching threshold:
+      subacute criterion is treated as not satisfied → no escalation,
+      acute-only stopping still applies.
     """
     if rng is None:
         rng = np.random.default_rng()
@@ -162,94 +184,115 @@ def run_6plus3_sur(
     level = int(start_level)
     n_per       = np.zeros(n_levels, dtype=int)   # all treated
     y_acute_per = np.zeros(n_levels, dtype=int)   # acute DLTs
-    n_sub_per   = np.zeros(n_levels, dtype=int)   # surgery patients
+    n_sub_per   = np.zeros(n_levels, dtype=int)   # surgery-evaluable patients
     y_sub_per   = np.zeros(n_levels, dtype=int)   # subacute DLTs (surgery pts only)
 
-    total_n = 0
+    total_n         = 0
     last_acceptable = None
-    debug_rows = []
+    debug_rows      = []
 
-    def _add_cohort(n_add):
-        """Add n_add patients at current level; return (acute_dlts, n_surg, sub_dlts)."""
-        a_tot = s_n = s_y = 0
-        for _ in range(n_add):
-            a, ns, ys = simulate_cohort(1, true_acute[level], p_surg,
-                                        true_sub_gs[level], rng)
-            a_tot += a; s_n += ns; s_y += ys
-        n_per[level]       += n_add
-        y_acute_per[level] += a_tot
-        n_sub_per[level]   += s_n
-        y_sub_per[level]   += s_y
-        return a_tot, s_n, s_y
-
-    def _hold_until_6_surg():
-        """
-        If n_sub_per[level] < 6, add cohorts of 3 until threshold met or max_n reached.
-        Returns True if 6 surgery patients were eventually reached.
-        """
+    def _treat_one():
+        """Treat one patient at current level; accumulate all counters."""
         nonlocal total_n
-        while n_sub_per[level] < 6 and total_n < int(max_n):
-            n_add = min(3, int(max_n) - total_n)
-            if n_add <= 0:
+        a, ns, ys = simulate_cohort(
+            1, true_acute[level], p_surg, true_sub_gs[level], rng)
+        n_per[level]       += 1
+        y_acute_per[level] += a
+        n_sub_per[level]   += ns
+        y_sub_per[level]   += ys
+        total_n            += 1
+
+    def _accrue_until(min_treated, min_surgery):
+        """
+        Accrue patients one-by-one until BOTH n_treated >= min_treated
+        AND n_surgery >= min_surgery, or max_n is exhausted (HOLD rule).
+        """
+        while total_n < int(max_n):
+            if (n_per[level] >= min_treated
+                    and n_sub_per[level] >= min_surgery):
                 break
-            _add_cohort(n_add)
-            total_n += n_add
-        return n_sub_per[level] >= 6
+            _treat_one()
 
     while total_n < int(max_n):
-        n_add = min(6, int(max_n) - total_n)
-        a6_tot, s6_n, s6_y = _add_cohort(n_add)
-        total_n += n_add
 
-        if n_add < 6:
-            break
+        # ── Phase 1: accrue until ≥6 treated AND ≥6 surgery-evaluable ─────
+        _accrue_until(min_treated=6, min_surgery=6)
 
-        dbg = {"level": level, "phase": "6pt",
-               "acute_dlts": a6_tot, "n_surg": s6_n, "sub_dlts": s6_y} if debug else None
+        ya  = y_acute_per[level]
+        ys  = y_sub_per[level]
+        nt  = n_per[level]
+        nsg = n_sub_per[level]
 
-        # escalate after 6 (acute only) — hold if <6 surgery-evaluable patients
-        if a6_tot <= int(a6_esc_max):
-            _hold_until_6_surg()
-            last_acceptable = level
+        dbg = {
+            "level": level, "phase": "p1",
+            "n_treated": nt, "n_surgery": nsg,
+            "y_acute": ya, "y_sub": ys,
+        } if debug else None
+
+        # Subacute evaluable flag for phase 1
+        sub_eval_p1 = nsg >= 6
+
+        # Phase 1 stop: EITHER acute OR (evaluable) subacute exceeds threshold
+        stop_p1 = (ya >= int(a6_stop_min)
+                   or (sub_eval_p1 and ys >= int(s6_stop_min)))
+
+        # Phase 1 escalate: BOTH acute AND (evaluable) subacute below threshold
+        esc_p1 = (nt >= 6 and sub_eval_p1
+                  and ya <= int(a6_esc_max) and ys <= int(s6_esc_max))
+
+        if stop_p1:
             if dbg is not None:
-                dbg["decision"] = "escalate"; debug_rows.append(dbg)
-            if level < n_levels - 1:
-                level += 1; continue
-            break
-
-        # stop unsafe after 6 (acute only)
-        if a6_tot >= int(a6_stop_min):
-            if dbg is not None:
-                dbg["decision"] = "stop_unsafe"; debug_rows.append(dbg)
+                dbg["decision"] = "stop_p1"; debug_rows.append(dbg)
             if level > 0:
                 level -= 1
             break
 
-        # otherwise expand to 9
-        n_add2 = min(3, int(max_n) - total_n)
-        a3_tot, s3_n, s3_y = _add_cohort(n_add2)
-        total_n += n_add2
-
-        if n_add2 < 3:
-            break
-
-        a9 = a6_tot + a3_tot
-        if dbg is not None:
-            dbg["phase"] = "9pt"; dbg["acute_dlts"] = a9
-            dbg["n_surg"] += s3_n; dbg["sub_dlts"] += s3_y
-
-        # escalate after 9 (acute only) — hold if <6 surgery-evaluable patients
-        if a9 <= int(a9_esc_max):
-            _hold_until_6_surg()
+        if esc_p1:
             last_acceptable = level
             if dbg is not None:
-                dbg["decision"] = "escalate"; debug_rows.append(dbg)
+                dbg["decision"] = "escalate_p1"; debug_rows.append(dbg)
             if level < n_levels - 1:
                 level += 1; continue
             break
 
+        # ── Phase 2: accrue until ≥9 treated AND ≥9 surgery-evaluable ─────
+        _accrue_until(min_treated=9, min_surgery=9)
+
+        ya  = y_acute_per[level]
+        ys  = y_sub_per[level]
+        nt  = n_per[level]
+        nsg = n_sub_per[level]
+
         if dbg is not None:
-            dbg["decision"] = "stop_unsafe"; debug_rows.append(dbg)
+            dbg["phase"] = "p2"
+            dbg["n_treated"] = nt; dbg["n_surgery"] = nsg
+            dbg["y_acute"] = ya;   dbg["y_sub"] = ys
+
+        # Subacute evaluable flag for phase 2
+        sub_eval_p2 = nsg >= 9
+
+        # Phase 2 escalate: BOTH acute AND (evaluable) subacute below threshold
+        esc_p2 = (sub_eval_p2
+                  and ya <= int(a9_esc_max) and ys <= int(s9_esc_max))
+
+        # Phase 2 explicit stop: EITHER acute OR subacute exceeds stop threshold
+        # (when both thresholds are complementary this is equivalent to "else stop")
+        stop_p2 = (not esc_p2
+                   and (not sub_eval_p2
+                        or ys >= int(s9_stop_min)
+                        or ya > int(a9_esc_max)))
+
+        if esc_p2:
+            last_acceptable = level
+            if dbg is not None:
+                dbg["decision"] = "escalate_p2"; debug_rows.append(dbg)
+            if level < n_levels - 1:
+                level += 1; continue
+            break
+
+        # Phase 2 stop (explicit or default)
+        if dbg is not None:
+            dbg["decision"] = "stop_p2"; debug_rows.append(dbg)
         if level > 0:
             level -= 1
         break
@@ -567,10 +610,17 @@ R_DEFAULTS = {
     "enforce_guardrail":       True,
     "restrict_final_mtd":      True,
     "show_debug":              False,
-    # 6+3 thresholds (acute only)
-    "a6_esc_max":              0,    # max acute in 6 pts to escalate
-    "a6_stop_min":             2,    # min acute in 6 pts to stop
-    "a9_esc_max":              1,    # max acute in 9 pts to escalate
+    # 6+3 thresholds — acute (denominator: all treated patients)
+    "a6_esc_max":              0,    # max acute in ≥6 treated to escalate
+    "a6_stop_min":             2,    # min acute in ≥6 treated to stop
+    "a9_esc_max":              1,    # max acute in ≥9 treated to escalate
+    # 6+3 thresholds — subacute (denominator: surgery-evaluable patients only)
+    # HOLD rule: design waits at current dose until surgery-evaluable count
+    # reaches the phase threshold (6 or 9) before applying subacute rules.
+    "s6_esc_max":              1,    # max subacute in ≥6 surgery-eval to escalate
+    "s6_stop_min":             3,    # min subacute in ≥6 surgery-eval to stop
+    "s9_esc_max":              3,    # max subacute in ≥9 surgery-eval to escalate
+    "s9_stop_min":             4,    # min subacute in ≥9 surgery-eval to stop
     # Playground prior tab
     "prior_endpoint_tab":      "Acute",
     # Figure sizing
@@ -758,34 +808,90 @@ with st.expander("Essentials", expanded=False):
                    r_name="debug")
         )
 
-    # 6+3 stopping rules (acute only)
-    st.markdown("#### 6+3 stopping rules (acute only)")
+    # 6+3 dual stopping rules (acute + subacute)
+    st.markdown("#### 6+3 stopping rules")
     st.caption(
-        "Subacute is not used for escalation decisions because its denominator "
-        "depends on surgery rate — fixed-denominator rules are not coherent for "
-        "a conditional endpoint."
+        "Acute rules use all treated patients as denominator. "
+        "Subacute rules use only surgery-evaluable patients. "
+        "**HOLD**: if the surgery-evaluable count is below the phase threshold "
+        "(6 for phase 1, 9 for phase 2), the design continues accruing at the "
+        "current dose until the threshold is met or max_n is exhausted. "
+        "Escalation requires BOTH acute AND subacute criteria; "
+        "stopping is triggered by EITHER."
     )
-    sr1, sr2, sr3 = st.columns(3, gap="large")
-    with sr1:
+
+    st.markdown(
+        "<div style='font-size:0.80rem;font-weight:600;color:#555;'>"
+        "Acute thresholds (denominator: all treated patients)</div>",
+        unsafe_allow_html=True,
+    )
+    ar1, ar2, ar3 = st.columns(3, gap="large")
+    with ar1:
         st.number_input(
-            "After 6 pts — escalate if acute ≤",
+            "After ≥6 treated — escalate if acute ≤",
             min_value=0, max_value=5, step=1, key="a6_esc_max",
             help=h("a6_esc_max",
-                   "Escalate after 6 patients if acute DLTs ≤ this value (inclusive).")
+                   "Phase 1 acute criterion: escalate if cumulative acute DLTs "
+                   "≤ this value (requires BOTH acute and subacute criteria).")
+        )
+    with ar2:
+        st.number_input(
+            "After ≥6 treated — stop if acute ≥",
+            min_value=1, max_value=6, step=1, key="a6_stop_min",
+            help=h("a6_stop_min",
+                   "Phase 1 acute criterion: stop if cumulative acute DLTs "
+                   "≥ this value (EITHER criterion triggers stop).")
+        )
+    with ar3:
+        st.number_input(
+            "After ≥9 treated — escalate if acute ≤",
+            min_value=0, max_value=8, step=1, key="a9_esc_max",
+            help=h("a9_esc_max",
+                   "Phase 2 acute criterion: escalate if cumulative acute DLTs "
+                   "≤ this value (requires BOTH criteria; else stop).")
+        )
+
+    st.markdown(
+        "<div style='font-size:0.80rem;font-weight:600;color:#555;margin-top:0.4rem;'>"
+        "Subacute thresholds (denominator: surgery-evaluable patients; "
+        "HOLD until ≥6 or ≥9 surgery patients at current dose)</div>",
+        unsafe_allow_html=True,
+    )
+    sr1, sr2, sr3, sr4 = st.columns(4, gap="small")
+    with sr1:
+        st.number_input(
+            "≥6 surgery-eval — escalate if sub ≤",
+            min_value=0, max_value=6, step=1, key="s6_esc_max",
+            help=h("s6_esc_max",
+                   "Phase 1 subacute criterion: escalate if subacute DLTs among "
+                   "the first ≥6 surgery-evaluable patients ≤ this value "
+                   "(combined with acute escalation criterion).")
         )
     with sr2:
         st.number_input(
-            "After 6 pts — stop if acute ≥",
-            min_value=1, max_value=6, step=1, key="a6_stop_min",
-            help=h("a6_stop_min",
-                   "Declare unsafe after 6 patients if acute DLTs ≥ this value (inclusive).")
+            "≥6 surgery-eval — stop if sub ≥",
+            min_value=1, max_value=6, step=1, key="s6_stop_min",
+            help=h("s6_stop_min",
+                   "Phase 1 subacute criterion: stop if subacute DLTs among "
+                   "the first ≥6 surgery-evaluable patients ≥ this value "
+                   "(EITHER criterion triggers stop).")
         )
     with sr3:
         st.number_input(
-            "After 9 pts — escalate if acute ≤",
-            min_value=0, max_value=8, step=1, key="a9_esc_max",
-            help=h("a9_esc_max",
-                   "Escalate after 9 patients if acute DLTs ≤ this value (inclusive).")
+            "≥9 surgery-eval — escalate if sub ≤",
+            min_value=0, max_value=9, step=1, key="s9_esc_max",
+            help=h("s9_esc_max",
+                   "Phase 2 subacute criterion: escalate if subacute DLTs among "
+                   "the first ≥9 surgery-evaluable patients ≤ this value "
+                   "(combined with acute criterion; else stop).")
+        )
+    with sr4:
+        st.number_input(
+            "≥9 surgery-eval — stop if sub ≥",
+            min_value=1, max_value=9, step=1, key="s9_stop_min",
+            help=h("s9_stop_min",
+                   "Phase 2 subacute criterion: stop if subacute DLTs among "
+                   "the first ≥9 surgery-evaluable patients ≥ this value.")
         )
 
     # Figure sizing — inline (no nested expander; Streamlit forbids nesting)
@@ -1122,6 +1228,10 @@ if "run" in locals() and run:
             a6_esc_max=int(st.session_state["a6_esc_max"]),
             a6_stop_min=int(st.session_state["a6_stop_min"]),
             a9_esc_max=int(st.session_state["a9_esc_max"]),
+            s6_esc_max=int(st.session_state["s6_esc_max"]),
+            s6_stop_min=int(st.session_state["s6_stop_min"]),
+            s9_esc_max=int(st.session_state["s9_esc_max"]),
+            s9_stop_min=int(st.session_state["s9_stop_min"]),
             rng=rng, debug=flag,
         )
 
@@ -1277,8 +1387,9 @@ if res is not None:
             for row in res["dbg_63"]:
                 st.write(
                     f"L{row['level']} | {row['phase']} | "
-                    f"acute={row['acute_dlts']} | n_surg={row['n_surg']} "
-                    f"sub_dlts={row['sub_dlts']} → {row['decision']}"
+                    f"n_treated={row['n_treated']} n_surgery={row['n_surgery']} | "
+                    f"y_acute={row['y_acute']} y_sub={row['y_sub']} "
+                    f"→ {row['decision']}"
                 )
 
         if res["dbg_crm"]:
