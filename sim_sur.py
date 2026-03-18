@@ -19,13 +19,27 @@ The CRM subacute model therefore uses:
     y_sub_per[d]  = subacute events among those patients
 NOT the total number of treated patients.
 
-6+3 comparator design choice
-------------------------------
-Escalation decisions are driven by acute toxicity.
-A hold rule prevents escalation until at least 6 surgery-evaluable
-patients have been observed at the current dose level: additional
-cohorts of 3 are added until this threshold is met or max_n is reached.
-Surgery and subacute events are tracked descriptively.
+Modified 6+3 comparator (NOT the standard protocol)
+----------------------------------------------------
+Standard 6+3 evaluates both endpoints on fixed cohorts of 6 (then 9)
+patients.  That is not possible here because subacute toxicity is only
+observable in surgery patients.  This design uses a HOLD rule instead.
+
+HOLD rule
+  Phase 1 fires once n_treated >= 6 AND n_surgery >= 6.
+  Phase 2 fires once n_treated >= 9 AND n_surgery >= 9.
+  Both acute and subacute counts accumulate continuously during the hold.
+
+KEY DESIGN CONSEQUENCE — intentional and verified
+  If p_surgery is low, reaching the surgery threshold may require far
+  more than 6 (or 9) treated patients.  The acute DLT counts
+  (y_acute_per[level]) at the time of evaluation therefore reflect ALL
+  treated patients, not a fixed cohort of 6 or 9.
+  Example: p_surgery = 0.40 → on average ~15 patients needed to obtain
+  6 surgery-evaluable patients.  The phase-1 acute thresholds
+  (a6_stop_min, a6_esc_max) are then applied to y_acute over 15 pts,
+  not 6.  This is consistent with the HOLD rationale: the design
+  prioritises subacute evaluability over cohort-size rigidity.
 """
 
 import numpy as np
@@ -152,18 +166,23 @@ def run_6plus3_sur(
     subacute: surgery-evaluable patients only        (n_sub_per)
     Non-surgery patients are NOT counted as subacute = 0.
 
-    HOLD rule
-    ---------
-    Additional single-patient accruals continue at the current dose
-    whenever the surgery-evaluable count is below the required threshold
-    for the current phase.  Both endpoints accumulate during a hold.
+    HOLD rule — verified behaviour
+    --------------------------------
+    _accrue_until(min_treated, min_surgery) adds one patient at a time
+    until BOTH n_treated >= min_treated AND n_surgery >= min_surgery.
+    Both acute and subacute counts accumulate during the wait.
 
     Phase 1 decision: triggered once n_treated >= 6  AND n_surgery >= 6.
     Phase 2 decision: triggered once n_treated >= 9  AND n_surgery >= 9.
-    (Total treated may exceed 6 or 9 due to HOLD; counts are cumulative.)
 
-    Decision rules (counts, not rates; all thresholds inclusive)
-    ------------------------------------------------------------
+    CONSEQUENCE: if p_surgery is low, n_treated at evaluation time can
+    be much larger than 6 (or 9).  The acute thresholds a6_stop_min and
+    a6_esc_max are applied to the cumulative y_acute over ALL treated
+    patients at that dose, not a fixed cohort of 6.  This is intentional:
+    the design prioritises subacute evaluability over fixed cohort sizes.
+
+    Decision rules (cumulative counts at evaluation; all thresholds inclusive)
+    --------------------------------------------------------------------------
     Phase 1
       stop    : y_acute >= a6_stop_min  OR  (n_surgery>=6 AND y_sub >= s6_stop_min)
       escalate: y_acute <= a6_esc_max  AND  (n_surgery>=6 AND y_sub <= s6_esc_max)
@@ -209,6 +228,13 @@ def run_6plus3_sur(
         """
         Accrue patients one-by-one until BOTH n_treated >= min_treated
         AND n_surgery >= min_surgery, or max_n is exhausted (HOLD rule).
+
+        HOLD consequence: if p_surgery is low, n_per[level] at the time
+        this function returns may be substantially larger than min_treated.
+        All accumulated y_acute_per[level] counts feed into the subsequent
+        phase decision — the acute thresholds are therefore applied to a
+        potentially larger-than-expected number of acute observations.
+        This is by design: subacute evaluability takes precedence.
         """
         while total_n < int(max_n):
             if (n_per[level] >= min_treated
@@ -556,8 +582,9 @@ st.markdown(
       [data-testid="stSidebarNav"]    { display: none; }
       [data-testid="collapsedControl"]{ display: none; }
 
-      /* Tighter page padding — reduces scrolling on standard monitors */
-      .block-container { padding-top: 1.6rem; padding-bottom: 0.5rem; }
+      /* Tighter page padding — moves content slightly lower so the Essentials
+         expander is fully visible without being clipped at the viewport top */
+      .block-container { padding-top: 2.6rem; padding-bottom: 0.5rem; }
       .element-container { margin-bottom: 0.12rem; }
 
       /* Compact metric cards so they stack without excess whitespace */
@@ -850,15 +877,28 @@ with st.expander("Essentials", expanded=False):
         )
 
     # 6+3 dual stopping rules (acute + subacute)
-    st.markdown("#### 6+3 stopping rules")
-    st.caption(
-        "Acute rules use all treated patients as denominator. "
-        "Subacute rules use only surgery-evaluable patients. "
-        "**HOLD**: if the surgery-evaluable count is below the phase threshold "
-        "(6 for phase 1, 9 for phase 2), the design continues accruing at the "
-        "current dose until the threshold is met or max_n is exhausted. "
-        "Escalation requires BOTH acute AND subacute criteria; "
-        "stopping is triggered by EITHER."
+    st.markdown("#### 6+3 stopping rules — modified design")
+    st.info(
+        "**This is a modified 6+3, not the standard protocol.**\n\n"
+        "The standard 6+3 evaluates both endpoints on fixed cohorts of 6 (then 9) "
+        "patients. That is not possible here because subacute toxicity is only "
+        "observable in patients who undergo surgery.\n\n"
+        "**How it works:**\n"
+        "- Acute endpoint: evaluated on **all treated patients** (denominator = all treated).\n"
+        "- Subacute endpoint: evaluated only on **surgery-evaluable patients** "
+        "(denominator = patients who had surgery).\n"
+        "- **HOLD state**: the design keeps accruing patients at the current dose "
+        "until the required surgery-evaluable count is reached "
+        "(≥ 6 for phase 1, ≥ 9 for phase 2).\n\n"
+        "**Important design consequence:** if the surgery probability is low, "
+        "reaching the surgery threshold may require far more than 6 (or 9) treated patients. "
+        "The acute DLT count at evaluation therefore reflects all those extra patients — "
+        "so there may be **more than 6 (or 9) acute observations** before the "
+        "first (or second) subacute-based decision is made. "
+        "This is intentional: subacute evaluability takes precedence over fixed cohort sizes.\n\n"
+        "Escalation requires **BOTH** acute AND subacute criteria to be met. "
+        "Stopping is triggered by **EITHER** criterion.",
+        icon="ℹ️",
     )
 
     st.markdown(
