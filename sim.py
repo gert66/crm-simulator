@@ -495,6 +495,8 @@ R_DEFAULTS = {
     # CRM integration
     "gh_n":                    61,
     "max_step":                1,
+    # Playground prior tab (UI only)
+    "prior_endpoint_tab":      "Acute",
     # CRM safety / selection
     "enforce_guardrail":       True,
     "restrict_final_mtd":      True,
@@ -762,11 +764,11 @@ with st.expander("Playground", expanded=True):
         st.write("")
         run = st.button("Run simulations", use_container_width=True)
 
-    # ---- Mid: Priors (separate for each endpoint; shared model)
+    # ---- Mid: Priors (shared model; endpoint parameters toggled via radio)
     with mid:
         st.markdown("#### Priors")
 
-        # Shared prior model — acceptable per spec
+        # Shared skeleton model
         st.radio(
             "Skeleton model",
             options=["empiric", "logistic"],
@@ -777,79 +779,80 @@ with st.expander("Playground", expanded=True):
                    r_name="skeleton model (empiric/logistic)")
         )
 
-        prior_model_val  = str(st.session_state["prior_model"])
-        intcpt_val       = float(st.session_state["logistic_intcpt"])
+        prior_model_val = str(st.session_state["prior_model"])
+        intcpt_val      = float(st.session_state["logistic_intcpt"])
 
-        # ---- Acute prior inputs
-        st.markdown("**Acute prior**")
-
-        st.slider(
-            "Prior target (acute)",
-            min_value=0.05, max_value=0.50, step=0.01,
-            key="prior_target_acute",
-            help=h("prior_target_acute",
-                   "Target probability used when building the acute prior skeleton.",
-                   r_name="prior.target.acute")
-        )
-
-        # Halfwidth clamping: done BEFORE the halfwidth_acute widget is created.
-        # This is the only safe moment to write to a widget-backed session_state key.
+        # Halfwidth clamping for BOTH endpoints, done here before any slider widget
+        # is created — the only safe moment to write widget-backed session_state keys.
         _pt_A    = float(st.session_state["prior_target_acute"])
         _max_hwA = max(0.01, min(0.30, _pt_A - 0.001, 1.0 - _pt_A - 0.001))
         if float(st.session_state["halfwidth_acute"]) > _max_hwA:
             st.session_state["halfwidth_acute"] = float(_max_hwA)
 
-        st.slider(
-            "Halfwidth (acute)",
-            min_value=0.01, max_value=float(_max_hwA), step=0.01,
-            key="halfwidth_acute",
-            help=h("halfwidth_acute",
-                   "Controls how steep the acute skeleton is. Must satisfy prior_target_acute ± halfwidth within (0,1).",
-                   r_name="halfwidth.acute")
-        )
-        st.slider(
-            "Prior MTD level (acute, 1-based)",
-            min_value=1, max_value=5, step=1,
-            key="prior_nu_acute",
-            help=h("prior_nu_acute",
-                   "Dose level assumed a priori to be closest to the acute target — anchor for the acute skeleton.",
-                   r_name="prior.MTD.acute")
-        )
-
-        # ---- Subacute prior inputs
-        st.markdown("**Subacute prior**")
-
-        st.slider(
-            "Prior target (subacute)",
-            min_value=0.05, max_value=0.50, step=0.01,
-            key="prior_target_subacute",
-            help=h("prior_target_subacute",
-                   "Target probability used when building the subacute prior skeleton.",
-                   r_name="prior.target.subacute")
-        )
-
-        # Halfwidth clamping for subacute — again BEFORE its widget is created.
         _pt_S    = float(st.session_state["prior_target_subacute"])
         _max_hwS = max(0.01, min(0.30, _pt_S - 0.001, 1.0 - _pt_S - 0.001))
         if float(st.session_state["halfwidth_subacute"]) > _max_hwS:
             st.session_state["halfwidth_subacute"] = float(_max_hwS)
 
-        st.slider(
-            "Halfwidth (subacute)",
-            min_value=0.01, max_value=float(_max_hwS), step=0.01,
-            key="halfwidth_subacute",
-            help=h("halfwidth_subacute",
-                   "Controls how steep the subacute skeleton is. Must satisfy prior_target_subacute ± halfwidth within (0,1).",
-                   r_name="halfwidth.subacute")
+        # Toggle between endpoint parameter sets — shows only 3 sliders at a time
+        ep_tab = st.radio(
+            "Endpoint",
+            options=["Acute", "Subacute"],
+            horizontal=True,
+            key="prior_endpoint_tab",
+            help="Switch between acute and subacute prior parameter sets. Both are always used in the simulation.",
         )
-        st.slider(
-            "Prior MTD level (subacute, 1-based)",
-            min_value=1, max_value=5, step=1,
-            key="prior_nu_subacute",
-            help=h("prior_nu_subacute",
-                   "Dose level assumed a priori to be closest to the subacute target — anchor for the subacute skeleton.",
-                   r_name="prior.MTD.subacute")
-        )
+
+        if ep_tab == "Acute":
+            st.slider(
+                "Prior target (acute)",
+                min_value=0.05, max_value=0.50, step=0.01,
+                key="prior_target_acute",
+                help=h("prior_target_acute",
+                       "Target probability used when building the acute prior skeleton.",
+                       r_name="prior.target.acute")
+            )
+            st.slider(
+                "Halfwidth (acute)",
+                min_value=0.01, max_value=float(_max_hwA), step=0.01,
+                key="halfwidth_acute",
+                help=h("halfwidth_acute",
+                       "Controls how steep the acute skeleton is. Must satisfy prior_target_acute ± halfwidth within (0,1).",
+                       r_name="halfwidth.acute")
+            )
+            st.slider(
+                "Prior MTD level (acute, 1-based)",
+                min_value=1, max_value=5, step=1,
+                key="prior_nu_acute",
+                help=h("prior_nu_acute",
+                       "Dose level assumed a priori to be closest to the acute target — anchor for the acute skeleton.",
+                       r_name="prior.MTD.acute")
+            )
+        else:
+            st.slider(
+                "Prior target (subacute)",
+                min_value=0.05, max_value=0.50, step=0.01,
+                key="prior_target_subacute",
+                help=h("prior_target_subacute",
+                       "Target probability used when building the subacute prior skeleton.",
+                       r_name="prior.target.subacute")
+            )
+            st.slider(
+                "Halfwidth (subacute)",
+                min_value=0.01, max_value=float(_max_hwS), step=0.01,
+                key="halfwidth_subacute",
+                help=h("halfwidth_subacute",
+                       "Controls how steep the subacute skeleton is. Must satisfy prior_target_subacute ± halfwidth within (0,1).",
+                       r_name="halfwidth.subacute")
+            )
+            st.slider(
+                "Prior MTD level (subacute, 1-based)",
+                min_value=1, max_value=5, step=1,
+                key="prior_nu_subacute",
+                help=h("prior_nu_subacute",
+                       "Dose level assumed a priori to be closest to the subacute target — anchor for the subacute skeleton.",
+                       r_name="prior.MTD.subacute")
+            )
 
         # Logistic intercept — shared, shown only when logistic model is selected
         if prior_model_val == "logistic":
@@ -867,8 +870,7 @@ with st.expander("Playground", expanded=True):
         hw_A_eff = float(st.session_state["halfwidth_acute"])
         try:
             skeleton_acute = dfcrm_getprior(
-                halfwidth=hw_A_eff,
-                target=_pt_A,
+                halfwidth=hw_A_eff, target=_pt_A,
                 nu=int(st.session_state["prior_nu_acute"]),
                 nlevel=5, model=prior_model_val, intcpt=intcpt_val,
             ).tolist()
@@ -884,8 +886,7 @@ with st.expander("Playground", expanded=True):
         hw_S_eff = float(st.session_state["halfwidth_subacute"])
         try:
             skeleton_subacute = dfcrm_getprior(
-                halfwidth=hw_S_eff,
-                target=_pt_S,
+                halfwidth=hw_S_eff, target=_pt_S,
                 nu=int(st.session_state["prior_nu_subacute"]),
                 nlevel=5, model=prior_model_val, intcpt=intcpt_val,
             ).tolist()
@@ -897,11 +898,6 @@ with st.expander("Playground", expanded=True):
                 nu=int(st.session_state["prior_nu_subacute"]),
                 nlevel=5, model=prior_model_val, intcpt=intcpt_val,
             ).tolist()
-
-        # Numeric skeleton values for inspection
-        with st.expander("Skeleton values", expanded=False):
-            st.caption("Acute:    " + "  ".join(f"L{i}={v:.3f}" for i, v in enumerate(skeleton_acute)))
-            st.caption("Subacute: " + "  ".join(f"L{i}={v:.3f}" for i, v in enumerate(skeleton_subacute)))
 
     # ---- Right: CRM knobs + preview plot
     with right:
