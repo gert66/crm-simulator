@@ -4,6 +4,12 @@ sim_sur.py — Conditional dual-endpoint dose-escalation simulator
 Tox1 = acute toxicity   (observed in ALL treated patients)
 Tox2 = subacute toxicity (observed ONLY in patients who undergo surgery)
 
+Surgery probability
+-------------------
+A single global parameter p_surgery applies equally to all dose levels.
+It represents the probability that a patient proceeds to surgery,
+independent of dose assignment.
+
 Critical modelling rule
 -----------------------
 Non-surgery patients are NOT counted as subacute = 0.
@@ -15,14 +21,11 @@ NOT the total number of treated patients.
 
 6+3 comparator design choice
 ------------------------------
-Subacute toxicity is only observable in the surgery subgroup.
-Because the number of evaluable patients for subacute depends on
-surgery probability (which may change with dose), fixed-denominator
-rules such as "1 subacute in 6 patients" or "1 subacute in 9 patients"
-are not coherent for this endpoint.
-Therefore the 6+3 escalation decisions are driven solely by acute
-toxicity. Surgery and subacute events are still simulated and reported
-descriptively.
+Escalation decisions are driven by acute toxicity.
+A hold rule prevents escalation until at least 6 surgery-evaluable
+patients have been observed at the current dose level: additional
+cohorts of 3 are added until this threshold is met or max_n is reached.
+Surgery and subacute events are tracked descriptively.
 """
 
 import numpy as np
@@ -131,23 +134,30 @@ def dfcrm_getprior(halfwidth, target, nu, nlevel, model="empiric", intcpt=3.0):
 # ============================================================
 
 def run_6plus3_sur(
-    true_acute, true_surgery, true_sub_gs,
+    true_acute, p_surgery, true_sub_gs,
     start_level=0, max_n=27,
     a6_esc_max=0, a6_stop_min=2, a9_esc_max=1,
     rng=None, debug=False,
 ):
     """
-    6+3 with decisions based only on acute DLTs.
+    6+3 with decisions based on acute DLTs.
+
+    Hold rule: before escalating (acute criterion met), require that at least
+    6 surgery-evaluable patients have been observed at the current dose level.
+    If not, add cohorts of 3 until the threshold is met or max_n is reached.
+
+    p_surgery: scalar probability of surgery, same for all doses.
+
     Thresholds (all inclusive):
       After 6 — escalate if acute <= a6_esc_max; stop if acute >= a6_stop_min; else expand
       After 9 — escalate if acute <= a9_esc_max; else stop
     """
     if rng is None:
         rng = np.random.default_rng()
-    true_acute   = np.asarray(true_acute,   dtype=float)
-    true_surgery = np.asarray(true_surgery, dtype=float)
-    true_sub_gs  = np.asarray(true_sub_gs,  dtype=float)
-    n_levels = len(true_acute)
+    true_acute  = np.asarray(true_acute,  dtype=float)
+    true_sub_gs = np.asarray(true_sub_gs, dtype=float)
+    p_surg      = float(p_surgery)
+    n_levels    = len(true_acute)
 
     level = int(start_level)
     n_per       = np.zeros(n_levels, dtype=int)   # all treated
@@ -159,19 +169,37 @@ def run_6plus3_sur(
     last_acceptable = None
     debug_rows = []
 
+    def _add_cohort(n_add):
+        """Add n_add patients at current level; return (acute_dlts, n_surg, sub_dlts)."""
+        a_tot = s_n = s_y = 0
+        for _ in range(n_add):
+            a, ns, ys = simulate_cohort(1, true_acute[level], p_surg,
+                                        true_sub_gs[level], rng)
+            a_tot += a; s_n += ns; s_y += ys
+        n_per[level]       += n_add
+        y_acute_per[level] += a_tot
+        n_sub_per[level]   += s_n
+        y_sub_per[level]   += s_y
+        return a_tot, s_n, s_y
+
+    def _hold_until_6_surg():
+        """
+        If n_sub_per[level] < 6, add cohorts of 3 until threshold met or max_n reached.
+        Returns True if 6 surgery patients were eventually reached.
+        """
+        nonlocal total_n
+        while n_sub_per[level] < 6 and total_n < int(max_n):
+            n_add = min(3, int(max_n) - total_n)
+            if n_add <= 0:
+                break
+            _add_cohort(n_add)
+            total_n += n_add
+        return n_sub_per[level] >= 6
+
     while total_n < int(max_n):
         n_add = min(6, int(max_n) - total_n)
-        a6_tot = s6_n = s6_y = 0
-        for _ in range(n_add):
-            a, ns, ys = simulate_cohort(1, true_acute[level], true_surgery[level],
-                                        true_sub_gs[level], rng)
-            a6_tot += a; s6_n += ns; s6_y += ys
-
-        n_per[level]       += n_add
-        y_acute_per[level] += a6_tot
-        n_sub_per[level]   += s6_n
-        y_sub_per[level]   += s6_y
-        total_n            += n_add
+        a6_tot, s6_n, s6_y = _add_cohort(n_add)
+        total_n += n_add
 
         if n_add < 6:
             break
@@ -179,8 +207,9 @@ def run_6plus3_sur(
         dbg = {"level": level, "phase": "6pt",
                "acute_dlts": a6_tot, "n_surg": s6_n, "sub_dlts": s6_y} if debug else None
 
-        # escalate after 6 (acute only)
+        # escalate after 6 (acute only) — hold if <6 surgery-evaluable patients
         if a6_tot <= int(a6_esc_max):
+            _hold_until_6_surg()
             last_acceptable = level
             if dbg is not None:
                 dbg["decision"] = "escalate"; debug_rows.append(dbg)
@@ -198,17 +227,8 @@ def run_6plus3_sur(
 
         # otherwise expand to 9
         n_add2 = min(3, int(max_n) - total_n)
-        a3_tot = s3_n = s3_y = 0
-        for _ in range(n_add2):
-            a, ns, ys = simulate_cohort(1, true_acute[level], true_surgery[level],
-                                        true_sub_gs[level], rng)
-            a3_tot += a; s3_n += ns; s3_y += ys
-
-        n_per[level]       += n_add2
-        y_acute_per[level] += a3_tot
-        n_sub_per[level]   += s3_n
-        y_sub_per[level]   += s3_y
-        total_n            += n_add2
+        a3_tot, s3_n, s3_y = _add_cohort(n_add2)
+        total_n += n_add2
 
         if n_add2 < 3:
             break
@@ -218,8 +238,9 @@ def run_6plus3_sur(
             dbg["phase"] = "9pt"; dbg["acute_dlts"] = a9
             dbg["n_surg"] += s3_n; dbg["sub_dlts"] += s3_y
 
-        # escalate after 9 (acute only)
+        # escalate after 9 (acute only) — hold if <6 surgery-evaluable patients
         if a9 <= int(a9_esc_max):
+            _hold_until_6_surg()
             last_acceptable = level
             if dbg is not None:
                 dbg["decision"] = "escalate"; debug_rows.append(dbg)
@@ -344,7 +365,7 @@ def crm_select_mtd_sur(
 # ============================================================
 
 def run_crm_sur(
-    true_acute, true_surgery, true_sub_gs,
+    true_acute, p_surgery, true_sub_gs,
     target_acute, target_subacute,
     skeleton_acute, skeleton_subacute,
     sigma=1.0, start_level=0, already_treated_start=0,
@@ -356,6 +377,8 @@ def run_crm_sur(
 ):
     """
     Dual CRM with conditional subacute endpoint.
+
+    p_surgery: scalar probability of surgery, same for all doses.
 
     Denominators:
       acute   model: n_acute_per[d] = all patients treated at dose d
@@ -370,10 +393,10 @@ def run_crm_sur(
     """
     if rng is None:
         rng = np.random.default_rng()
-    true_acute   = np.asarray(true_acute,   dtype=float)
-    true_surgery = np.asarray(true_surgery, dtype=float)
-    true_sub_gs  = np.asarray(true_sub_gs,  dtype=float)
-    n_levels = len(true_acute)
+    true_acute  = np.asarray(true_acute,  dtype=float)
+    true_sub_gs = np.asarray(true_sub_gs, dtype=float)
+    p_surg      = float(p_surgery)
+    n_levels    = len(true_acute)
 
     level       = int(start_level)
     n_acute_per = np.zeros(n_levels, dtype=int)
@@ -398,7 +421,7 @@ def run_crm_sur(
 
         a_tot = s_n = s_y = 0
         for _ in range(n_add):
-            a, ns, ys = simulate_cohort(1, true_acute[level], true_surgery[level],
+            a, ns, ys = simulate_cohort(1, true_acute[level], p_surg,
                                         true_sub_gs[level], rng)
             a_tot += a; s_n += ns; s_y += ys
 
@@ -505,13 +528,13 @@ st.markdown(
 dose_labels = ["5×4 Gy", "5×5 Gy", "5×6 Gy", "5×7 Gy", "5×8 Gy"]
 
 DEFAULT_TRUE_ACUTE    = [0.01, 0.02, 0.12, 0.20, 0.35]
-DEFAULT_TRUE_SURGERY  = [0.80, 0.80, 0.75, 0.65, 0.50]
 DEFAULT_TRUE_SUB_GS   = [0.02, 0.05, 0.15, 0.25, 0.40]  # subacute given surgery
 
 R_DEFAULTS = {
     # Study
     "target_acute":            0.15,
     "target_subacute":         0.20,   # conditional on surgery
+    "p_surgery":               0.80,   # global surgery probability (dose-independent)
     "start_level_1b":          2,
     "already_treated_start":   0,
     # Simulation
@@ -556,7 +579,6 @@ R_DEFAULTS = {
 }
 
 TRUE_ACUTE_KEYS    = [f"true_acute_{i}"    for i in range(5)]
-TRUE_SURGERY_KEYS  = [f"true_surgery_{i}"  for i in range(5)]
 TRUE_SUB_GS_KEYS   = [f"true_sub_gs_{i}"   for i in range(5)]
 
 # ============================================================
@@ -571,9 +593,8 @@ if st.session_state.get("_do_reset", False):
     for k, v in R_DEFAULTS.items():
         st.session_state[k] = v
     for i in range(5):
-        st.session_state[TRUE_ACUTE_KEYS[i]]   = float(DEFAULT_TRUE_ACUTE[i])
-        st.session_state[TRUE_SURGERY_KEYS[i]] = float(DEFAULT_TRUE_SURGERY[i])
-        st.session_state[TRUE_SUB_GS_KEYS[i]]  = float(DEFAULT_TRUE_SUB_GS[i])
+        st.session_state[TRUE_ACUTE_KEYS[i]]  = float(DEFAULT_TRUE_ACUTE[i])
+        st.session_state[TRUE_SUB_GS_KEYS[i]] = float(DEFAULT_TRUE_SUB_GS[i])
     st.session_state["_results"]  = None
     st.session_state["_do_reset"] = False
     st.rerun()
@@ -582,9 +603,8 @@ def init_state():
     for k, v in R_DEFAULTS.items():
         st.session_state.setdefault(k, v)
     for i in range(5):
-        st.session_state.setdefault(TRUE_ACUTE_KEYS[i],   float(DEFAULT_TRUE_ACUTE[i]))
-        st.session_state.setdefault(TRUE_SURGERY_KEYS[i], float(DEFAULT_TRUE_SURGERY[i]))
-        st.session_state.setdefault(TRUE_SUB_GS_KEYS[i],  float(DEFAULT_TRUE_SUB_GS[i]))
+        st.session_state.setdefault(TRUE_ACUTE_KEYS[i],  float(DEFAULT_TRUE_ACUTE[i]))
+        st.session_state.setdefault(TRUE_SUB_GS_KEYS[i], float(DEFAULT_TRUE_SUB_GS[i]))
     st.session_state.setdefault("_results", None)
 
 init_state()
@@ -605,9 +625,6 @@ def h(key, meaning, r_name=None):
 
 def h_acute(i):
     return f"True acute DLT probability at L{i}. Default: {DEFAULT_TRUE_ACUTE[i]}"
-
-def h_surgery(i):
-    return f"Probability of undergoing surgery at L{i}. Default: {DEFAULT_TRUE_SURGERY[i]}"
 
 def h_sub_gs(i):
     return (f"True subacute DLT probability GIVEN surgery at L{i}. "
@@ -637,6 +654,16 @@ with st.expander("Essentials", expanded=False):
                    "Target subacute DLT probability CONDITIONAL on surgery. "
                    "Applied only to surgery patients in the CRM likelihood.",
                    r_name="target.subacute.given.surgery")
+        )
+        st.number_input(
+            "Probability of surgery",
+            min_value=0.0, max_value=1.0, step=0.01, key="p_surgery",
+            help=(
+                "Probability that a patient proceeds to surgery. "
+                "Subacute toxicity is only observed in these patients. "
+                "This probability is the same at every dose level. "
+                f"Default: {R_DEFAULTS['p_surgery']}"
+            )
         )
         st.number_input(
             "Start dose level (1-based)",
@@ -801,23 +828,19 @@ with st.expander("Playground", expanded=True):
         st.markdown("#### True probabilities by dose")
 
         # Column headers
-        hL, hA, hSurg, hSub = st.columns([0.32, 0.23, 0.23, 0.22], gap="small")
+        hL, hA, hSub = st.columns([0.35, 0.30, 0.35], gap="small")
         with hA:
             st.markdown("<div style='font-size:0.79rem;font-weight:600;'>Acute</div>",
-                        unsafe_allow_html=True)
-        with hSurg:
-            st.markdown("<div style='font-size:0.79rem;font-weight:600;'>Surgery</div>",
                         unsafe_allow_html=True)
         with hSub:
             st.markdown("<div style='font-size:0.79rem;font-weight:600;'>Sub|surg</div>",
                         unsafe_allow_html=True)
 
         true_acute    = []
-        true_surgery  = []
         true_sub_gs   = []
 
         for i, lab in enumerate(dose_labels):
-            rL, rA, rSurg, rSub = st.columns([0.32, 0.23, 0.23, 0.22], gap="small")
+            rL, rA, rSub = st.columns([0.35, 0.30, 0.35], gap="small")
             with rL:
                 st.markdown(
                     f"<div style='font-size:0.83rem;padding-top:0.25rem;'>L{i} {lab}</div>",
@@ -828,12 +851,6 @@ with st.expander("Playground", expanded=True):
                                      label_visibility="collapsed",
                                      help=h_acute(i))
                 true_acute.append(float(va))
-            with rSurg:
-                vs = st.number_input(f"Surgery L{i}", 0.0, 1.0, step=0.01,
-                                     key=TRUE_SURGERY_KEYS[i],
-                                     label_visibility="collapsed",
-                                     help=h_surgery(i))
-                true_surgery.append(float(vs))
             with rSub:
                 vg = st.number_input(f"SubGS L{i}", 0.0, 1.0, step=0.01,
                                      key=TRUE_SUB_GS_KEYS[i],
@@ -841,6 +858,7 @@ with st.expander("Playground", expanded=True):
                                      help=h_sub_gs(i))
                 true_sub_gs.append(float(vg))
 
+        p_surgery_val       = float(st.session_state["p_surgery"])
         target_acute_val    = float(st.session_state["target_acute"])
         target_subacute_val = float(st.session_state["target_subacute"])
         true_safe = find_true_safe_dose(
@@ -1034,7 +1052,7 @@ with st.expander("Playground", expanded=True):
 
         # Preview: two stacked mini-plots for clarity
         # Top: acute true + skeleton + target
-        # Bottom: subacute|surgery true + skeleton + target + surgery rate
+        # Bottom: subacute|surgery true + skeleton + target + global p_surgery (horizontal)
         fig, (ax1, ax2) = plt.subplots(
             2, 1, figsize=(PREVIEW_W_IN, PREVIEW_H_IN), dpi=PREVIEW_DPI)
         x = np.arange(5)
@@ -1049,14 +1067,14 @@ with st.expander("Playground", expanded=True):
         ax1.legend(fontsize=7, frameon=False, loc="upper left")
         compact_style(ax1)
 
-        ax2.plot(x, true_sub_gs,      "s-",  color="tab:orange", lw=1.5, label="True sub|surg")
-        ax2.plot(x, skeleton_subacute,"s--", color="tab:orange", lw=1.5, label="Skel sub")
-        ax2.plot(x, true_surgery,     "^:",  color="tab:green",  lw=1.2, label="P(surgery)")
+        ax2.plot(x, true_sub_gs,       "s-",  color="tab:orange", lw=1.5, label="True sub|surg")
+        ax2.plot(x, skeleton_subacute, "s--", color="tab:orange", lw=1.5, label="Skel sub")
+        ax2.axhline(p_surgery_val, lw=1.2, alpha=0.70, color="tab:green",
+                    linestyle="--", label=f"P(surgery)={p_surgery_val:.2f}")
         ax2.axhline(target_subacute_val, lw=1, alpha=0.55, color="tab:orange")
         ax2.set_ylabel("Probability", fontsize=8)
         ax2.set_xticks(x); ax2.set_xticklabels([f"L{i}" for i in range(5)], fontsize=8)
-        _y2 = max(max(true_sub_gs), max(skeleton_subacute),
-                  max(true_surgery), target_subacute_val)
+        _y2 = max(max(true_sub_gs), max(skeleton_subacute), target_subacute_val, p_surgery_val)
         ax2.set_ylim(0, min(1.0, _y2 * 1.25 + 0.02))
         ax2.legend(fontsize=7, frameon=False, loc="upper left")
         compact_style(ax2)
@@ -1097,7 +1115,7 @@ if "run" in locals() and run:
 
         sel63, n63, ya63, nsg63, ysb63, d63 = run_6plus3_sur(
             true_acute=true_acute,
-            true_surgery=true_surgery,
+            p_surgery=float(st.session_state["p_surgery"]),
             true_sub_gs=true_sub_gs,
             start_level=start_0b,
             max_n=int(st.session_state["max_n_63"]),
@@ -1109,7 +1127,7 @@ if "run" in locals() and run:
 
         selc, nc, yac, nsgc, ysbc, dc = run_crm_sur(
             true_acute=true_acute,
-            true_surgery=true_surgery,
+            p_surgery=float(st.session_state["p_surgery"]),
             true_sub_gs=true_sub_gs,
             target_acute=float(st.session_state["target_acute"]),
             target_subacute=float(st.session_state["target_subacute"]),
@@ -1151,6 +1169,7 @@ if "run" in locals() and run:
     st.session_state["_results"] = {
         "p63":              sel_63  / float(ns),
         "pcrm":             sel_crm / float(ns),
+        "p_surgery":        float(st.session_state["p_surgery"]),
         "avg_n63":          np.mean(nmat_63,  axis=0),
         "avg_ncrm":         np.mean(nmat_crm, axis=0),
         "avg_nsurg63":      np.mean(nsurg_63,  axis=0),
@@ -1233,8 +1252,13 @@ if res is not None:
     with r3:
         st.metric("Acute DLT / all patients (6+3)",  f"{res['acute_rate_63']:.3f}")
         st.metric("Acute DLT / all patients (CRM)",  f"{res['acute_rate_crm']:.3f}")
-        st.metric("Surgery rate (6+3)",              f"{res['surgery_rate_63']:.3f}")
-        st.metric("Surgery rate (CRM)",              f"{res['surgery_rate_crm']:.3f}")
+        p_surg_input = res.get("p_surgery", float(st.session_state["p_surgery"]))
+        st.metric("Surgery rate (6+3)",
+                  f"{res['surgery_rate_63']:.3f}",
+                  help=f"Expected ≈ {p_surg_input:.2f} (global p_surgery)")
+        st.metric("Surgery rate (CRM)",
+                  f"{res['surgery_rate_crm']:.3f}",
+                  help=f"Expected ≈ {p_surg_input:.2f} (global p_surgery)")
         st.metric("Subacute / surgery pt (6+3)",     f"{res['sub_gs_rate_63']:.3f}")
         st.metric("Subacute / surgery pt (CRM)",     f"{res['sub_gs_rate_crm']:.3f}")
         st.caption(
