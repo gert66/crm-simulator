@@ -306,6 +306,7 @@ def run_tite_crm(
     enforce_guardrail=True, restrict_final_to_tried=True,
     ewoc_on=True, ewoc_alpha=0.25,
     burn_in=True, rng=None,
+    collect_trace=False,
 ):
     """
     TITE-CRM trial simulation.
@@ -318,7 +319,13 @@ def run_tite_crm(
     Burn-in: escalate one level at a time until the first observed tox1 event
       (observed = tox1_day <= decision_day).  Then hand off to CRM.
 
-    Returns (selected_level, patients_list, study_days).
+    collect_trace: when True, record a decision-level trace dict for every
+      cohort update (posteriors, weights, allowed doses, decision reason).
+      Adds negligible runtime; used only for the first simulated trial.
+
+    Returns (selected_level, patients_list, study_days, trace).
+      trace is a list of dicts (one per cohort decision) when collect_trace=True,
+      otherwise an empty list.
     """
     if rng is None:
         rng = np.random.default_rng()
@@ -333,9 +340,12 @@ def run_tite_crm(
     current_day   = 0.0
     burn_active   = bool(burn_in)
     ewoc_eff      = float(ewoc_alpha) if ewoc_on else None
+    trace         = []
+    cohort_step   = 0
 
     while len(patients) < int(max_n):
-        n_add = min(int(cohort_size), int(max_n) - len(patients))
+        n_add        = min(int(cohort_size), int(max_n) - len(patients))
+        cohort_start = len(patients)
 
         # Enroll cohort: each patient arrives after an Exp(1/rate) inter-arrival
         for _ in range(n_add):
@@ -352,6 +362,8 @@ def run_tite_crm(
         # Compute fractional TITE weights for all enrolled patients
         n1, y1, n2, y2 = tite_weights(
             patients, decision_day, tox1_win, tox2_win, n_levels)
+
+        burn_was_active = burn_active
 
         # Burn-in: check if any tox1 event has been observed by now
         if burn_active:
@@ -378,6 +390,71 @@ def run_tite_crm(
                 highest_tried=highest_tried, n_levels=n_levels,
             )
 
+        # ── Collect trace for this decision (first trial only) ────────────────
+        if collect_trace:
+            pm1, od1 = crm_posterior_summaries(
+                sigma, skel1, n1, y1, target1, gh_n=gh_n)
+            pm2, od2 = crm_posterior_summaries(
+                sigma, skel2, n2, y2, target2, gh_n=gh_n)
+
+            # Which doses pass the joint EWOC safety filter?
+            if ewoc_eff is None:
+                allowed_arr = list(range(n_levels))
+            else:
+                allowed_arr = [int(d) for d in
+                               np.where((od1 < ewoc_eff) & (od2 < ewoc_eff))[0]]
+
+            # Human-readable reason for the dose selected
+            if burn_was_active:
+                reason = (f"Burn-in phase: escalate one level (no tox1 DLT "
+                          f"observed yet → L{next_level})")
+            elif not allowed_arr:
+                reason = "No dose within joint safety bounds → fallback to L0"
+            else:
+                k_safe  = int(np.array(allowed_arr).max())
+                k_step  = int(np.clip(k_safe,
+                                      level - int(max_step),
+                                      level + int(max_step)))
+                k_guard = (int(min(k_step, highest_tried + 1))
+                           if enforce_guardrail and highest_tried >= 0
+                           else k_step)
+                if k_guard < k_step:
+                    reason = (f"L{next_level}: guardrail limited "
+                              f"(highest tried = L{highest_tried}; "
+                              f"max allowed = L{highest_tried + 1})")
+                elif k_step < k_safe:
+                    reason = (f"L{next_level}: step-size limited "
+                              f"(max step = {max_step}; "
+                              f"jointly safe optimum was L{k_safe})")
+                else:
+                    reason = (f"L{next_level}: highest dose satisfying "
+                              f"joint tox1 & tox2 safety rule")
+
+            trace.append({
+                "step":          cohort_step + 1,
+                "decision_day":  decision_day,
+                "n_enrolled":    len(patients),
+                "current_dose":  level,
+                "next_dose":     next_level,
+                "highest_tried": highest_tried,
+                "burn_in":       burn_was_active,
+                "n1":   n1.tolist(), "y1": y1.tolist(),
+                "n2":   n2.tolist(), "y2": y2.tolist(),
+                "pm1":  [round(float(v), 3) for v in pm1],
+                "od1":  [round(float(v), 3) for v in od1],
+                "pm2":  [round(float(v), 3) for v in pm2],
+                "od2":  [round(float(v), 3) for v in od2],
+                "allowed":       allowed_arr,
+                "reason":        reason,
+                "obs_t1":        int(round(y1.sum())),
+                "obs_t2":        int(round(y2.sum())),
+                "n_surgery":     sum(1 for p in patients if p["has_surgery"]),
+                "n1_sum":        float(n1.sum()),
+                "n2_sum":        float(n2.sum()),
+                "cohort_pts":    list(range(cohort_start, len(patients))),
+            })
+
+        cohort_step += 1
         level = next_level
 
     # Final MTD selection using full follow-up weights
@@ -396,7 +473,7 @@ def run_tite_crm(
         ewoc_alpha=ewoc_eff, gh_n=gh_n,
         restrict_to_tried=restrict_final_to_tried,
     )
-    return int(selected), patients, float(study_days)
+    return int(selected), patients, float(study_days), trace
 
 # ==============================================================================
 # 6+3 TITE runner with lower-dose bridging
@@ -676,6 +753,8 @@ R_DEFAULTS = {
     # Figure sizing
     "preview_w_px":       PREVIEW_W_PX,
     "result_w_px":        RESULT_W_PX,
+    # Decision trace (first CRM trial only)
+    "show_crm_trace":     False,
 }
 
 TRUE_T1_KEYS  = [f"true_t1_L{i}"  for i in range(5)]
@@ -918,6 +997,17 @@ with st.expander("Essentials", expanded=True):
             disabled=(not bool(st.session_state["ewoc_on"])),
             help=h("ewoc_alpha",
                    "EWOC threshold applied to both endpoints independently.")
+        )
+        st.markdown("#### CRM decision trace")
+        st.toggle(
+            "Explain first CRM trial",
+            key="show_crm_trace",
+            help=h("show_crm_trace",
+                   "When ON, shows a detailed walkthrough for the first simulated "
+                   "CRM trial only: which dose each patient received, what follow-up "
+                   "data were available at each decision point, how the model judged "
+                   "safety for each dose level, and why the next dose was chosen. "
+                   "Has no effect on the summary results across all simulated trials.")
         )
 
     with _c4:
@@ -1230,7 +1320,7 @@ if "run" in locals() and run:
 
         # ── TITE-CRM ─────────────────────────────────────────────────────────
         rng_s2 = np.random.default_rng(rng_master.integers(0, 2**31))
-        selc, ptsc, sdc = run_tite_crm(
+        selc, ptsc, sdc, trace_s = run_tite_crm(
             true_t1=true_t1, p_surgery=p_surg_val, true_t2=true_t2,
             target1=target_t1_val, target2=target_t2_val,
             skel1=skel_t1, skel2=skel_t2,
@@ -1246,7 +1336,18 @@ if "run" in locals() and run:
             ewoc_alpha   = float(st.session_state["ewoc_alpha"]),
             burn_in      = bool(st.session_state["burn_in"]),
             rng=rng_s2, **timing_kw,
+            collect_trace=(s == 0),   # record full trace for first trial only
         )
+        # Save first-trial trace for the decision walkthrough display
+        if s == 0:
+            _crm_trace_first = {
+                "patients":   ptsc,
+                "decisions":  trace_s,
+                "true_t1":    list(true_t1),
+                "true_t2":    list(true_t2),
+                "tox1_win":   int(st.session_state["tox1_win"]),
+                "tox2_win":   int(st.session_state["tox2_win"]),
+            }
         sel_crm[selc] += 1
         for p in ptsc:
             nmat_crm[s, p["dose"]]  += 1
@@ -1280,6 +1381,7 @@ if "run" in locals() and run:
         "ns": ns,
         "seed": int(st.session_state["seed"]),
         "p_surgery": p_surg_val,
+        "crm_trace": _crm_trace_first,   # first-trial trace for walkthrough
     }
 
 # ==============================================================================
@@ -1378,3 +1480,227 @@ if "_tite_results" in st.session_state:
             f"n_sims={res['ns']} | seed={res['seed']}"
             + (f" | True safe=L{ts}" if ts is not None else " | No jointly safe dose")
         )
+
+# ==============================================================================
+# CRM Decision Trace — first simulated trial walkthrough
+# Shown only when "Explain first CRM trial" toggle is ON.
+#
+# Patient timeline table: one row per patient with true probs, event times,
+#   surgery status, and their fractional TITE weight at the decision that
+#   immediately followed their cohort enrollment.
+#
+# Decision walkthrough table: one row per cohort decision — posteriors,
+#   overdose probabilities, allowed doses, and the reason for the choice.
+#
+# Plots:
+#   A. Dose level over cohort steps (dose assigned to each successive cohort)
+#   B. Overdose probabilities at the selected dose over steps (tox1 & tox2)
+#   C. TITE follow-up accumulation (total effective n for tox1 and tox2)
+# ==============================================================================
+
+if ("_tite_results" in st.session_state
+        and bool(st.session_state.get("show_crm_trace", False))):
+
+    import pandas as pd  # local import — only needed for trace tables
+
+    _tr = st.session_state["_tite_results"]["crm_trace"]
+    _pts      = _tr["patients"]
+    _decs     = _tr["decisions"]
+    _true_t1  = _tr["true_t1"]
+    _true_t2  = _tr["true_t2"]
+    _tox1_win = _tr["tox1_win"]
+    _tox2_win = _tr["tox2_win"]
+
+    st.markdown("---")
+    st.subheader("First CRM trial — decision walkthrough")
+    st.caption(
+        "This trace covers the first simulated TITE-CRM trial only. "
+        "At each decision point the model uses all available partial follow-up "
+        "(TITE weights) to update its safety estimates for both tox1 and tox2. "
+        "A dose is eligible only if it appears safe for **both** endpoints "
+        "(joint EWOC rule). The highest eligible dose is then selected, "
+        "subject to guardrails."
+    )
+
+    # ── helper: compute per-patient TITE weight at a given decision day ───────
+    def _w1(pt, day):
+        t = float(day)
+        if t < pt["rt_start"]:
+            return 0.0
+        if pt["has_tox1"] and pt["tox1_day"] is not None and pt["tox1_day"] <= t:
+            return 1.0
+        if t >= pt["tox1_win_end"]:
+            return 1.0
+        return (t - pt["rt_start"]) / float(_tox1_win)
+
+    def _w2(pt, day):
+        if not pt["has_surgery"] or pt["surgery_day"] is None:
+            return None
+        t  = float(day)
+        sd = pt["surgery_day"]
+        if t < sd:
+            return 0.0
+        if pt["has_tox2"] and pt["tox2_day"] is not None and pt["tox2_day"] <= t:
+            return 1.0
+        if pt["tox2_win_end"] is not None and t >= pt["tox2_win_end"]:
+            return 1.0
+        return (t - sd) / float(_tox2_win)
+
+    # Map each patient index to the decision that followed their cohort
+    _pt_to_dec = {}
+    for _d in _decs:
+        for _pid in _d["cohort_pts"]:
+            _pt_to_dec[_pid] = _d
+
+    # ── Patient timeline table ─────────────────────────────────────────────────
+    with st.expander("Patient timeline", expanded=True):
+        _rows = []
+        for _i, _pt in enumerate(_pts):
+            _dec      = _pt_to_dec.get(_i)
+            _dec_day  = _dec["decision_day"] if _dec else None
+            _w1v      = round(_w1(_pt, _dec_day), 2) if _dec_day is not None else "—"
+            _w2v      = _w2(_pt, _dec_day)
+            _w2v_str  = ("—" if _w2v is None else
+                         round(_w2v, 2) if _dec_day is not None else "—")
+            _rows.append({
+                "Pt #":       _i + 1,
+                "Incl (day)": round(_pt["arrival"], 1),
+                "Dose":       f"L{_pt['dose']}",
+                "True P(tox1)": round(_true_t1[_pt["dose"]], 3),
+                "True P(tox2)": round(_true_t2[_pt["dose"]], 3),
+                "Surgery":    "Yes" if _pt["has_surgery"] else "No",
+                "Tox1 event": "Yes" if _pt["has_tox1"]   else "No",
+                "Tox2 event": "Yes" if _pt["has_tox2"]   else "No",
+                "Tox1 day":   (round(_pt["tox1_day"], 0)
+                               if _pt["tox1_day"] is not None else "—"),
+                "Surgery day":(round(_pt["surgery_day"], 0)
+                               if _pt["surgery_day"] is not None else "—"),
+                "Tox2 day":   (round(_pt["tox2_day"], 0)
+                               if _pt["tox2_day"] is not None else "—"),
+                "Tox1 wt @dec": _w1v,
+                "Tox2 wt @dec": _w2v_str,
+            })
+        st.dataframe(pd.DataFrame(_rows), use_container_width=True, hide_index=True)
+        st.caption(
+            "Tox1/Tox2 wt @dec = fractional TITE weight at the decision immediately "
+            "following this patient's enrollment. "
+            "Weight = 0 (window not yet open), between 0–1 (partial follow-up), "
+            "or 1 (event observed or window complete)."
+        )
+
+    # ── Decision walkthrough table ─────────────────────────────────────────────
+    with st.expander("Dose decision walkthrough", expanded=True):
+        _drows = []
+        for _d in _decs:
+            _allowed_str = ", ".join(f"L{a}" for a in _d["allowed"]) or "none"
+            _pm1_str = "[" + " ".join(f"{v:.2f}" for v in _d["pm1"]) + "]"
+            _pm2_str = "[" + " ".join(f"{v:.2f}" for v in _d["pm2"]) + "]"
+            _od1_str = "[" + " ".join(f"{v:.2f}" for v in _d["od1"]) + "]"
+            _od2_str = "[" + " ".join(f"{v:.2f}" for v in _d["od2"]) + "]"
+            _drows.append({
+                "Step":          _d["step"],
+                "Day":           round(_d["decision_day"], 0),
+                "N enrolled":    _d["n_enrolled"],
+                "Curr dose":     f"L{_d['current_dose']}",
+                "Next dose":     f"L{_d['next_dose']}",
+                "Highest tried": f"L{_d['highest_tried']}",
+                "Burn-in":       "Yes" if _d["burn_in"] else "No",
+                "Obs tox1":      _d["obs_t1"],
+                "Obs tox2":      _d["obs_t2"],
+                "N surgery":     _d["n_surgery"],
+                "Allowed doses": _allowed_str,
+                "Post mean tox1 [L0..L4]": _pm1_str,
+                "Post mean tox2 [L0..L4]": _pm2_str,
+                "OD prob tox1  [L0..L4]":  _od1_str,
+                "OD prob tox2  [L0..L4]":  _od2_str,
+                "Decision reason": _d["reason"],
+            })
+        st.dataframe(pd.DataFrame(_drows), use_container_width=True, hide_index=True)
+        st.caption(
+            "Post mean = posterior mean toxicity probability at each dose level. "
+            "OD prob = posterior probability that the true toxicity exceeds the target. "
+            "A dose is allowed only if BOTH OD prob tox1 < EWOC alpha AND "
+            "OD prob tox2 < EWOC alpha (joint safety rule)."
+        )
+
+    # ── Trace plots ────────────────────────────────────────────────────────────
+    if _decs:
+        _steps    = [d["step"]          for d in _decs]
+        _curr     = [d["current_dose"]  for d in _decs]
+        _next     = [d["next_dose"]     for d in _decs]
+        _n_enr    = [d["n_enrolled"]    for d in _decs]
+        _n1_sum   = [d["n1_sum"]        for d in _decs]
+        _n2_sum   = [d["n2_sum"]        for d in _decs]
+
+        # OD prob at the currently assigned dose
+        _od1_curr = [d["od1"][d["current_dose"]] for d in _decs]
+        _od2_curr = [d["od2"][d["current_dose"]] for d in _decs]
+
+        _tc1, _tc2, _tc3 = st.columns(3, gap="large")
+
+        # ── Plot A: dose level assigned per cohort step ───────────────────────
+        with _tc1:
+            fig, ax = plt.subplots(figsize=(4.2, 2.8), dpi=130)
+            ax.step(_steps, _curr, where="post", color="tab:blue",
+                    lw=2, label="Dose assigned")
+            ax.step(_steps, _next, where="post", color="tab:blue",
+                    lw=1.2, ls="--", alpha=0.6, label="Next dose chosen")
+            ax.set_title("Dose level over cohort steps", fontsize=9)
+            ax.set_xlabel("Decision step", fontsize=8)
+            ax.set_ylabel("Dose level (L0 – L4)", fontsize=8)
+            ax.set_yticks(range(5))
+            ax.set_yticklabels([f"L{i}" for i in range(5)], fontsize=7)
+            ax.legend(fontsize=7, frameon=False)
+            compact_style(ax)
+            fig.tight_layout(pad=0.5)
+            st.image(fig_to_png_bytes(fig), use_container_width=True)
+            st.caption("Solid: dose given to current cohort.  "
+                       "Dashed: dose selected for the next cohort.")
+
+        # ── Plot B: overdose probabilities at the current dose over time ──────
+        with _tc2:
+            fig, ax = plt.subplots(figsize=(4.2, 2.8), dpi=130)
+            ax.plot(_steps, _od1_curr, "o-", color="tab:blue",
+                    lw=1.8, ms=4, label="OD prob tox1")
+            ax.plot(_steps, _od2_curr, "s-", color="tab:orange",
+                    lw=1.8, ms=4, label="OD prob tox2")
+            ewoc_a = float(st.session_state.get("ewoc_alpha", 0.25))
+            if bool(st.session_state.get("ewoc_on", True)):
+                ax.axhline(ewoc_a, lw=1, ls="--", color="#888",
+                           alpha=0.7, label=f"EWOC α={ewoc_a:.2f}")
+            ax.set_title("Safety evolution at current dose", fontsize=9)
+            ax.set_xlabel("Decision step", fontsize=8)
+            ax.set_ylabel("P(overdose)", fontsize=8)
+            ax.set_ylim(0, min(1.05, max(max(_od1_curr), max(_od2_curr)) * 1.3 + 0.05))
+            ax.legend(fontsize=7, frameon=False)
+            compact_style(ax)
+            fig.tight_layout(pad=0.5)
+            st.image(fig_to_png_bytes(fig), use_container_width=True)
+            st.caption(
+                "Posterior probability that tox1 (blue) or tox2 (orange) "
+                "exceeds the target at the dose currently being given. "
+                "Dashed line = EWOC safety threshold."
+            )
+
+        # ── Plot C: TITE follow-up accumulation ───────────────────────────────
+        with _tc3:
+            fig, ax = plt.subplots(figsize=(4.2, 2.8), dpi=130)
+            ax.plot(_steps, _n1_sum, "o-", color="tab:blue",
+                    lw=1.8, ms=4, label="Effective n (tox1)")
+            ax.plot(_steps, _n2_sum, "s-", color="tab:orange",
+                    lw=1.8, ms=4, label="Effective n (tox2)")
+            ax.plot(_steps, _n_enr,  "^--", color="#aaa",
+                    lw=1.2, ms=4, label="Patients enrolled")
+            ax.set_title("TITE follow-up accumulation", fontsize=9)
+            ax.set_xlabel("Decision step", fontsize=8)
+            ax.set_ylabel("Effective patient count", fontsize=8)
+            ax.legend(fontsize=7, frameon=False)
+            compact_style(ax)
+            fig.tight_layout(pad=0.5)
+            st.image(fig_to_png_bytes(fig), use_container_width=True)
+            st.caption(
+                "Sum of fractional TITE weights across all enrolled patients "
+                "at each decision point. The gap between enrolled (grey) and "
+                "effective n shows how much follow-up is still pending. "
+                "Tox2 (orange) lags tox1 because surgery must occur first."
+            )
