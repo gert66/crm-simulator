@@ -187,3 +187,132 @@ def run_tite_crm(
     return crm_select_mtd(
         sigma, skel1, skel2, n1f, y1f, n2f, y2f, target1, target2,
         ewoc_alpha=ewoc_eff, gh_n=gh_n, restrict_to_tried=restrict_final_to_tried)
+
+
+# ==============================================================================
+# Quality score helpers
+# ==============================================================================
+
+def _quality_score(selected, true_t1, true_t2, target1, target2):
+    """Asymmetric exponential loss: penalises overdose more than underdose."""
+    d1 = float(true_t1[selected]) - float(target1)
+    d2 = float(true_t2[selected]) - float(target2)
+    bd = max(d1, d2)                          # binding (worst) endpoint
+    w  = 1.8 if bd > 0 else 1.0              # w_over=1.8, w_under=1.0
+    return float(np.exp(-6.0 * w * abs(bd)))
+
+
+def _true_optimal(true_t1, true_t2, target1, target2):
+    """Dose minimising max(true_t1[d]-target1, true_t2[d]-target2)."""
+    excess = [max(float(true_t1[d]) - float(target1),
+                  float(true_t2[d]) - float(target2))
+              for d in range(len(true_t1))]
+    return int(np.argmin(excess))
+
+
+# ==============================================================================
+# Parameter sweep
+# ==============================================================================
+
+def run_parameter_sweep(param_name, param_values, base_ss,
+                        true_t1, true_t2, skel_t1, skel_t2,
+                        n_sim, seed):
+    """
+    Run TITE-CRM simulations sweeping one parameter across *param_values*.
+
+    Parameters
+    ----------
+    param_name   : "sigma" | "ewoc_alpha" | "max_n" | "cohort_size"
+    param_values : list of values; use None in the list for EWOC OFF
+    base_ss      : dict of fixed scenario settings (see keys below)
+    true_t1/t2   : array-like, true tox rates per dose level
+    skel_t1/t2   : array-like, CRM skeletons
+    n_sim        : int, replications per grid point
+    seed         : int, base RNG seed (each grid point gets seed + idx*1000)
+
+    Required base_ss keys
+    ---------------------
+    target_tox1, target_tox2, p_surgery,
+    sigma, ewoc_on, ewoc_alpha,
+    max_n, cohort_size, start_level,
+    accrual_per_month, incl_to_rt, rt_dur, rt_to_surg, tox2_win,
+    max_step, gh_n, burn_in, enforce_guardrail, restrict_final_to_tried
+
+    Returns
+    -------
+    pd.DataFrame with columns:
+        param_label, quality_score, pct_correct_selection, overdose_rate
+    """
+    import pandas as pd
+
+    true_t1 = np.asarray(true_t1, dtype=float)
+    true_t2 = np.asarray(true_t2, dtype=float)
+    t1      = float(base_ss["target_tox1"])
+    t2      = float(base_ss["target_tox2"])
+    optimal = _true_optimal(true_t1, true_t2, t1, t2)
+
+    # Fixed kwargs that never change across the sweep
+    base_kw = dict(
+        true_t1=true_t1, p_surgery=float(base_ss["p_surgery"]), true_t2=true_t2,
+        target1=t1, target2=t2, skel1=skel_t1, skel2=skel_t2,
+        sigma=float(base_ss["sigma"]),
+        start_level=int(base_ss["start_level"]),
+        max_n=int(base_ss["max_n"]),
+        cohort_size=int(base_ss["cohort_size"]),
+        accrual_per_month=float(base_ss["accrual_per_month"]),
+        incl_to_rt=int(base_ss["incl_to_rt"]),
+        rt_dur=int(base_ss["rt_dur"]),
+        rt_to_surg=int(base_ss["rt_to_surg"]),
+        tox1_win=int(base_ss["rt_dur"]) + int(base_ss["rt_to_surg"]),
+        tox2_win=int(base_ss["tox2_win"]),
+        max_step=int(base_ss["max_step"]),
+        gh_n=int(base_ss["gh_n"]),
+        burn_in=bool(base_ss["burn_in"]),
+        enforce_guardrail=bool(base_ss["enforce_guardrail"]),
+        restrict_final_to_tried=bool(base_ss["restrict_final_to_tried"]),
+        ewoc_on=bool(base_ss["ewoc_on"]),
+        ewoc_alpha=float(base_ss["ewoc_alpha"]),
+    )
+
+    rows = []
+    for idx, pv in enumerate(param_values):
+        kw = dict(base_kw)  # shallow copy — scalars only
+
+        if param_name == "sigma":
+            kw["sigma"] = float(pv)
+            label = f"{float(pv):.3g}"
+        elif param_name == "ewoc_alpha":
+            if pv is None:
+                kw["ewoc_on"] = False
+                label = "OFF"
+            else:
+                kw["ewoc_on"]    = True
+                kw["ewoc_alpha"] = float(pv)
+                label = f"{float(pv):.2f}"
+        elif param_name == "max_n":
+            kw["max_n"] = int(pv)
+            label = str(int(pv))
+        elif param_name == "cohort_size":
+            kw["cohort_size"] = int(pv)
+            label = str(int(pv))
+        else:
+            raise ValueError(f"Unknown param_name: {param_name!r}")
+
+        rng = np.random.default_rng(int(seed) + idx * 1000)
+        scores, correct, overdosed = [], [], []
+        for _ in range(int(n_sim)):
+            sel = run_tite_crm(**kw, rng=rng)
+            scores.append(_quality_score(sel, true_t1, true_t2, t1, t2))
+            correct.append(int(sel == optimal))
+            overdosed.append(int(max(float(true_t1[sel]) - t1,
+                                     float(true_t2[sel]) - t2) > 0))
+
+        rows.append(dict(
+            param_label=label,
+            param_raw=pv,
+            quality_score=float(np.mean(scores)),
+            pct_correct_selection=float(np.mean(correct)) * 100.0,
+            overdose_rate=float(np.mean(overdosed)) * 100.0,
+        ))
+
+    return pd.DataFrame(rows)
