@@ -11,7 +11,7 @@ accrual_per_month / 30 per day).  Each patient has a personal timeline:
 
   arrival
     └─► [incl_to_rt days] ──► RT start
-                                ├─► tox1 window (tox1_win days)
+                                ├─► tox1 window (rt_dur + rt_to_surg days → ends at surgery)
                                 │     Event time ~ Uniform(0, tox1_win) if tox1 occurs
                                 └─► [rt_dur] ──► RT end
                                                   └─► [rt_to_surg] ──► surgery (if surgery)
@@ -787,7 +787,6 @@ R_DEFAULTS = {
     "incl_to_rt":         21,
     "rt_dur":             14,
     "rt_to_surg":         84,
-    "tox1_win":           84,
     "tox2_win":           30,
     # Sample sizes
     "max_n_63":           27,
@@ -860,10 +859,13 @@ def _do_reset():
     for i, v in enumerate(DEFAULT_TRUE_T2):
         st.session_state[TRUE_T2_KEYS[i]] = v
 
-def _draw_timeline(incl_to_rt, rt_dur, rt_to_surg, tox1_win, tox2_win):
+def _draw_timeline(incl_to_rt, rt_dur, rt_to_surg, tox2_win):
     """
     Single-row horizontal timeline with labelled coloured bands.
     Returns a matplotlib Figure.
+
+    Tox1 window is derived as rt_dur + rt_to_surg, so it ends exactly at
+    surgery — the same derivation used in the simulation.
     """
     fig, ax = plt.subplots(figsize=(9.0, 0.9), dpi=120)
     ax.set_xlim(0, 1)
@@ -873,7 +875,7 @@ def _draw_timeline(incl_to_rt, rt_dur, rt_to_surg, tox1_win, tox2_win):
     rt_start = incl_to_rt
     rt_end   = rt_start + rt_dur
     surg     = rt_end   + rt_to_surg
-    t1_end   = rt_start + tox1_win
+    t1_end   = surg                    # tox1 window = rt_dur + rt_to_surg → ends at surgery
     t2_end   = surg     + tox2_win
     total    = t2_end * 1.05
 
@@ -981,14 +983,9 @@ with st.expander("Essentials", expanded=True):
             "RT end to surgery",
             min_value=1, max_value=365, step=1, key="rt_to_surg",
             help=h("rt_to_surg",
-                   "Days from end of radiotherapy to surgery. Default 84 days ≈ 12 weeks.")
-        )
-        st.number_input(
-            "Tox1 follow-up window (days)",
-            min_value=7, max_value=365, step=7, key="tox1_win",
-            help=h("tox1_win",
-                   "Length of the acute toxicity assessment window, measured from RT start. "
-                   "Default 84 days ≈ 12 weeks.")
+                   "Days from end of radiotherapy to surgery. Default 84 days ≈ 12 weeks. "
+                   "The tox1 (acute) follow-up window is derived as RT duration + this value, "
+                   "so it always extends from RT start to the moment of surgery.")
         )
         st.number_input(
             "Tox2 follow-up window (days)",
@@ -1154,7 +1151,6 @@ with st.expander("Essentials", expanded=True):
         int(st.session_state["incl_to_rt"]),
         int(st.session_state["rt_dur"]),
         int(st.session_state["rt_to_surg"]),
-        int(st.session_state["tox1_win"]),
         int(st.session_state["tox2_win"]),
     )
     st.image(fig_to_png_bytes(_tl_fig), use_container_width=True)
@@ -1356,12 +1352,16 @@ if "run" in locals() and run:
     dur_crm = np.zeros(ns)
     nbridg  = np.zeros(ns, dtype=int)
 
+    # tox1_win is derived: extends from RT start all the way to surgery
+    # = RT duration + (RT end → surgery) — no separate UI input needed
+    _tox1_win_derived = int(st.session_state["rt_dur"]) + int(st.session_state["rt_to_surg"])
+
     timing_kw = dict(
         accrual_per_month = float(st.session_state["accrual_per_month"]),
         incl_to_rt        = int(st.session_state["incl_to_rt"]),
         rt_dur            = int(st.session_state["rt_dur"]),
         rt_to_surg        = int(st.session_state["rt_to_surg"]),
-        tox1_win          = int(st.session_state["tox1_win"]),
+        tox1_win          = _tox1_win_derived,
         tox2_win          = int(st.session_state["tox2_win"]),
     )
 
@@ -1419,7 +1419,7 @@ if "run" in locals() and run:
                 "decisions":  trace_s,
                 "true_t1":    list(true_t1),
                 "true_t2":    list(true_t2),
-                "tox1_win":   int(st.session_state["tox1_win"]),
+                "tox1_win":   _tox1_win_derived,
                 "tox2_win":   int(st.session_state["tox2_win"]),
             }
         sel_crm[selc] += 1
