@@ -257,15 +257,41 @@ def crm_choose_next(sigma, skel1, skel2,
                     current_level, target1, target2,
                     ewoc_alpha=None, max_step=1, gh_n=61,
                     enforce_guardrail=True, highest_tried=-1, n_levels=5):
-    _, od1 = crm_posterior_summaries(sigma, skel1, n1, y1, target1, gh_n=gh_n)
-    _, od2 = crm_posterior_summaries(sigma, skel2, n2, y2, target2, gh_n=gh_n)
+    """
+    Select the next dose level for the upcoming cohort.
+
+    EWOC ON  (ewoc_alpha is not None):
+      Admissible set = doses where P(tox1>target1) < alpha AND P(tox2>target2) < alpha.
+      Among admissible doses, pick the HIGHEST (maximise dose subject to joint safety).
+
+    EWOC OFF (ewoc_alpha is None):
+      No overdose-probability filter is applied.
+      Among all doses (subject to step and guardrail constraints), pick the dose whose
+      posterior mean P(tox1) is CLOSEST to target1.  This is the standard CRM
+      "argmin |pm − target|" rule — it is coherent with the target-based design and
+      does NOT blindly seek the highest dose regardless of posterior evidence.
+    """
+    pm1, od1 = crm_posterior_summaries(sigma, skel1, n1, y1, target1, gh_n=gh_n)
+    _,   od2 = crm_posterior_summaries(sigma, skel2, n2, y2, target2, gh_n=gh_n)
+
     if ewoc_alpha is None:
-        allowed = np.arange(n_levels)
+        # EWOC OFF: all doses are candidates (no overdose-probability filter)
+        candidates = np.arange(n_levels)
     else:
-        allowed = np.where((od1 < float(ewoc_alpha)) & (od2 < float(ewoc_alpha)))[0]
-    if allowed.size == 0:
-        allowed = np.array([0], dtype=int)
-    k = int(allowed.max())
+        # EWOC ON: jointly admissible doses only
+        candidates = np.where((od1 < float(ewoc_alpha)) & (od2 < float(ewoc_alpha)))[0]
+
+    if candidates.size == 0:
+        candidates = np.array([0], dtype=int)
+
+    if ewoc_alpha is not None:
+        # EWOC ON: highest admissible dose
+        k = int(candidates.max())
+    else:
+        # EWOC OFF: closest to tox1 target by posterior mean (standard CRM rule)
+        dist = np.abs(pm1[candidates] - float(target1))
+        k = int(candidates[int(np.argmin(dist))])
+
     k = int(np.clip(k, current_level - int(max_step), current_level + int(max_step)))
     if enforce_guardrail and highest_tried >= 0:
         k = int(min(k, int(highest_tried) + 1))
@@ -275,21 +301,46 @@ def crm_select_mtd(sigma, skel1, skel2,
                    n1, y1, n2, y2,
                    target1, target2,
                    ewoc_alpha=None, gh_n=61, restrict_to_tried=True):
-    _, od1 = crm_posterior_summaries(sigma, skel1, n1, y1, target1, gh_n=gh_n)
-    _, od2 = crm_posterior_summaries(sigma, skel2, n2, y2, target2, gh_n=gh_n)
+    """
+    Select the final MTD from the completed trial data.
+
+    EWOC ON  (ewoc_alpha is not None):
+      Admissible set = doses where both OD probs < alpha (joint safety filter).
+      Among admissible (and tried) doses, pick the HIGHEST.
+
+    EWOC OFF (ewoc_alpha is None):
+      No overdose-probability filter.  Among tried doses, pick the one whose
+      posterior mean P(tox1) is closest to target1 (standard CRM rule).
+      This prevents the selector from defaulting to the highest tried dose
+      regardless of posterior evidence.
+    """
+    pm1, od1 = crm_posterior_summaries(sigma, skel1, n1, y1, target1, gh_n=gh_n)
+    _,   od2 = crm_posterior_summaries(sigma, skel2, n2, y2, target2, gh_n=gh_n)
     n_levels = len(skel1)
+
     if ewoc_alpha is None:
-        allowed = np.arange(n_levels)
+        # EWOC OFF: all doses are candidates (no overdose-probability filter)
+        candidates = np.arange(n_levels)
     else:
-        allowed = np.where((od1 < float(ewoc_alpha)) & (od2 < float(ewoc_alpha)))[0]
-    if allowed.size == 0:
+        # EWOC ON: jointly admissible doses only
+        candidates = np.where((od1 < float(ewoc_alpha)) & (od2 < float(ewoc_alpha)))[0]
+
+    if candidates.size == 0:
         return 0
+
     if restrict_to_tried:
         tried = np.where(np.asarray(n1) > 0)[0]
         if tried.size > 0:
-            allowed2 = np.intersect1d(allowed, tried)
-            allowed = allowed2 if allowed2.size > 0 else tried
-    return int(allowed.max())
+            candidates2 = np.intersect1d(candidates, tried)
+            candidates = candidates2 if candidates2.size > 0 else tried
+
+    if ewoc_alpha is not None:
+        # EWOC ON: highest admissible (and tried) dose
+        return int(candidates.max())
+    else:
+        # EWOC OFF: closest to tox1 target by posterior mean (standard CRM rule)
+        dist = np.abs(pm1[candidates] - float(target1))
+        return int(candidates[int(np.argmin(dist))])
 
 # ==============================================================================
 # TITE-CRM trial runner
@@ -397,8 +448,12 @@ def run_tite_crm(
             pm2, od2 = crm_posterior_summaries(
                 sigma, skel2, n2, y2, target2, gh_n=gh_n)
 
+            # EWOC mode label for the trace
+            ewoc_mode = "OFF" if ewoc_eff is None else f"ON (α={ewoc_eff:.2f})"
+
             # Which doses pass the joint EWOC safety filter?
             if ewoc_eff is None:
+                # EWOC OFF: all doses are candidates
                 allowed_arr = list(range(n_levels))
             else:
                 allowed_arr = [int(d) for d in
@@ -406,11 +461,29 @@ def run_tite_crm(
 
             # Human-readable reason for the dose selected
             if burn_was_active:
-                reason = (f"Burn-in phase: escalate one level (no tox1 DLT "
+                reason = (f"Burn-in: escalate one level (no tox1 DLT "
                           f"observed yet → L{next_level})")
             elif not allowed_arr:
                 reason = "No dose within joint safety bounds → fallback to L0"
+            elif ewoc_eff is None:
+                # EWOC OFF: closest-to-target1 rule
+                cands     = np.arange(n_levels)
+                dist      = np.abs(pm1[cands] - float(target1))
+                k_target  = int(cands[int(np.argmin(dist))])
+                k_step    = int(np.clip(k_target,
+                                        level - int(max_step),
+                                        level + int(max_step)))
+                k_guard   = (int(min(k_step, highest_tried + 1))
+                             if enforce_guardrail and highest_tried >= 0
+                             else k_step)
+                parts = [f"EWOC OFF → argmin|pm1−target1| = L{k_target}"]
+                if k_step != k_target:
+                    parts.append(f"step-limit → L{k_step}")
+                if k_guard != k_step:
+                    parts.append(f"guardrail → L{k_guard}")
+                reason = f"L{next_level}: " + "; ".join(parts)
             else:
+                # EWOC ON: highest jointly admissible dose
                 k_safe  = int(np.array(allowed_arr).max())
                 k_step  = int(np.clip(k_safe,
                                       level - int(max_step),
@@ -438,6 +511,7 @@ def run_tite_crm(
                 "next_dose":     next_level,
                 "highest_tried": highest_tried,
                 "burn_in":       burn_was_active,
+                "ewoc_mode":     ewoc_mode,
                 "n1":   n1.tolist(), "y1": y1.tolist(),
                 "n2":   n2.tolist(), "y2": y2.tolist(),
                 "pm1":  [round(float(v), 3) for v in pm1],
@@ -1513,14 +1587,23 @@ if ("_tite_results" in st.session_state
 
     st.markdown("---")
     st.subheader("First CRM trial — decision walkthrough")
-    st.caption(
-        "This trace covers the first simulated TITE-CRM trial only. "
-        "At each decision point the model uses all available partial follow-up "
-        "(TITE weights) to update its safety estimates for both tox1 and tox2. "
-        "A dose is eligible only if it appears safe for **both** endpoints "
-        "(joint EWOC rule). The highest eligible dose is then selected, "
-        "subject to guardrails."
-    )
+    _ewoc_on_flag = bool(st.session_state.get("ewoc_on", True))
+    _ewoc_alpha   = float(st.session_state.get("ewoc_alpha", 0.25))
+    if _ewoc_on_flag:
+        st.caption(
+            f"**EWOC ON (α = {_ewoc_alpha:.2f})** — At each decision the model filters "
+            "doses to those where P(tox1 > target) < α **and** P(tox2 > target) < α "
+            "(joint safety rule). The **highest** jointly admissible dose is then selected, "
+            "subject to max-step and guardrail constraints."
+        )
+    else:
+        st.caption(
+            "**EWOC OFF** — No overdose-probability filter is applied. "
+            "Among all doses (subject to step and guardrail constraints), the model picks "
+            "the dose whose posterior mean P(tox1) is **closest to target1** "
+            "(standard CRM argmin rule). This is target-based and does not automatically "
+            "escalate to the highest dose."
+        )
 
     # ── helper: compute per-patient TITE weight at a given decision day ───────
     def _w1(pt, day):
@@ -1605,6 +1688,7 @@ if ("_tite_results" in st.session_state
                 "Next dose":     f"L{_d['next_dose']}",
                 "Highest tried": f"L{_d['highest_tried']}",
                 "Burn-in":       "Yes" if _d["burn_in"] else "No",
+                "EWOC mode":     _d.get("ewoc_mode", "?"),
                 "Obs tox1":      _d["obs_t1"],
                 "Obs tox2":      _d["obs_t2"],
                 "N surgery":     _d["n_surgery"],
@@ -1619,8 +1703,10 @@ if ("_tite_results" in st.session_state
         st.caption(
             "Post mean = posterior mean toxicity probability at each dose level. "
             "OD prob = posterior probability that the true toxicity exceeds the target. "
-            "A dose is allowed only if BOTH OD prob tox1 < EWOC alpha AND "
-            "OD prob tox2 < EWOC alpha (joint safety rule)."
+            "**EWOC ON**: a dose is allowed only if BOTH OD prob tox1 < α AND "
+            "OD prob tox2 < α; the highest allowed dose is selected. "
+            "**EWOC OFF**: no OD filter — the dose with post mean tox1 closest to "
+            "target1 is selected (argmin rule)."
         )
 
     # ── Trace plots ────────────────────────────────────────────────────────────
