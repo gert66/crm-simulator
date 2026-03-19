@@ -1,8 +1,11 @@
-"""design_exploration.py — self-contained TITE-CRM simulation core
-Copied/adapted from sim_tite.py (cannot be imported: top-level st calls).
-No Streamlit UI here — pure simulation logic only.
+"""design_exploration.py — TITE-CRM Design Exploration / Parameter Sweep
+Simulation functions copied/adapted from sim_tite.py (cannot be imported:
+top-level st calls).  Run with: streamlit run design_exploration.py
 """
 import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import streamlit as st
 
 MONTH = 30.0
 
@@ -316,3 +319,207 @@ def run_parameter_sweep(param_name, param_values, base_ss,
         ))
 
     return pd.DataFrame(rows)
+
+
+# ==============================================================================
+# Streamlit UI
+# ==============================================================================
+
+st.set_page_config(page_title="Design Exploration – TITE-CRM", layout="wide")
+st.title("TITE-CRM Design Exploration")
+st.caption("Sweep one design parameter while holding all others fixed. "
+           "Metrics are averaged over repeated simulated trials.")
+
+_N_LEVELS = 5
+_DEFAULT_T1 = [0.05, 0.10, 0.15, 0.22, 0.30]
+_DEFAULT_T2 = [0.10, 0.20, 0.33, 0.45, 0.55]
+
+# ── Sidebar: base scenario ────────────────────────────────────────────────────
+with st.sidebar:
+    st.header("Base Scenario")
+
+    st.subheader("True toxicity rates")
+    cols = st.columns(2)
+    true_t1, true_t2 = [], []
+    for i in range(_N_LEVELS):
+        c = cols[i % 2]
+        true_t1.append(c.number_input(f"Tox1 L{i}", 0.0, 1.0, _DEFAULT_T1[i],
+                                       step=0.01, key=f"t1_{i}"))
+        true_t2.append(c.number_input(f"Tox2 L{i}", 0.0, 1.0, _DEFAULT_T2[i],
+                                       step=0.01, key=f"t2_{i}"))
+
+    st.subheader("Targets & accrual")
+    target_tox1 = st.number_input("Target Tox1", 0.01, 0.99, 0.15, step=0.01)
+    target_tox2 = st.number_input("Target Tox2", 0.01, 0.99, 0.33, step=0.01)
+    p_surgery   = st.number_input("P(surgery)",  0.0,  1.0,  0.80, step=0.01)
+    accrual     = st.number_input("Accrual/month", 0.1, 10.0, 1.5, step=0.1)
+
+    st.subheader("CRM settings")
+    sigma_base  = st.number_input("Sigma",       0.1, 5.0, 1.0, step=0.1)
+    ewoc_on     = st.checkbox("EWOC ON", value=True)
+    ewoc_alpha  = st.number_input("EWOC α", 0.05, 0.60, 0.25, step=0.01,
+                                   disabled=not ewoc_on)
+    max_n       = st.number_input("Max N",        6, 120, 27, step=1)
+    cohort_sz   = st.number_input("Cohort size",  1,  12,  3, step=1)
+    start_lvl   = st.number_input("Start level",  0, _N_LEVELS - 1, 0, step=1)
+
+    st.subheader("Timing (days)")
+    incl_to_rt  = st.number_input("Incl → RT",       0, 180,  21, step=1)
+    rt_dur      = st.number_input("RT duration",      1,  90,  14, step=1)
+    rt_to_surg  = st.number_input("RT end → Surgery", 0, 365,  84, step=1)
+    tox2_win    = st.number_input("Tox2 window",      7, 180,  30, step=1)
+
+    st.subheader("Prior / skeleton")
+    hw_t1 = st.number_input("Halfwidth Tox1", 0.01, 0.40, 0.10, step=0.01)
+    nu_t1 = st.number_input("Prior nu Tox1",  1, _N_LEVELS, 3, step=1)
+    hw_t2 = st.number_input("Halfwidth Tox2", 0.01, 0.40, 0.10, step=0.01)
+    nu_t2 = st.number_input("Prior nu Tox2",  1, _N_LEVELS, 3, step=1)
+    burn_in           = st.checkbox("Burn-in",              value=True)
+    enforce_guardrail = st.checkbox("Guardrail",            value=True)
+    restrict_final    = st.checkbox("Restrict MTD to tried",value=True)
+
+# Compute skeletons
+try:
+    skel_t1 = dfcrm_getprior(hw_t1, target_tox1, nu_t1, _N_LEVELS)
+    skel_t2 = dfcrm_getprior(hw_t2, target_tox2, nu_t2, _N_LEVELS)
+    _skel_ok = True
+except Exception as e:
+    st.error(f"Skeleton error: {e}")
+    _skel_ok = False
+    skel_t1 = skel_t2 = None
+
+true_t1_arr = np.asarray(true_t1)
+true_t2_arr = np.asarray(true_t2)
+
+# True optimal dose banner
+if _skel_ok:
+    opt = _true_optimal(true_t1_arr, true_t2_arr, target_tox1, target_tox2)
+    st.info(f"True optimal dose (argmin max-excess): **L{opt}** — "
+            f"Tox1 = {true_t1[opt]:.3f}, Tox2 = {true_t2[opt]:.3f}")
+
+# ── Sweep controls ────────────────────────────────────────────────────────────
+st.subheader("Parameter Sweep")
+
+ctrl_col, _ = st.columns([2, 3])
+with ctrl_col:
+    param_name = st.selectbox(
+        "Parameter to sweep",
+        ["sigma", "ewoc_alpha", "max_n", "cohort_size"],
+        format_func={"sigma": "Sigma (prior precision)",
+                     "ewoc_alpha": "EWOC α (overdose threshold)",
+                     "max_n": "Max N (sample size)",
+                     "cohort_size": "Cohort size"}.get,
+    )
+
+    if param_name == "sigma":
+        c1, c2, c3 = st.columns(3)
+        sig_min = c1.number_input("Min σ", 0.1, 4.9, 0.3, step=0.1)
+        sig_max = c2.number_input("Max σ", sig_min + 0.1, 5.0, 2.0, step=0.1)
+        sig_pts = c3.slider("Points", 3, 20, 8)
+        _param_values = np.linspace(sig_min, sig_max, sig_pts).tolist()
+        param_label   = "Sigma (σ)"
+        param_type    = "continuous"
+
+    elif param_name == "ewoc_alpha":
+        c1, c2, c3 = st.columns(3)
+        ea_min = c1.number_input("Min α", 0.05, 0.55, 0.15, step=0.01)
+        ea_max = c2.number_input("Max α", ea_min + 0.01, 0.60, 0.45, step=0.01)
+        ea_pts = c3.slider("Points", 3, 20, 8)
+        inc_off = st.checkbox("Include EWOC OFF", value=True)
+        _param_values = ([None] if inc_off else []) + \
+                        np.linspace(ea_min, ea_max, ea_pts).tolist()
+        param_label   = "EWOC α"
+        param_type    = "continuous"
+
+    elif param_name == "max_n":
+        _param_values = st.multiselect(
+            "Max N values", [12, 15, 18, 21, 24, 27, 30, 33, 36],
+            default=[18, 21, 24, 27, 30])
+        param_label = "Max N"
+        param_type  = "discrete"
+
+    else:  # cohort_size
+        _param_values = st.multiselect(
+            "Cohort sizes", [1, 2, 3, 4, 5, 6], default=[1, 2, 3, 4])
+        param_label = "Cohort size"
+        param_type  = "discrete"
+
+    st.divider()
+    n_sim_input = st.slider("n_sim (per point)", 50, 2000, 200, step=50)
+    seed_val    = st.number_input("Seed", 0, 99999, 42, step=1)
+    speed_mode  = st.checkbox(
+        "Speed mode",
+        help="Cuts n_sim to max(50, n_sim÷4); caps grid to ≤8 continuous / ≤3 discrete.")
+
+    # Apply speed mode
+    if speed_mode:
+        n_sim_eff = max(50, int(n_sim_input) // 4)
+        pv_eff = (_param_values[:8] if param_type == "continuous"
+                  else _param_values[:3])
+        st.caption(f"Speed mode — {n_sim_eff} sims × {len(pv_eff)} points")
+    else:
+        n_sim_eff = int(n_sim_input)
+        pv_eff    = _param_values
+        st.caption(f"{n_sim_eff} sims × {len(pv_eff)} points = "
+                   f"{n_sim_eff * len(pv_eff):,} total trials")
+
+    run_btn = st.button("▶ Run Sweep", type="primary",
+                        disabled=not _skel_ok or len(pv_eff) == 0)
+
+# ── Run & display results ─────────────────────────────────────────────────────
+if run_btn and _skel_ok and len(pv_eff) > 0:
+    base_ss = dict(
+        target_tox1=target_tox1, target_tox2=target_tox2,
+        p_surgery=p_surgery, sigma=sigma_base,
+        ewoc_on=ewoc_on, ewoc_alpha=ewoc_alpha,
+        max_n=int(max_n), cohort_size=int(cohort_sz),
+        start_level=int(start_lvl), accrual_per_month=accrual,
+        incl_to_rt=int(incl_to_rt), rt_dur=int(rt_dur),
+        rt_to_surg=int(rt_to_surg), tox2_win=int(tox2_win),
+        max_step=1, gh_n=61,
+        burn_in=burn_in, enforce_guardrail=enforce_guardrail,
+        restrict_final_to_tried=restrict_final,
+    )
+    with st.spinner(f"Running {n_sim_eff * len(pv_eff):,} trials…"):
+        df = run_parameter_sweep(
+            param_name, pv_eff, base_ss,
+            true_t1_arr, true_t2_arr, skel_t1, skel_t2,
+            n_sim_eff, int(seed_val))
+    st.session_state["_de_df"]    = df
+    st.session_state["_de_label"] = param_label
+
+if "_de_df" in st.session_state:
+    df  = st.session_state["_de_df"]
+    lbl = st.session_state["_de_label"]
+
+    # ── Three line charts ──────────────────────────────────────────────────
+    fig, axes = plt.subplots(1, 3, figsize=(13, 3.6))
+    x = np.arange(len(df))
+    specs = [
+        ("quality_score",        "Quality score",      "#2563eb"),
+        ("pct_correct_selection","% Correct selection","#16a34a"),
+        ("overdose_rate",        "Overdose rate (%)",  "#dc2626"),
+    ]
+    for ax, (col, ylabel, color) in zip(axes, specs):
+        ax.plot(x, df[col].values, marker="o", color=color, lw=2, ms=5)
+        ax.set_xticks(x)
+        ax.set_xticklabels(df["param_label"].tolist(),
+                           rotation=35 if len(x) > 6 else 0,
+                           ha="right", fontsize=8)
+        ax.set_xlabel(lbl, fontsize=9)
+        ax.set_title(ylabel, fontsize=10, fontweight="bold")
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+        ax.grid(axis="y", lw=0.5, alpha=0.3)
+    fig.tight_layout(pad=1.5)
+    st.pyplot(fig)
+    plt.close(fig)
+
+    # ── Summary table ──────────────────────────────────────────────────────
+    disp = df[["param_label", "quality_score",
+               "pct_correct_selection", "overdose_rate"]].copy()
+    disp.columns = [lbl, "Quality score", "% Correct selection", "Overdose rate (%)"]
+    disp["Quality score"]         = disp["Quality score"].round(4)
+    disp["% Correct selection"]   = disp["% Correct selection"].round(1)
+    disp["Overdose rate (%)"]     = disp["Overdose rate (%)"].round(1)
+    st.dataframe(disp, use_container_width=True, hide_index=True)
