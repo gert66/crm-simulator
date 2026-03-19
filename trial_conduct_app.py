@@ -1012,14 +1012,30 @@ with st.expander("Patient Data", expanded=True):
     if not existing_rows:
         existing_rows = [dict(_empty_row)]
 
+    dose_labels_now = _setup().get("dose_labels", ["L1"])
+
+    # ── Build DataFrame with dtypes Streamlit data_editor expects ────────────
+    _DATE_COLS = ["inclusion_date", "surgery_date", "tox1_date",
+                  "tox2_date", "last_followup_date"]
+    _STR_COLS  = ["patient_id", "dose_level", "tox1_event", "tox2_event", "notes"]
+
     df_edit = pd.DataFrame(existing_rows)
 
-    # Ensure all columns present
+    # Ensure all columns present with correct defaults
     for col, default in _empty_row.items():
         if col not in df_edit.columns:
             df_edit[col] = default
 
-    dose_labels_now = _setup().get("dose_labels", ["L1"])
+    # Date columns → datetime64[ns]  (NaT for missing); DateColumn requires this
+    for col in _DATE_COLS:
+        df_edit[col] = pd.to_datetime(df_edit[col], errors="coerce")
+
+    # Bool column
+    df_edit["surgery_done"] = df_edit["surgery_done"].fillna(False).astype(bool)
+
+    # String columns
+    for col in _STR_COLS:
+        df_edit[col] = df_edit[col].fillna("").astype(str)
 
     edited_df = st.data_editor(
         df_edit,
@@ -1047,21 +1063,21 @@ with st.expander("Patient Data", expanded=True):
         key="_patient_editor",
     )
 
-    # Sync edited dataframe back to state
-    new_rows = edited_df.to_dict(orient="records")
-    # Convert pandas NaT / NaN to None and dates
+    # ── Read back: convert Timestamps → datetime.date, NaT/NaN → None ────────
     cleaned_rows: list[dict] = []
-    for row in new_rows:
+    for row in edited_df.to_dict(orient="records"):
         r: dict = {}
         for k, v in row.items():
-            if hasattr(v, "isnull") and v.isnull():
+            if v is pd.NaT or (isinstance(v, float) and np.isnan(v)):
                 r[k] = None
-            elif hasattr(v, "item"):          # numpy scalar
+            elif hasattr(v, "date") and callable(v.date):
+                # pandas Timestamp → datetime.date
+                try:
+                    r[k] = v.date()
+                except Exception:
+                    r[k] = None
+            elif hasattr(v, "item"):  # numpy scalar
                 r[k] = v.item()
-            elif v is pd.NaT:
-                r[k] = None
-            elif isinstance(v, float) and np.isnan(v):
-                r[k] = None
             else:
                 r[k] = v
         cleaned_rows.append(r)
