@@ -1962,10 +1962,9 @@ def run_parameter_sweep(param_name, param_values, base_ss,
             kw["max_n"] = int(pv)
             label = str(int(pv))
         elif param_name == "cohort_size":
-            # pv is the total number of patients (= n_cohorts × baseline cohort_size).
-            # Cohort size stays fixed at the baseline value; only max_n changes.
-            kw["max_n"] = int(pv)
-            # kw["cohort_size"] already set to baseline in base_kw — do not override
+            # pv is the cohort size: number of patients treated before each
+            # new dose decision.  max_n (total trial size) stays fixed.
+            kw["cohort_size"] = int(pv)
             label = str(int(pv))
         else:
             raise ValueError(f"Unknown param_name: {param_name!r}")
@@ -2001,25 +2000,23 @@ def run_parameter_sweep(param_name, param_values, base_ss,
 def _plot_sweep_results(df, param_label, param_name="", param_info=None):
     """Render the three-panel sweep results chart.
 
-    X-axis labels:
-    - max_n sweep      : patient count ("18 pts", "21 pts", …)
-    - cohort_size sweep: total patients per point ("3 pts", "6 pts", …);
-                         cohort size fixed, so n_patients varies across points
-    - sigma / ewoc     : parameter value; fixed N shown in xlabel
+    X-axis semantics:
+    - max_n       : total patient count ("18", "21", …) — directly the quantity
+    - cohort_size : cohort size values (1, 2, 3, …) — patients per dose decision
+    - sigma/ewoc  : parameter value; fixed N shown in xlabel
     """
     param_info = param_info or {}
     fig, axes  = plt.subplots(1, 3, figsize=(13, 3.6))
     x          = np.arange(len(df))
 
-    # Build x-axis tick labels that reflect patient count where possible
     if param_name == "max_n":
-        xtick_labels = [f"{v} pts" for v in df["n_patients"].tolist()]
-        xlabel = "Total patients (max N)"
+        xtick_labels = [str(v) for v in df["n_patients"].tolist()]
+        xlabel = "Maximum total patients in trial (max N)"
     elif param_name == "cohort_size":
-        # n_patients varies: it equals n_cohorts × baseline_cohort_size
-        cs = param_info.get("cohort_size", "?")
-        xtick_labels = [f"{v} pts" for v in df["n_patients"].tolist()]
-        xlabel = f"Total patients  (cohort size = {cs} pts, fixed)"
+        # n_patients is constant (fixed max_n); x-axis shows cohort sizes.
+        n_fixed = int(df["n_patients"].iloc[0])
+        xtick_labels = df["param_label"].tolist()
+        xlabel = f"Cohort size — patients per dose decision  (max N = {n_fixed})"
     else:
         n_fixed = int(df["n_patients"].iloc[0])
         xtick_labels = df["param_label"].tolist()
@@ -2290,19 +2287,50 @@ if view == "Design Exploration":
             )
 
     # ── Sweep controls ────────────────────────────────────────────────────
+    # Short description shown under the selectbox for each parameter.
+    _DE_PARAM_DESCRIPTIONS = {
+        "sigma": (
+            "Varying the **prior uncertainty** on the dose-toxicity slope "
+            "(σ on θ).  A larger σ = wider prior = faster dose escalation.  "
+            "Max N and cohort size stay fixed."
+        ),
+        "ewoc_alpha": (
+            "Varying the **EWOC overdose threshold** α.  α is the maximum "
+            "acceptable posterior probability that the selected dose exceeds "
+            "the target toxicity rate.  Smaller α = more conservative.  "
+            "Max N and cohort size stay fixed."
+        ),
+        "max_n": (
+            "Varying the **maximum total number of patients** in the trial.  "
+            "Cohort size and all other settings stay fixed."
+        ),
+        "cohort_size": (
+            "Varying the **cohort size**: how many patients are enrolled and "
+            "observed before the model makes the next dose-level decision.  "
+            "The total max N stays fixed — only the decision frequency changes."
+        ),
+    }
+
     _de_ctrl, _ = st.columns([2, 3])
     with _de_ctrl:
         _de_param = st.selectbox(
             "Parameter to sweep",
             ["sigma", "ewoc_alpha", "max_n", "cohort_size"],
             format_func={
-                "sigma":       "σ — Prior sigma on theta",
-                "ewoc_alpha":  "EWOC α — Overdose threshold",
-                "max_n":       "Max N — CRM sample size",
-                "cohort_size": "Cohort size",
+                "sigma":       "Prior sigma (σ)",
+                "ewoc_alpha":  "EWOC α — overdose threshold",
+                "max_n":       "Maximum sample size (max N)",
+                "cohort_size": "Cohort size — patients per dose decision",
             }.get,
             key="de_param_name",
+            help=(
+                "Choose which single design parameter to vary.  "
+                "All other parameters are held at their current "
+                "Essentials / Playground values."
+            ),
         )
+        # Per-parameter explanatory caption
+        st.caption(_DE_PARAM_DESCRIPTIONS[_de_param])
 
         if _de_param == "sigma":
             _c1, _c2, _c3 = st.columns(3)
@@ -2336,33 +2364,33 @@ if view == "Design Exploration":
             _de_ptype   = "continuous"
 
         elif _de_param == "max_n":
+            _de_mn_baseline = int(_ss.get("max_n_crm", R_DEFAULTS["max_n_crm"]))
+            st.caption(
+                f"Baseline max N from Essentials = **{_de_mn_baseline}**.  "
+                "Select the total patient counts you want to compare."
+            )
             _de_pv = st.multiselect(
-                "Max N values to sweep",
+                "Total patient counts to sweep",
                 [12, 15, 18, 21, 24, 27, 30, 33, 36],
                 default=[18, 21, 24, 27, 30],
                 key="de_max_n_vals",
             )
-            _de_label = "Max N"
+            _de_label = "Maximum total patients (max N)"
             _de_ptype = "discrete"
 
-        else:  # cohort_size — sweep total patients, cohort size stays fixed
-            _de_cs_fixed  = int(_ss.get("cohort_size", R_DEFAULTS["cohort_size"]))
-            _de_mn_fixed  = int(_ss.get("max_n_crm",   R_DEFAULTS["max_n_crm"]))
-            _de_n_coh_max = max(1, _de_mn_fixed // _de_cs_fixed)
-            # Auto-generate all valid total-N values = 1×cs, 2×cs, …, n_max
-            _de_all_n = [_de_cs_fixed * k for k in range(1, _de_n_coh_max + 1)]
+        else:  # cohort_size
+            _de_mn_baseline = int(_ss.get("max_n_crm", R_DEFAULTS["max_n_crm"]))
             st.caption(
-                f"Cohort size fixed at **{_de_cs_fixed} pts/cohort** "
-                f"(from Essentials) · max N = {_de_mn_fixed} → "
-                f"{_de_n_coh_max} possible cohort{'s' if _de_n_coh_max!=1 else ''}"
+                f"Max N fixed at **{_de_mn_baseline}** (from Essentials).  "
+                "Select the cohort sizes you want to compare."
             )
             _de_pv = st.multiselect(
-                "Total patients to evaluate",
-                _de_all_n,
-                default=_de_all_n,   # default: all multiples up to max N
+                "Cohort sizes to sweep (patients per dose decision)",
+                [1, 2, 3, 4, 5, 6],
+                default=[1, 2, 3, 4],
                 key="de_cohort_vals",
             )
-            _de_label = f"Total patients (cohort = {_de_cs_fixed} pts, fixed)"
+            _de_label = "Cohort size (patients per dose decision)"
             _de_ptype = "discrete"
 
         st.divider()
