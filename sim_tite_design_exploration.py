@@ -1868,11 +1868,13 @@ def _quality_score(selected, true_t1, true_t2, target1, target2):
 
 
 def _true_optimal(true_t1, true_t2, target1, target2):
-    """Dose minimising max(true_t1[d]-target1, true_t2[d]-target2)."""
-    excess = [max(float(true_t1[d]) - float(target1),
-                  float(true_t2[d]) - float(target2))
+    """Dose with highest quality score under the same asymmetric loss used in
+    _quality_score (overdose penalised 1.8×, underdose 1.0×).
+    Consistent with the quality metric so 'correct selection' and 'quality
+    score' agree on what the best dose is."""
+    scores = [_quality_score(d, true_t1, true_t2, target1, target2)
               for d in range(len(true_t1))]
-    return int(np.argmin(excess))
+    return int(np.argmax(scores))
 
 
 # ------------------------------------------------------------------------------
@@ -1978,6 +1980,7 @@ def run_parameter_sweep(param_name, param_values, base_ss,
         rows.append(dict(
             param_label=label,
             param_raw=pv,
+            n_patients=int(kw["max_n"]),          # actual max-N for this point
             quality_score=float(np.mean(scores)),
             pct_correct_selection=float(np.mean(correct)) * 100.0,
             overdose_rate=float(np.mean(overdosed)) * 100.0,
@@ -1992,10 +1995,30 @@ def run_parameter_sweep(param_name, param_values, base_ss,
 # Returns a matplotlib Figure; caller is responsible for st.pyplot / plt.close.
 # ------------------------------------------------------------------------------
 
-def _plot_sweep_results(df, param_label):
-    """Render the three-panel sweep results chart."""
+def _plot_sweep_results(df, param_label, param_name=""):
+    """Render the three-panel sweep results chart.
+
+    X-axis labels:
+    - max_n sweep  : shows patient count directly ("18 pts", "21 pts", …)
+    - cohort_size  : shows cohort size with max-N in the axis title
+    - sigma / ewoc : shows parameter value; adds fixed N as axis subtitle
+    """
     fig, axes = plt.subplots(1, 3, figsize=(13, 3.6))
     x = np.arange(len(df))
+
+    # Build x-axis tick labels that reflect patient count where possible
+    if param_name == "max_n":
+        xtick_labels = [f"{v} pts" for v in df["n_patients"].tolist()]
+        xlabel = "Max N (patients)"
+    elif param_name == "cohort_size":
+        n_fixed = int(df["n_patients"].iloc[0])
+        xtick_labels = [f"coh={v}" for v in df["param_label"].tolist()]
+        xlabel = f"Cohort size  (max N = {n_fixed} pts)"
+    else:
+        n_fixed = int(df["n_patients"].iloc[0])
+        xtick_labels = df["param_label"].tolist()
+        xlabel = f"{param_label}  (N = {n_fixed} pts)"
+
     specs = [
         ("quality_score",         "Quality score",       "#2563eb"),
         ("pct_correct_selection", "% Correct selection", "#16a34a"),
@@ -2004,10 +2027,10 @@ def _plot_sweep_results(df, param_label):
     for ax, (col, ylabel, color) in zip(axes, specs):
         ax.plot(x, df[col].values, marker="o", color=color, lw=2, ms=5)
         ax.set_xticks(x)
-        ax.set_xticklabels(df["param_label"].tolist(),
+        ax.set_xticklabels(xtick_labels,
                            rotation=35 if len(x) > 6 else 0,
                            ha="right", fontsize=8)
-        ax.set_xlabel(param_label, fontsize=9)
+        ax.set_xlabel(xlabel, fontsize=9)
         ax.set_title(ylabel, fontsize=10, fontweight="bold")
         ax.spines["top"].set_visible(False)
         ax.spines["right"].set_visible(False)
@@ -2218,17 +2241,47 @@ if view == "Design Exploration":
 
     # ── True optimal dose + baseline summary ──────────────────────────────
     if _de_skel_ok:
-        _de_opt = _true_optimal(_de_t1, _de_t2,
-                                float(_ss["target_t1"]),
-                                float(_ss["target_t2"]))
+        _de_tgt1 = float(_ss["target_t1"])
+        _de_tgt2 = float(_ss["target_t2"])
+        _de_opt  = _true_optimal(_de_t1, _de_t2, _de_tgt1, _de_tgt2)
         _ewoc_str = (f"ON α={float(_ss['ewoc_alpha']):.2f}"
                      if bool(_ss.get("ewoc_on", True)) else "OFF")
         st.info(
-            f"True optimal dose (min max-excess): **L{_de_opt}** — "
+            f"True optimal dose (highest quality score): **L{_de_opt}** — "
             f"Tox1 = {_de_t1[_de_opt]:.3f},  Tox2 = {_de_t2[_de_opt]:.3f}\n\n"
             f"Baseline — σ = {float(_ss['sigma']):.2f} · EWOC {_ewoc_str} · "
             f"max N = {int(_ss['max_n_crm'])} · cohort = {int(_ss['cohort_size'])}"
         )
+
+        # ── Debug: per-dose loss table ─────────────────────────────────────
+        with st.expander("Debug — per-dose loss / quality scores", expanded=False):
+            _de_debug_rows = []
+            for _di in range(len(_de_t1)):
+                _d1  = float(_de_t1[_di]) - _de_tgt1
+                _d2  = float(_de_t2[_di]) - _de_tgt2
+                _bd  = max(_d1, _d2)
+                _w   = 1.8 if _bd > 0 else 1.0
+                _loss = _w * abs(_bd)
+                _qs   = float(np.exp(-6.0 * _loss))
+                _de_debug_rows.append({
+                    "Dose": f"L{_di}",
+                    "True Tox1": round(float(_de_t1[_di]), 3),
+                    "True Tox2": round(float(_de_t2[_di]), 3),
+                    "diff1 (t1−target)": round(_d1, 3),
+                    "diff2 (t2−target)": round(_d2, 3),
+                    "binding diff": round(_bd, 3),
+                    "weight": _w,
+                    "loss": round(_loss, 4),
+                    "quality score": round(_qs, 4),
+                    "optimal ★": "★" if _di == _de_opt else "",
+                })
+            st.dataframe(pd.DataFrame(_de_debug_rows), hide_index=True,
+                         use_container_width=True)
+            st.caption(
+                "loss = weight × |binding_diff|  ·  "
+                "weight = 1.8 if overdose, 1.0 if underdose  ·  "
+                "quality_score = exp(−6 × loss)"
+            )
 
     # ── Sweep controls ────────────────────────────────────────────────────
     _de_ctrl, _ = st.columns([2, 3])
@@ -2361,21 +2414,68 @@ if view == "Design Exploration":
                 _de_t1, _de_t2, _de_sk1, _de_sk2,
                 _de_n_eff, int(_de_seed),
             )
-        _ss["_de_df"]    = _de_result_df
-        _ss["_de_label"] = _de_label
+        _ss["_de_df"]        = _de_result_df
+        _ss["_de_label"]     = _de_label
+        _ss["_de_param_key"] = _de_param   # needed so results block can pass it
+
+    # ── Metric help strings ───────────────────────────────────────────────
+    _HELP_QS = (
+        "**Quality score** (0–1, higher = better)\n\n"
+        "Measures how close the model-selected dose is to the true optimum, "
+        "using an asymmetric exponential loss:\n\n"
+        "1. For each trial compute diff1 = true_tox1[selected] − target_tox1 "
+        "and diff2 = true_tox2[selected] − target_tox2.\n"
+        "2. binding_diff = max(diff1, diff2)  — the worst endpoint.\n"
+        "3. weight = **1.8** if binding_diff > 0 (overdose), **1.0** if ≤ 0 (underdose).\n"
+        "4. loss = weight × |binding_diff|\n"
+        "5. score = exp(−6 × loss)\n\n"
+        "A score of 1.0 means the selected dose is exactly at target; "
+        "overdoses are penalised 1.8× more than underdoses. "
+        "Average over all simulations."
+    )
+    _HELP_CS = (
+        "**% Correct selection** (0–100 %, higher = better)\n\n"
+        "Percentage of simulated trials in which the TITE-CRM selected the "
+        "true optimal dose level.\n\n"
+        "The true optimal is defined as the dose with the **highest quality score** "
+        "(same asymmetric loss as above). This is consistent with the quality "
+        "score metric — both agree on what 'best' means.\n\n"
+        "A higher value means the algorithm reliably homes in on the right dose."
+    )
+    _HELP_OR = (
+        "**Overdose rate** (0–100 %, lower = better)\n\n"
+        "Percentage of simulated trials in which the selected dose exceeded "
+        "at least one toxicity target:\n\n"
+        "  overdose = max(true_tox1[selected] − target_tox1,\n"
+        "                 true_tox2[selected] − target_tox2) > 0\n\n"
+        "An overdose does **not** mean a catastrophic outcome — it means the "
+        "selected dose is slightly above the target probability. "
+        "The EWOC constraint is the primary guardrail against large overdoses. "
+        "Lower is safer."
+    )
 
     # ── Display results ───────────────────────────────────────────────────
     if "_de_df" in _ss:
-        _df  = _ss["_de_df"]
-        _lbl = _ss["_de_label"]
+        _df       = _ss["_de_df"]
+        _lbl      = _ss["_de_label"]
+        _pkey     = _ss.get("_de_param_key", "")
 
-        _fig = _plot_sweep_results(_df, _lbl)
+        _fig = _plot_sweep_results(_df, _lbl, _pkey)
         st.pyplot(_fig)
         plt.close(_fig)
 
-        _disp = _df[["param_label", "quality_score",
+        # Metric header row with help tooltips
+        _mc1, _mc2, _mc3 = st.columns(3)
+        _mc1.markdown("**Quality score**",
+                      help=_HELP_QS)
+        _mc2.markdown("**% Correct selection**",
+                      help=_HELP_CS)
+        _mc3.markdown("**Overdose rate (%)**",
+                      help=_HELP_OR)
+
+        _disp = _df[["param_label", "n_patients", "quality_score",
                      "pct_correct_selection", "overdose_rate"]].copy()
-        _disp.columns = [_lbl, "Quality score",
+        _disp.columns = [_lbl, "N patients", "Quality score",
                          "% Correct selection", "Overdose rate (%)"]
         _disp["Quality score"]       = _disp["Quality score"].round(4)
         _disp["% Correct selection"] = _disp["% Correct selection"].round(1)
