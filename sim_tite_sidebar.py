@@ -1199,13 +1199,17 @@ elif view == "Playground":
                     f"<div style='font-size:0.83rem;padding-top:0.25rem;'>L{i} {lab}</div>",
                     unsafe_allow_html=True)
             with rT1:
-                v1 = st.number_input(f"T1 L{i}", 0.0, 1.0, step=0.01,
+                v1 = st.number_input(f"T1 L{i}", 0.0, 1.0,
+                                     value=float(st.session_state.get(TRUE_T1_KEYS[i], DEFAULT_TRUE_T1[i])),
+                                     step=0.01,
                                      key=TRUE_T1_KEYS[i],
                                      label_visibility="collapsed",
                                      help=f"True probability of acute toxicity at dose L{i}.")
                 true_t1.append(float(v1))
             with rT2:
-                v2 = st.number_input(f"T2 L{i}", 0.0, 1.0, step=0.01,
+                v2 = st.number_input(f"T2 L{i}", 0.0, 1.0,
+                                     value=float(st.session_state.get(TRUE_T2_KEYS[i], DEFAULT_TRUE_T2[i])),
+                                     step=0.01,
                                      key=TRUE_T2_KEYS[i],
                                      label_visibility="collapsed",
                                      help=f"True probability of subacute toxicity given surgery at L{i}.")
