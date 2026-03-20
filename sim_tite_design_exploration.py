@@ -1962,7 +1962,10 @@ def run_parameter_sweep(param_name, param_values, base_ss,
             kw["max_n"] = int(pv)
             label = str(int(pv))
         elif param_name == "cohort_size":
-            kw["cohort_size"] = int(pv)
+            # pv is the total number of patients (= n_cohorts × baseline cohort_size).
+            # Cohort size stays fixed at the baseline value; only max_n changes.
+            kw["max_n"] = int(pv)
+            # kw["cohort_size"] already set to baseline in base_kw — do not override
             label = str(int(pv))
         else:
             raise ValueError(f"Unknown param_name: {param_name!r}")
@@ -1995,25 +1998,28 @@ def run_parameter_sweep(param_name, param_values, base_ss,
 # Returns a matplotlib Figure; caller is responsible for st.pyplot / plt.close.
 # ------------------------------------------------------------------------------
 
-def _plot_sweep_results(df, param_label, param_name=""):
+def _plot_sweep_results(df, param_label, param_name="", param_info=None):
     """Render the three-panel sweep results chart.
 
     X-axis labels:
-    - max_n sweep  : shows patient count directly ("18 pts", "21 pts", …)
-    - cohort_size  : shows cohort size with max-N in the axis title
-    - sigma / ewoc : shows parameter value; adds fixed N as axis subtitle
+    - max_n sweep      : patient count ("18 pts", "21 pts", …)
+    - cohort_size sweep: total patients per point ("3 pts", "6 pts", …);
+                         cohort size fixed, so n_patients varies across points
+    - sigma / ewoc     : parameter value; fixed N shown in xlabel
     """
-    fig, axes = plt.subplots(1, 3, figsize=(13, 3.6))
-    x = np.arange(len(df))
+    param_info = param_info or {}
+    fig, axes  = plt.subplots(1, 3, figsize=(13, 3.6))
+    x          = np.arange(len(df))
 
     # Build x-axis tick labels that reflect patient count where possible
     if param_name == "max_n":
         xtick_labels = [f"{v} pts" for v in df["n_patients"].tolist()]
-        xlabel = "Max N (patients)"
+        xlabel = "Total patients (max N)"
     elif param_name == "cohort_size":
-        n_fixed = int(df["n_patients"].iloc[0])
-        xtick_labels = [f"coh={v}" for v in df["param_label"].tolist()]
-        xlabel = f"Cohort size  (max N = {n_fixed} pts)"
+        # n_patients varies: it equals n_cohorts × baseline_cohort_size
+        cs = param_info.get("cohort_size", "?")
+        xtick_labels = [f"{v} pts" for v in df["n_patients"].tolist()]
+        xlabel = f"Total patients  (cohort size = {cs} pts, fixed)"
     else:
         n_fixed = int(df["n_patients"].iloc[0])
         xtick_labels = df["param_label"].tolist()
@@ -2339,14 +2345,24 @@ if view == "Design Exploration":
             _de_label = "Max N"
             _de_ptype = "discrete"
 
-        else:  # cohort_size
+        else:  # cohort_size — sweep total patients, cohort size stays fixed
+            _de_cs_fixed  = int(_ss.get("cohort_size", R_DEFAULTS["cohort_size"]))
+            _de_mn_fixed  = int(_ss.get("max_n_crm",   R_DEFAULTS["max_n_crm"]))
+            _de_n_coh_max = max(1, _de_mn_fixed // _de_cs_fixed)
+            # Auto-generate all valid total-N values = 1×cs, 2×cs, …, n_max
+            _de_all_n = [_de_cs_fixed * k for k in range(1, _de_n_coh_max + 1)]
+            st.caption(
+                f"Cohort size fixed at **{_de_cs_fixed} pts/cohort** "
+                f"(from Essentials) · max N = {_de_mn_fixed} → "
+                f"{_de_n_coh_max} possible cohort{'s' if _de_n_coh_max!=1 else ''}"
+            )
             _de_pv = st.multiselect(
-                "Cohort sizes to sweep",
-                [1, 2, 3, 4, 5, 6],
-                default=[1, 2, 3, 4],
+                "Total patients to evaluate",
+                _de_all_n,
+                default=_de_all_n,   # default: all multiples up to max N
                 key="de_cohort_vals",
             )
-            _de_label = "Cohort size"
+            _de_label = f"Total patients (cohort = {_de_cs_fixed} pts, fixed)"
             _de_ptype = "discrete"
 
         st.divider()
@@ -2417,6 +2433,8 @@ if view == "Design Exploration":
         _ss["_de_df"]        = _de_result_df
         _ss["_de_label"]     = _de_label
         _ss["_de_param_key"] = _de_param   # needed so results block can pass it
+        # Store cohort_size used during this run for plot annotation
+        _ss["_de_cs_used"]   = int(_ss.get("cohort_size", R_DEFAULTS["cohort_size"]))
 
     # ── Metric help strings ───────────────────────────────────────────────
     _HELP_QS = (
@@ -2459,8 +2477,11 @@ if view == "Design Exploration":
         _df       = _ss["_de_df"]
         _lbl      = _ss["_de_label"]
         _pkey     = _ss.get("_de_param_key", "")
+        _p_info   = {"cohort_size": _ss.get("_de_cs_used",
+                                            int(_ss.get("cohort_size",
+                                                        R_DEFAULTS["cohort_size"])))}
 
-        _fig = _plot_sweep_results(_df, _lbl, _pkey)
+        _fig = _plot_sweep_results(_df, _lbl, _pkey, param_info=_p_info)
         st.pyplot(_fig)
         plt.close(_fig)
 
