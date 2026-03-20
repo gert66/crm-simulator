@@ -825,10 +825,70 @@ R_DEFAULTS = {
     "result_w_px":        RESULT_W_PX,
     # Decision trace (first CRM trial only)
     "show_crm_trace":     False,
+    # Playground prior-endpoint tab (must be initialised so the slider
+    # conditional never sees an undefined key on first Playground load)
+    "prior_ep_tab":       "Tox1 (acute)",
 }
 
 TRUE_T1_KEYS  = [f"true_t1_L{i}"  for i in range(5)]
 TRUE_T2_KEYS  = [f"true_t2_L{i}"  for i in range(5)]
+
+# All canonical config keys in one ordered list (used by helpers below)
+_ALL_CONFIG_KEYS = (
+    list(R_DEFAULTS.keys()) + TRUE_T1_KEYS + TRUE_T2_KEYS
+)
+
+# ==============================================================================
+# Single-source-of-truth state management
+# ==============================================================================
+
+def init_state() -> None:
+    """Initialise every shared parameter in session_state EXACTLY ONCE.
+
+    Called at the top of each script rerun.  Guards every key with
+    ``if key not in st.session_state`` so user edits are never clobbered.
+    """
+    for k, v in R_DEFAULTS.items():
+        if k not in st.session_state:
+            st.session_state[k] = v
+    for i, v in enumerate(DEFAULT_TRUE_T1):
+        k = TRUE_T1_KEYS[i]
+        if k not in st.session_state:
+            st.session_state[k] = v
+    for i, v in enumerate(DEFAULT_TRUE_T2):
+        k = TRUE_T2_KEYS[i]
+        if k not in st.session_state:
+            st.session_state[k] = v
+
+
+def get_config_value(key: str):
+    """Read *key* from the canonical session_state store.
+
+    Falls back to ``R_DEFAULTS`` so callers never see a KeyError even before
+    a widget has been rendered for the first time.
+    """
+    return st.session_state.get(key, R_DEFAULTS.get(key))
+
+
+def set_config_value(key: str, value) -> None:
+    """Write *value* into the canonical session_state store.
+
+    Only use this from callbacks or one-off logic, not on every rerun.
+    """
+    st.session_state[key] = value
+
+
+def _get_all_config() -> dict:
+    """Return a snapshot dict of every shared parameter from session_state.
+
+    Used by the debug expander and consistency checks.  Read-only — never
+    mutates session_state.
+    """
+    snap = {}
+    for k in _ALL_CONFIG_KEYS:
+        snap[k] = st.session_state.get(k, R_DEFAULTS.get(k, "—"))
+    return snap
+
 
 def h(key, desc, r_name=None):
     txt = desc
@@ -836,19 +896,12 @@ def h(key, desc, r_name=None):
         txt += f"\n\n*R equivalent: `{r_name}`*"
     return txt
 
-# Initialise session state on first run
-for k, v in R_DEFAULTS.items():
-    if k not in st.session_state:
-        st.session_state[k] = v
-for i, v in enumerate(DEFAULT_TRUE_T1):
-    if TRUE_T1_KEYS[i] not in st.session_state:
-        st.session_state[TRUE_T1_KEYS[i]] = v
-for i, v in enumerate(DEFAULT_TRUE_T2):
-    if TRUE_T2_KEYS[i] not in st.session_state:
-        st.session_state[TRUE_T2_KEYS[i]] = v
+# Initialise every shared key exactly once per session
+init_state()
 
 # ── Reset-to-defaults button ──────────────────────────────────────────────────
 def _do_reset():
+    """Restore every canonical key to its factory default."""
     for k, v in R_DEFAULTS.items():
         st.session_state[k] = v
     for i, v in enumerate(DEFAULT_TRUE_T1):
@@ -2537,3 +2590,99 @@ if view == "Design Exploration":
         _disp["% Correct selection"] = _disp["% Correct selection"].round(1)
         _disp["Overdose rate (%)"]   = _disp["Overdose rate (%)"].round(1)
         st.dataframe(_disp, use_container_width=True, hide_index=True)
+
+# ==============================================================================
+# State debug expander  (remove once synchronisation is verified)
+# ==============================================================================
+
+with st.expander("🔍 State debug", expanded=False):
+    _cfg = _get_all_config()
+
+    # ── Shared config snapshot ────────────────────────────────────────────────
+    st.markdown("#### Full shared config")
+    _study_keys = ["target_t1", "target_t2", "p_surgery", "start_level_1b",
+                   "n_sims", "seed", "accrual_per_month"]
+    _timing_keys = ["incl_to_rt", "rt_dur", "rt_to_surg", "tox2_win"]
+    _size_keys   = ["max_n_63", "max_n_crm", "cohort_size"]
+    _crm_keys    = ["sigma", "gh_n", "max_step", "burn_in", "ewoc_on",
+                    "ewoc_alpha", "enforce_guardrail", "restrict_final_mtd",
+                    "show_crm_trace"]
+    _prior_keys  = ["prior_model", "prior_target_t1", "halfwidth_t1",
+                    "prior_nu_t1", "prior_target_t2", "halfwidth_t2",
+                    "prior_nu_t2", "prior_ep_tab"]
+    _true_keys   = TRUE_T1_KEYS + TRUE_T2_KEYS
+
+    _db_c1, _db_c2, _db_c3 = st.columns(3)
+    with _db_c1:
+        st.markdown("**Study / Simulation**")
+        st.json({k: _cfg[k] for k in _study_keys})
+        st.markdown("**Timing**")
+        st.json({k: _cfg[k] for k in _timing_keys})
+        st.markdown("**Sample sizes**")
+        st.json({k: _cfg[k] for k in _size_keys})
+    with _db_c2:
+        st.markdown("**CRM settings**")
+        st.json({k: _cfg[k] for k in _crm_keys})
+        st.markdown("**Priors**")
+        st.json({k: _cfg[k] for k in _prior_keys})
+    with _db_c3:
+        st.markdown("**True tox1 by dose**")
+        st.json({k: _cfg[k] for k in TRUE_T1_KEYS})
+        st.markdown("**True tox2 by dose**")
+        st.json({k: _cfg[k] for k in TRUE_T2_KEYS})
+
+    st.divider()
+
+    # ── Essentials rendered values ────────────────────────────────────────────
+    st.markdown("#### Currently rendered — Essentials")
+    _ess_rendered = {k: _cfg[k] for k in _study_keys + _timing_keys + _size_keys + _crm_keys}
+    st.json(_ess_rendered)
+
+    st.divider()
+
+    # ── Playground rendered values ────────────────────────────────────────────
+    st.markdown("#### Currently rendered — Playground")
+    _pg_rendered = {k: _cfg[k] for k in _true_keys + _prior_keys}
+    _pg_rendered["target_t1_used_by_plot"] = _cfg["target_t1"]
+    _pg_rendered["target_t2_used_by_plot"] = _cfg["target_t2"]
+    st.json(_pg_rendered)
+
+    st.divider()
+
+    # ── Consistency check ─────────────────────────────────────────────────────
+    st.markdown("#### Consistency check")
+    _mismatches = []
+
+    # target_t1 / target_t2: must be identical across both views
+    # (they share the same session_state key, so any mismatch is a code bug)
+    for _ck in ["target_t1", "target_t2", "p_surgery", "sigma", "ewoc_alpha"]:
+        _ss_val  = st.session_state.get(_ck)
+        _cfg_val = _cfg.get(_ck)
+        if _ss_val != _cfg_val:
+            _mismatches.append(f"**{_ck}**: session_state={_ss_val!r} vs config={_cfg_val!r}")
+
+    # true_t1 widget return values vs session_state (built fresh each render)
+    for _ti, _tk in enumerate(TRUE_T1_KEYS):
+        _ss_v  = st.session_state.get(_tk)
+        _cfg_v = _cfg.get(_tk)
+        if _ss_v != _cfg_v:
+            _mismatches.append(f"**{_tk}**: session_state={_ss_v!r} vs config={_cfg_v!r}")
+    for _ti, _tk in enumerate(TRUE_T2_KEYS):
+        _ss_v  = st.session_state.get(_tk)
+        _cfg_v = _cfg.get(_tk)
+        if _ss_v != _cfg_v:
+            _mismatches.append(f"**{_tk}**: session_state={_ss_v!r} vs config={_cfg_v!r}")
+
+    # Prior sliders: config snapshot vs live session_state
+    for _pk in _prior_keys:
+        _ss_v  = st.session_state.get(_pk)
+        _cfg_v = _cfg.get(_pk)
+        if _ss_v != _cfg_v:
+            _mismatches.append(f"**{_pk}**: session_state={_ss_v!r} vs config={_cfg_v!r}")
+
+    if _mismatches:
+        st.warning("⚠️ Mismatch detected between session_state and config snapshot:")
+        for _m in _mismatches:
+            st.markdown(f"- {_m}")
+    else:
+        st.success("✅ All config keys match between session_state and config snapshot.")
