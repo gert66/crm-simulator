@@ -868,32 +868,35 @@ def _draw_timeline(incl_to_rt, rt_dur, rt_to_surg, tox2_win):
     ax.set_xlim(0, 1)
     ax.set_ylim(0, 1)
     ax.axis("off")
+    ax.set_facecolor("none")          # transparent axes background
 
     rt_start = incl_to_rt
     rt_end   = rt_start + rt_dur
     surg     = rt_end   + rt_to_surg
-    t1_end   = surg                    # tox1 window = rt_dur + rt_to_surg → ends at surgery
+    t1_end   = surg                    # tox1 window ends at surgery
     t2_end   = surg     + tox2_win
     total    = t2_end * 1.05
 
     def x(d): return float(d) / total
 
     y0, h_bar = 0.25, 0.50
+    # Each entry: (x_start, x_end, facecolor, alpha, legend_label)
+    # Bright, dark-mode-friendly palette with per-segment alpha.
     segments = [
-        (0,        rt_start, "#d0d0d0", "Incl→RT"),
-        (rt_start, rt_end,   "#4a90d9", "RT"),
-        (rt_start, t1_end,   "#ff9900", "Tox1 window"),
-        (rt_end,   surg,     "#d0d0d0", "RT end→Surgery"),
-        (surg,     t2_end,   "#e04040", "Tox2 window"),
+        (0,        rt_start, "#90caf9", 0.75, "Incl → RT start"),   # light blue
+        (rt_start, rt_end,   "#42a5f5", 0.90, "RT"),                 # bright blue
+        (rt_start, t1_end,   "#ffa726", 0.55, "Tox1 window"),        # amber overlay
+        (rt_end,   surg,     "#b0bec5", 0.75, "RT end → Surgery"),   # blue-grey
+        (surg,     t2_end,   "#ef5350", 0.80, "Tox2 window"),        # bright red
     ]
     plotted_labels = set()
     handles = []
-    for x0, x1, col, lbl in segments:
-        alpha = 0.55 if "window" in lbl else 0.30
+    for x0, x1, col, alpha, lbl in segments:
         bar = mpatches.FancyBboxPatch(
             (x(x0), y0), x(x1) - x(x0), h_bar,
             boxstyle="square,pad=0",
-            facecolor=col, alpha=alpha, edgecolor="none",
+            facecolor=col, alpha=alpha,
+            edgecolor="#ffffff", linewidth=0.5,   # thin white border
         )
         ax.add_patch(bar)
         if lbl not in plotted_labels:
@@ -904,11 +907,16 @@ def _draw_timeline(incl_to_rt, rt_dur, rt_to_surg, tox2_win):
                (surg, "Surgery"), (t2_end, "Done")]
     for d, lbl in markers:
         xp = x(d)
-        ax.axvline(xp, ymin=0.20, ymax=0.80, color="#555", lw=0.8)
-        ax.text(xp, 0.05, lbl, ha="center", va="bottom", fontsize=6.5, color="#444")
+        ax.axvline(xp, ymin=0.15, ymax=0.85,
+                   color="#ffffff", lw=1.0, alpha=0.85)
+        ax.text(xp, 0.04, lbl, ha="center", va="bottom",
+                fontsize=7.0, color="#ffffff", fontweight="bold")
 
-    ax.legend(handles=handles, loc="upper right", fontsize=7,
-              frameon=False, ncol=len(handles), bbox_to_anchor=(1, 1.1))
+    legend = ax.legend(handles=handles, loc="upper right", fontsize=7,
+                       frameon=False, ncol=len(handles),
+                       bbox_to_anchor=(1, 1.15))
+    plt.setp(legend.get_texts(), color="#ffffff")
+
     fig.patch.set_facecolor("none")
     fig.tight_layout(pad=0)
     return fig
