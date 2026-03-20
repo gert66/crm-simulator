@@ -1000,11 +1000,13 @@ if view == "Essentials":
         st.number_input(
             "Target tox1 (acute) rate",
             min_value=0.05, max_value=0.50, step=0.01, key="target_t1",
+            value=float(get_config_value("target_t1")),
             help=h("target_t1", "Target acute DLT probability for MTD definition.")
         )
         st.number_input(
             "Target tox2 (subacute | surgery) rate",
             min_value=0.05, max_value=0.50, step=0.01, key="target_t2",
+            value=float(get_config_value("target_t2")),
             help=h("target_t2",
                    "Target subacute DLT probability conditional on surgery. "
                    "Only surgery patients contribute to the tox2 model.")
@@ -1012,6 +1014,7 @@ if view == "Essentials":
         st.number_input(
             "Probability of surgery",
             min_value=0.0, max_value=1.0, step=0.01, key="p_surgery",
+            value=float(get_config_value("p_surgery")),
             help=h("p_surgery",
                    "Global probability that a patient proceeds to surgery. "
                    "Dose-independent. Subacute toxicity only observed in these patients.")
@@ -1019,6 +1022,7 @@ if view == "Essentials":
         st.number_input(
             "Start dose level (1-based)",
             min_value=1, max_value=5, step=1, key="start_level_1b",
+            value=int(get_config_value("start_level_1b")),
             help=h("start_level_1b", "Starting dose level (1 = lowest).")
         )
 
@@ -1026,16 +1030,19 @@ if view == "Essentials":
         st.number_input(
             "Number of simulated trials",
             min_value=50, max_value=5000, step=50, key="n_sims",
+            value=int(get_config_value("n_sims")),
             help=h("n_sims", "Replicates for the simulation study.")
         )
         st.number_input(
             "Random seed",
             min_value=1, max_value=10_000_000, step=1, key="seed",
+            value=int(get_config_value("seed")),
             help=h("seed", "Random seed for reproducibility.")
         )
         st.number_input(
             "Avg patients per month",
             min_value=0.1, max_value=20.0, step=0.1, key="accrual_per_month",
+            value=float(get_config_value("accrual_per_month")),
             help=h("accrual_per_month",
                    "Average accrual rate. Arrivals simulated as a Poisson process "
                    "(exponential inter-arrival times at this rate).")
@@ -1046,6 +1053,7 @@ if view == "Essentials":
         st.number_input(
             "Inclusion to RT start",
             min_value=0, max_value=180, step=1, key="incl_to_rt",
+            value=int(get_config_value("incl_to_rt")),
             help=h("incl_to_rt",
                    "Days from enrolment to start of radiotherapy. "
                    "Tox1 window begins at RT start. Default ≈ 3 weeks.")
@@ -1053,12 +1061,14 @@ if view == "Essentials":
         st.number_input(
             "Radiotherapy duration",
             min_value=1, max_value=60, step=1, key="rt_dur",
+            value=int(get_config_value("rt_dur")),
             help=h("rt_dur",
                    "Duration of radiotherapy in days. Default ≈ 2 weeks (10 fractions).")
         )
         st.number_input(
             "RT end to surgery",
             min_value=1, max_value=365, step=1, key="rt_to_surg",
+            value=int(get_config_value("rt_to_surg")),
             help=h("rt_to_surg",
                    "Days from end of radiotherapy to surgery. Default 84 days ≈ 12 weeks. "
                    "The tox1 (acute) follow-up window is derived as RT duration + this value, "
@@ -1067,6 +1077,7 @@ if view == "Essentials":
         st.number_input(
             "Tox2 follow-up window (days)",
             min_value=7, max_value=180, step=1, key="tox2_win",
+            value=int(get_config_value("tox2_win")),
             help=h("tox2_win",
                    "Post-surgery window for subacute toxicity assessment. Default 30 days.")
         )
@@ -1075,6 +1086,7 @@ if view == "Essentials":
         st.number_input(
             "Max sample size (6+3)",
             min_value=6, max_value=200, step=3, key="max_n_63",
+            value=int(get_config_value("max_n_63")),
             help=h("max_n_63",
                    "Maximum total enrolled patients in the 6+3 arm, including "
                    "bridging patients treated at lower doses while awaiting evaluability.")
@@ -1082,11 +1094,13 @@ if view == "Essentials":
         st.number_input(
             "Max sample size (CRM)",
             min_value=6, max_value=200, step=3, key="max_n_crm",
+            value=int(get_config_value("max_n_crm")),
             help=h("max_n_crm", "Maximum total enrolled patients in the TITE-CRM arm.")
         )
         st.number_input(
             "Cohort size (CRM)",
             min_value=1, max_value=12, step=1, key="cohort_size",
+            value=int(get_config_value("cohort_size")),
             help=h("cohort_size",
                    "Number of patients per CRM cohort. CRM updates after each "
                    "cohort is fully enrolled, using TITE weights at that moment.")
@@ -1109,6 +1123,7 @@ if view == "Essentials":
         st.slider(
             "Prior sigma on theta",
             min_value=0.2, max_value=5.0, step=0.1, key="sigma",
+            value=float(get_config_value("sigma")),
             help=h("sigma",
                    "SD of theta in the CRM prior (shared for both endpoints). "
                    "Larger = more diffuse prior.",
@@ -1145,6 +1160,7 @@ if view == "Essentials":
         st.number_input(
             "EWOC alpha",
             min_value=0.01, max_value=0.99, step=0.01, key="ewoc_alpha",
+            value=float(get_config_value("ewoc_alpha")),
             disabled=(not bool(st.session_state["ewoc_on"])),
             help=h("ewoc_alpha",
                    "EWOC threshold applied to both endpoints independently.")
@@ -1186,14 +1202,17 @@ if view == "Essentials":
     with _ar1:
         st.number_input("≥6 — esc if tox1 ≤", min_value=0, max_value=5,
                         step=1, key="a6_esc_max",
+                        value=int(get_config_value("a6_esc_max")),
                         help=h("a6_esc_max", "Phase 1 acute escalation threshold."))
     with _ar2:
         st.number_input("≥6 — stop if tox1 ≥", min_value=1, max_value=6,
                         step=1, key="a6_stop_min",
+                        value=int(get_config_value("a6_stop_min")),
                         help=h("a6_stop_min", "Phase 1 acute stopping threshold."))
     with _ar3:
         st.number_input("≥9 — esc if tox1 ≤", min_value=0, max_value=8,
                         step=1, key="a9_esc_max",
+                        value=int(get_config_value("a9_esc_max")),
                         help=h("a9_esc_max", "Phase 2 acute escalation threshold."))
 
     st.markdown(
@@ -1205,18 +1224,22 @@ if view == "Essentials":
     with _sr1:
         st.number_input("≥6 surg — esc if tox2 ≤", min_value=0, max_value=6,
                         step=1, key="s6_esc_max",
+                        value=int(get_config_value("s6_esc_max")),
                         help=h("s6_esc_max", "Phase 1 subacute escalation threshold."))
     with _sr2:
         st.number_input("≥6 surg — stop if tox2 ≥", min_value=1, max_value=6,
                         step=1, key="s6_stop_min",
+                        value=int(get_config_value("s6_stop_min")),
                         help=h("s6_stop_min", "Phase 1 subacute stopping threshold."))
     with _sr3:
         st.number_input("≥9 surg — esc if tox2 ≤", min_value=0, max_value=9,
                         step=1, key="s9_esc_max",
+                        value=int(get_config_value("s9_esc_max")),
                         help=h("s9_esc_max", "Phase 2 subacute escalation threshold."))
     with _sr4:
         st.number_input("≥9 surg — stop if tox2 ≥", min_value=1, max_value=9,
                         step=1, key="s9_stop_min",
+                        value=int(get_config_value("s9_stop_min")),
                         help=h("s9_stop_min", "Phase 2 subacute stopping threshold."))
 
     st.write("")
@@ -1266,6 +1289,7 @@ elif view == "Playground":
                 v1 = st.number_input(f"T1 L{i}", 0.0, 1.0,
                                      step=0.01,
                                      key=TRUE_T1_KEYS[i],
+                                     value=float(get_config_value(TRUE_T1_KEYS[i])),
                                      label_visibility="collapsed",
                                      help=f"True probability of acute toxicity at dose L{i}.")
                 true_t1.append(float(v1))
@@ -1273,6 +1297,7 @@ elif view == "Playground":
                 v2 = st.number_input(f"T2 L{i}", 0.0, 1.0,
                                      step=0.01,
                                      key=TRUE_T2_KEYS[i],
+                                     value=float(get_config_value(TRUE_T2_KEYS[i])),
                                      label_visibility="collapsed",
                                      help=f"True probability of subacute toxicity given surgery at L{i}.")
                 true_t2.append(float(v2))
@@ -1334,22 +1359,28 @@ elif view == "Playground":
         if ep_tab == "Tox1 (acute)":
             st.slider("Prior target (tox1)", 0.05, 0.50, step=0.01,
                       key="prior_target_t1",
+                      value=float(get_config_value("prior_target_t1")),
                       help=h("prior_target_t1", "Target probability for the tox1 skeleton."))
             st.slider("Halfwidth (tox1)", 0.01, float(_max_hw1), step=0.01,
                       key="halfwidth_t1",
+                      value=float(min(get_config_value("halfwidth_t1"), float(_max_hw1))),
                       help=h("halfwidth_t1", "Skeleton steepness. target ± halfwidth must stay in (0,1)."))
             st.slider("Prior MTD level (tox1, 1-based)", 1, 5, step=1,
                       key="prior_nu_t1",
+                      value=int(get_config_value("prior_nu_t1")),
                       help=h("prior_nu_t1", "Dose level a priori closest to the tox1 target."))
         else:
             st.slider("Prior target (tox2)", 0.05, 0.50, step=0.01,
                       key="prior_target_t2",
+                      value=float(get_config_value("prior_target_t2")),
                       help=h("prior_target_t2", "Target probability for the tox2 skeleton."))
             st.slider("Halfwidth (tox2)", 0.01, float(_max_hw2), step=0.01,
                       key="halfwidth_t2",
+                      value=float(min(get_config_value("halfwidth_t2"), float(_max_hw2))),
                       help=h("halfwidth_t2", "Skeleton steepness. target ± halfwidth must stay in (0,1)."))
             st.slider("Prior MTD level (tox2, 1-based)", 1, 5, step=1,
                       key="prior_nu_t2",
+                      value=int(get_config_value("prior_nu_t2")),
                       help=h("prior_nu_t2", "Dose level a priori closest to the tox2 conditional target."))
 
         # Compute skeletons for preview and simulation
