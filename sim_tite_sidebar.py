@@ -743,10 +743,6 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-  [data-testid="stSidebar"]       { display: none; }
-  [data-testid="stSidebarNav"]    { display: none; }
-  [data-testid="collapsedControl"]{ display: none; }
-
   .block-container { padding-top: 2.6rem; padding-bottom: 0.5rem; }
   .element-container { margin-bottom: 0.12rem; }
 
