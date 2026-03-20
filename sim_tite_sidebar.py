@@ -916,13 +916,12 @@ def _draw_timeline(incl_to_rt, rt_dur, rt_to_surg, tox2_win):
 # Navigation (sidebar)
 # ==============================================================================
 
-with st.sidebar:
-    st.markdown("## Navigation")
-    view = st.radio(
-        "View",
-        options=["Essentials", "Playground"],
-        label_visibility="collapsed",
-    )
+view = st.sidebar.selectbox(
+    "View",
+    options=["Essentials", "Playground"],
+    key="nav_view",
+    label_visibility="collapsed",
+)
 
 # ==============================================================================
 # ESSENTIALS VIEW
@@ -936,11 +935,13 @@ if view == "Essentials":
         st.number_input(
             "Target tox1 (acute) rate",
             min_value=0.05, max_value=0.50, step=0.01, key="target_t1",
+            value=float(st.session_state.get("target_t1", R_DEFAULTS["target_t1"])),
             help=h("target_t1", "Target acute DLT probability for MTD definition.")
         )
         st.number_input(
             "Target tox2 (subacute | surgery) rate",
             min_value=0.05, max_value=0.50, step=0.01, key="target_t2",
+            value=float(st.session_state.get("target_t2", R_DEFAULTS["target_t2"])),
             help=h("target_t2",
                    "Target subacute DLT probability conditional on surgery. "
                    "Only surgery patients contribute to the tox2 model.")
@@ -948,6 +949,7 @@ if view == "Essentials":
         st.number_input(
             "Probability of surgery",
             min_value=0.0, max_value=1.0, step=0.01, key="p_surgery",
+            value=float(st.session_state.get("p_surgery", R_DEFAULTS["p_surgery"])),
             help=h("p_surgery",
                    "Global probability that a patient proceeds to surgery. "
                    "Dose-independent. Subacute toxicity only observed in these patients.")
@@ -955,6 +957,7 @@ if view == "Essentials":
         st.number_input(
             "Start dose level (1-based)",
             min_value=1, max_value=5, step=1, key="start_level_1b",
+            value=int(st.session_state.get("start_level_1b", R_DEFAULTS["start_level_1b"])),
             help=h("start_level_1b", "Starting dose level (1 = lowest).")
         )
 
@@ -962,16 +965,19 @@ if view == "Essentials":
         st.number_input(
             "Number of simulated trials",
             min_value=50, max_value=5000, step=50, key="n_sims",
+            value=int(st.session_state.get("n_sims", R_DEFAULTS["n_sims"])),
             help=h("n_sims", "Replicates for the simulation study.")
         )
         st.number_input(
             "Random seed",
             min_value=1, max_value=10_000_000, step=1, key="seed",
+            value=int(st.session_state.get("seed", R_DEFAULTS["seed"])),
             help=h("seed", "Random seed for reproducibility.")
         )
         st.number_input(
             "Avg patients per month",
             min_value=0.1, max_value=20.0, step=0.1, key="accrual_per_month",
+            value=float(st.session_state.get("accrual_per_month", R_DEFAULTS["accrual_per_month"])),
             help=h("accrual_per_month",
                    "Average accrual rate. Arrivals simulated as a Poisson process "
                    "(exponential inter-arrival times at this rate).")
@@ -982,6 +988,7 @@ if view == "Essentials":
         st.number_input(
             "Inclusion to RT start",
             min_value=0, max_value=180, step=1, key="incl_to_rt",
+            value=int(st.session_state.get("incl_to_rt", R_DEFAULTS["incl_to_rt"])),
             help=h("incl_to_rt",
                    "Days from enrolment to start of radiotherapy. "
                    "Tox1 window begins at RT start. Default ≈ 3 weeks.")
@@ -989,12 +996,14 @@ if view == "Essentials":
         st.number_input(
             "Radiotherapy duration",
             min_value=1, max_value=60, step=1, key="rt_dur",
+            value=int(st.session_state.get("rt_dur", R_DEFAULTS["rt_dur"])),
             help=h("rt_dur",
                    "Duration of radiotherapy in days. Default ≈ 2 weeks (10 fractions).")
         )
         st.number_input(
             "RT end to surgery",
             min_value=1, max_value=365, step=1, key="rt_to_surg",
+            value=int(st.session_state.get("rt_to_surg", R_DEFAULTS["rt_to_surg"])),
             help=h("rt_to_surg",
                    "Days from end of radiotherapy to surgery. Default 84 days ≈ 12 weeks. "
                    "The tox1 (acute) follow-up window is derived as RT duration + this value, "
@@ -1003,6 +1012,7 @@ if view == "Essentials":
         st.number_input(
             "Tox2 follow-up window (days)",
             min_value=7, max_value=180, step=1, key="tox2_win",
+            value=int(st.session_state.get("tox2_win", R_DEFAULTS["tox2_win"])),
             help=h("tox2_win",
                    "Post-surgery window for subacute toxicity assessment. Default 30 days.")
         )
@@ -1011,6 +1021,7 @@ if view == "Essentials":
         st.number_input(
             "Max sample size (6+3)",
             min_value=6, max_value=200, step=3, key="max_n_63",
+            value=int(st.session_state.get("max_n_63", R_DEFAULTS["max_n_63"])),
             help=h("max_n_63",
                    "Maximum total enrolled patients in the 6+3 arm, including "
                    "bridging patients treated at lower doses while awaiting evaluability.")
@@ -1018,11 +1029,13 @@ if view == "Essentials":
         st.number_input(
             "Max sample size (CRM)",
             min_value=6, max_value=200, step=3, key="max_n_crm",
+            value=int(st.session_state.get("max_n_crm", R_DEFAULTS["max_n_crm"])),
             help=h("max_n_crm", "Maximum total enrolled patients in the TITE-CRM arm.")
         )
         st.number_input(
             "Cohort size (CRM)",
             min_value=1, max_value=12, step=1, key="cohort_size",
+            value=int(st.session_state.get("cohort_size", R_DEFAULTS["cohort_size"])),
             help=h("cohort_size",
                    "Number of patients per CRM cohort. CRM updates after each "
                    "cohort is fully enrolled, using TITE weights at that moment.")
@@ -1033,18 +1046,21 @@ if view == "Essentials":
         st.selectbox(
             "Gauss–Hermite points",
             options=[31, 41, 61, 81], key="gh_n",
+            index=[31, 41, 61, 81].index(st.session_state.get("gh_n", R_DEFAULTS["gh_n"])),
             help=h("gh_n",
                    "Quadrature points for CRM posterior. Higher = more accurate, slower.")
         )
         st.selectbox(
             "Max dose step per update",
             options=[1, 2], key="max_step",
+            index=[1, 2].index(st.session_state.get("max_step", R_DEFAULTS["max_step"])),
             help=h("max_step",
                    "Max dose levels the CRM can move per cohort update.")
         )
         st.slider(
             "Prior sigma on theta",
             min_value=0.2, max_value=5.0, step=0.1, key="sigma",
+            value=float(st.session_state.get("sigma", R_DEFAULTS["sigma"])),
             help=h("sigma",
                    "SD of theta in the CRM prior (shared for both endpoints). "
                    "Larger = more diffuse prior.",
@@ -1055,11 +1071,13 @@ if view == "Essentials":
         st.toggle(
             "Guardrail: next dose ≤ highest tried + 1",
             key="enforce_guardrail",
+            value=bool(st.session_state.get("enforce_guardrail", R_DEFAULTS["enforce_guardrail"])),
             help=h("enforce_guardrail", "Prevent skipping untried dose levels.")
         )
         st.toggle(
             "Final MTD must be among tried doses",
             key="restrict_final_mtd",
+            value=bool(st.session_state.get("restrict_final_mtd", R_DEFAULTS["restrict_final_mtd"])),
             help=h("restrict_final_mtd",
                    "Restrict final MTD selection to doses where n > 0.")
         )
@@ -1068,6 +1086,7 @@ if view == "Essentials":
         st.toggle(
             "Burn-in until first tox1 DLT",
             key="burn_in",
+            value=bool(st.session_state.get("burn_in", R_DEFAULTS["burn_in"])),
             help=h("burn_in",
                    "Escalate one level at a time until the first observed acute DLT, "
                    "then switch to CRM updates.")
@@ -1075,12 +1094,14 @@ if view == "Essentials":
         st.toggle(
             "Enable EWOC joint overdose control",
             key="ewoc_on",
+            value=bool(st.session_state.get("ewoc_on", R_DEFAULTS["ewoc_on"])),
             help=h("ewoc_on",
                    "Restrict doses where BOTH P(tox1 OD) and P(tox2 OD) < EWOC alpha.")
         )
         st.number_input(
             "EWOC alpha",
             min_value=0.01, max_value=0.99, step=0.01, key="ewoc_alpha",
+            value=float(st.session_state.get("ewoc_alpha", R_DEFAULTS["ewoc_alpha"])),
             disabled=(not bool(st.session_state["ewoc_on"])),
             help=h("ewoc_alpha",
                    "EWOC threshold applied to both endpoints independently.")
@@ -1090,6 +1111,7 @@ if view == "Essentials":
         st.toggle(
             "Explain first CRM trial",
             key="show_crm_trace",
+            value=bool(st.session_state.get("show_crm_trace", R_DEFAULTS["show_crm_trace"])),
             help=h("show_crm_trace",
                    "When ON, shows a detailed walkthrough for the first simulated "
                    "CRM trial only: which dose each patient received, what follow-up "
@@ -1122,14 +1144,17 @@ if view == "Essentials":
     with _ar1:
         st.number_input("≥6 — esc if tox1 ≤", min_value=0, max_value=5,
                         step=1, key="a6_esc_max",
+                        value=int(st.session_state.get("a6_esc_max", R_DEFAULTS["a6_esc_max"])),
                         help=h("a6_esc_max", "Phase 1 acute escalation threshold."))
     with _ar2:
         st.number_input("≥6 — stop if tox1 ≥", min_value=1, max_value=6,
                         step=1, key="a6_stop_min",
+                        value=int(st.session_state.get("a6_stop_min", R_DEFAULTS["a6_stop_min"])),
                         help=h("a6_stop_min", "Phase 1 acute stopping threshold."))
     with _ar3:
         st.number_input("≥9 — esc if tox1 ≤", min_value=0, max_value=8,
                         step=1, key="a9_esc_max",
+                        value=int(st.session_state.get("a9_esc_max", R_DEFAULTS["a9_esc_max"])),
                         help=h("a9_esc_max", "Phase 2 acute escalation threshold."))
 
     st.markdown(
@@ -1141,18 +1166,22 @@ if view == "Essentials":
     with _sr1:
         st.number_input("≥6 surg — esc if tox2 ≤", min_value=0, max_value=6,
                         step=1, key="s6_esc_max",
+                        value=int(st.session_state.get("s6_esc_max", R_DEFAULTS["s6_esc_max"])),
                         help=h("s6_esc_max", "Phase 1 subacute escalation threshold."))
     with _sr2:
         st.number_input("≥6 surg — stop if tox2 ≥", min_value=1, max_value=6,
                         step=1, key="s6_stop_min",
+                        value=int(st.session_state.get("s6_stop_min", R_DEFAULTS["s6_stop_min"])),
                         help=h("s6_stop_min", "Phase 1 subacute stopping threshold."))
     with _sr3:
         st.number_input("≥9 surg — esc if tox2 ≤", min_value=0, max_value=9,
                         step=1, key="s9_esc_max",
+                        value=int(st.session_state.get("s9_esc_max", R_DEFAULTS["s9_esc_max"])),
                         help=h("s9_esc_max", "Phase 2 subacute escalation threshold."))
     with _sr4:
         st.number_input("≥9 surg — stop if tox2 ≥", min_value=1, max_value=9,
                         step=1, key="s9_stop_min",
+                        value=int(st.session_state.get("s9_stop_min", R_DEFAULTS["s9_stop_min"])),
                         help=h("s9_stop_min", "Phase 2 subacute stopping threshold."))
 
     st.write("")
