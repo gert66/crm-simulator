@@ -738,7 +738,7 @@ def run_tite_6plus3(
 st.set_page_config(
     page_title="TITE dual-endpoint simulator",
     layout="wide",
-    initial_sidebar_state="collapsed",
+    initial_sidebar_state="expanded",
 )
 
 st.markdown("""
