@@ -864,11 +864,15 @@ def _draw_timeline(incl_to_rt, rt_dur, rt_to_surg, tox2_win):
     Tox1 window is derived as rt_dur + rt_to_surg, so it ends exactly at
     surgery — the same derivation used in the simulation.
     """
+    _BG = "#f5f5f5"   # fixed light background — readable on any Streamlit theme
+    _FG = "#1a1a1a"   # dark foreground for text / markers
+
     fig, ax = plt.subplots(figsize=(9.0, 0.9), dpi=120)
+    fig.patch.set_facecolor(_BG)
     ax.set_xlim(0, 1)
     ax.set_ylim(0, 1)
     ax.axis("off")
-    ax.set_facecolor("none")          # transparent axes background
+    ax.set_facecolor(_BG)
 
     rt_start = incl_to_rt
     rt_end   = rt_start + rt_dur
@@ -881,13 +885,13 @@ def _draw_timeline(incl_to_rt, rt_dur, rt_to_surg, tox2_win):
 
     y0, h_bar = 0.25, 0.50
     # Each entry: (x_start, x_end, facecolor, alpha, legend_label)
-    # Bright, dark-mode-friendly palette with per-segment alpha.
+    # Saturated palette chosen to contrast well on the light background.
     segments = [
-        (0,        rt_start, "#90caf9", 0.75, "Incl → RT start"),   # light blue
-        (rt_start, rt_end,   "#42a5f5", 0.90, "RT"),                 # bright blue
-        (rt_start, t1_end,   "#ffa726", 0.55, "Tox1 window"),        # amber overlay
-        (rt_end,   surg,     "#b0bec5", 0.75, "RT end → Surgery"),   # blue-grey
-        (surg,     t2_end,   "#ef5350", 0.80, "Tox2 window"),        # bright red
+        (0,        rt_start, "#64b5f6", 0.85, "Incl → RT start"),   # medium blue
+        (rt_start, rt_end,   "#1565c0", 0.90, "RT"),                 # dark blue
+        (rt_start, t1_end,   "#ff8f00", 0.55, "Tox1 window"),        # amber overlay
+        (rt_end,   surg,     "#78909c", 0.80, "RT end → Surgery"),   # blue-grey
+        (surg,     t2_end,   "#c62828", 0.85, "Tox2 window"),        # dark red
     ]
     plotted_labels = set()
     handles = []
@@ -896,7 +900,7 @@ def _draw_timeline(incl_to_rt, rt_dur, rt_to_surg, tox2_win):
             (x(x0), y0), x(x1) - x(x0), h_bar,
             boxstyle="square,pad=0",
             facecolor=col, alpha=alpha,
-            edgecolor="#ffffff", linewidth=0.5,   # thin white border
+            edgecolor="#bdbdbd", linewidth=0.5,
         )
         ax.add_patch(bar)
         if lbl not in plotted_labels:
@@ -908,17 +912,16 @@ def _draw_timeline(incl_to_rt, rt_dur, rt_to_surg, tox2_win):
     for d, lbl in markers:
         xp = x(d)
         ax.axvline(xp, ymin=0.15, ymax=0.85,
-                   color="#ffffff", lw=1.0, alpha=0.85)
+                   color=_FG, lw=0.8, alpha=0.6)
         ax.text(xp, 0.04, lbl, ha="center", va="bottom",
-                fontsize=7.0, color="#ffffff", fontweight="bold")
+                fontsize=7.0, color=_FG, fontweight="bold")
 
     legend = ax.legend(handles=handles, loc="upper right", fontsize=7,
                        frameon=False, ncol=len(handles),
                        bbox_to_anchor=(1, 1.15))
-    plt.setp(legend.get_texts(), color="#ffffff")
+    plt.setp(legend.get_texts(), color=_FG)
 
-    fig.patch.set_facecolor("none")
-    fig.tight_layout(pad=0)
+    fig.tight_layout(pad=0.15)
     return fig
 
 # ==============================================================================
@@ -1512,7 +1515,8 @@ if view == "Playground" and "_tite_results" in st.session_state:
             ax.axvline(ts, lw=1, alpha=0.6, label=f"True safe=L{ts}")
         compact_style(ax)
         ax.legend(fontsize=8, frameon=False)
-        st.image(fig_to_png_bytes(fig), width=int(st.session_state["result_w_px"]))
+        fig.tight_layout(pad=0.4)
+        st.image(fig_to_png_bytes(fig), use_container_width=True)
 
     with r2:
         fig, (ax_n, ax_s) = plt.subplots(2, 1,
@@ -1538,7 +1542,7 @@ if view == "Playground" and "_tite_results" in st.session_state:
         ax_s.legend(fontsize=7, frameon=False)
 
         fig.tight_layout(pad=0.4)
-        st.image(fig_to_png_bytes(fig), width=int(st.session_state["result_w_px"]))
+        st.image(fig_to_png_bytes(fig), use_container_width=True)
 
     with r3:
         mc1, mc2 = st.columns(2, gap="small")
