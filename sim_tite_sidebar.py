@@ -912,166 +912,193 @@ def _draw_timeline(incl_to_rt, rt_dur, rt_to_surg, tox2_win):
     fig.tight_layout(pad=0)
     return fig
 
+# ==============================================================================
+# Navigation (sidebar)
+# ==============================================================================
+
 with st.sidebar:
-    st.markdown("#### Study endpoints")
-    st.number_input(
-        "Target tox1 (acute) rate",
-        min_value=0.05, max_value=0.50, step=0.01, key="target_t1",
-        help=h("target_t1", "Target acute DLT probability for MTD definition.")
-    )
-    st.number_input(
-        "Target tox2 (subacute | surgery) rate",
-        min_value=0.05, max_value=0.50, step=0.01, key="target_t2",
-        help=h("target_t2",
-               "Target subacute DLT probability conditional on surgery. "
-               "Only surgery patients contribute to the tox2 model.")
-    )
-    st.number_input(
-        "Probability of surgery",
-        min_value=0.0, max_value=1.0, step=0.01, key="p_surgery",
-        help=h("p_surgery",
-               "Global probability that a patient proceeds to surgery. "
-               "Dose-independent. Subacute toxicity only observed in these patients.")
-    )
-    st.number_input(
-        "Start dose level (1-based)",
-        min_value=1, max_value=5, step=1, key="start_level_1b",
-        help=h("start_level_1b", "Starting dose level (1 = lowest).")
-    )
-    st.markdown("#### Simulation")
-    st.number_input(
-        "Number of simulated trials",
-        min_value=50, max_value=5000, step=50, key="n_sims",
-        help=h("n_sims", "Replicates for the simulation study.")
-    )
-    st.number_input(
-        "Random seed",
-        min_value=1, max_value=10_000_000, step=1, key="seed",
-        help=h("seed", "Random seed for reproducibility.")
-    )
-    st.number_input(
-        "Avg patients per month",
-        min_value=0.1, max_value=20.0, step=0.1, key="accrual_per_month",
-        help=h("accrual_per_month",
-               "Average accrual rate. Arrivals simulated as a Poisson process "
-               "(exponential inter-arrival times at this rate).")
+    st.markdown("## Navigation")
+    view = st.radio(
+        "View",
+        options=["Essentials", "Playground"],
+        label_visibility="collapsed",
     )
 
-    st.markdown("#### Timing (days)")
-    st.number_input(
-        "Inclusion to RT start",
-        min_value=0, max_value=180, step=1, key="incl_to_rt",
-        help=h("incl_to_rt",
-               "Days from enrolment to start of radiotherapy. "
-               "Tox1 window begins at RT start. Default ≈ 3 weeks.")
-    )
-    st.number_input(
-        "Radiotherapy duration",
-        min_value=1, max_value=60, step=1, key="rt_dur",
-        help=h("rt_dur",
-               "Duration of radiotherapy in days. Default ≈ 2 weeks (10 fractions).")
-    )
-    st.number_input(
-        "RT end to surgery",
-        min_value=1, max_value=365, step=1, key="rt_to_surg",
-        help=h("rt_to_surg",
-               "Days from end of radiotherapy to surgery. Default 84 days ≈ 12 weeks. "
-               "The tox1 (acute) follow-up window is derived as RT duration + this value, "
-               "so it always extends from RT start to the moment of surgery.")
-    )
-    st.number_input(
-        "Tox2 follow-up window (days)",
-        min_value=7, max_value=180, step=1, key="tox2_win",
-        help=h("tox2_win",
-               "Post-surgery window for subacute toxicity assessment. Default 30 days.")
-    )
-    st.markdown("#### Sample size")
-    st.number_input(
-        "Max sample size (6+3)",
-        min_value=6, max_value=200, step=3, key="max_n_63",
-        help=h("max_n_63",
-               "Maximum total enrolled patients in the 6+3 arm, including "
-               "bridging patients treated at lower doses while awaiting evaluability.")
-    )
-    st.number_input(
-        "Max sample size (CRM)",
-        min_value=6, max_value=200, step=3, key="max_n_crm",
-        help=h("max_n_crm", "Maximum total enrolled patients in the TITE-CRM arm.")
-    )
-    st.number_input(
-        "Cohort size (CRM)",
-        min_value=1, max_value=12, step=1, key="cohort_size",
-        help=h("cohort_size",
-               "Number of patients per CRM cohort. CRM updates after each "
-               "cohort is fully enrolled, using TITE weights at that moment.")
-    )
+# ==============================================================================
+# ESSENTIALS VIEW
+# ==============================================================================
 
-    st.markdown("#### CRM integration")
-    st.selectbox(
-        "Gauss–Hermite points",
-        options=[31, 41, 61, 81], key="gh_n",
-        help=h("gh_n",
-               "Quadrature points for CRM posterior. Higher = more accurate, slower.")
-    )
-    st.selectbox(
-        "Max dose step per update",
-        options=[1, 2], key="max_step",
-        help=h("max_step",
-               "Max dose levels the CRM can move per cohort update.")
-    )
-    st.slider(
-        "Prior sigma on theta",
-        min_value=0.2, max_value=5.0, step=0.1, key="sigma",
-        help=h("sigma",
-               "SD of theta in the CRM prior (shared for both endpoints). "
-               "Larger = more diffuse prior.",
-               r_name="prior.sigma / sigma")
-    )
-    st.markdown("#### CRM safety / selection")
-    st.toggle(
-        "Guardrail: next dose ≤ highest tried + 1",
-        key="enforce_guardrail",
-        help=h("enforce_guardrail", "Prevent skipping untried dose levels.")
-    )
-    st.toggle(
-        "Final MTD must be among tried doses",
-        key="restrict_final_mtd",
-        help=h("restrict_final_mtd",
-               "Restrict final MTD selection to doses where n > 0.")
-    )
-    st.markdown("#### CRM behaviour")
-    st.toggle(
-        "Burn-in until first tox1 DLT",
-        key="burn_in",
-        help=h("burn_in",
-               "Escalate one level at a time until the first observed acute DLT, "
-               "then switch to CRM updates.")
-    )
-    st.toggle(
-        "Enable EWOC joint overdose control",
-        key="ewoc_on",
-        help=h("ewoc_on",
-               "Restrict doses where BOTH P(tox1 OD) and P(tox2 OD) < EWOC alpha.")
-    )
-    st.number_input(
-        "EWOC alpha",
-        min_value=0.01, max_value=0.99, step=0.01, key="ewoc_alpha",
-        disabled=(not bool(st.session_state["ewoc_on"])),
-        help=h("ewoc_alpha",
-               "EWOC threshold applied to both endpoints independently.")
-    )
-    st.markdown("#### CRM decision trace")
-    st.toggle(
-        "Explain first CRM trial",
-        key="show_crm_trace",
-        help=h("show_crm_trace",
-               "When ON, shows a detailed walkthrough for the first simulated "
-               "CRM trial only: which dose each patient received, what follow-up "
-               "data were available at each decision point, how the model judged "
-               "safety for each dose level, and why the next dose was chosen. "
-               "Has no effect on the summary results across all simulated trials.")
-    )
+if view == "Essentials":
+    _ec1, _ec2, _ec3 = st.columns(3, gap="large")
 
+    with _ec1:
+        st.markdown("#### Study endpoints")
+        st.number_input(
+            "Target tox1 (acute) rate",
+            min_value=0.05, max_value=0.50, step=0.01, key="target_t1",
+            help=h("target_t1", "Target acute DLT probability for MTD definition.")
+        )
+        st.number_input(
+            "Target tox2 (subacute | surgery) rate",
+            min_value=0.05, max_value=0.50, step=0.01, key="target_t2",
+            help=h("target_t2",
+                   "Target subacute DLT probability conditional on surgery. "
+                   "Only surgery patients contribute to the tox2 model.")
+        )
+        st.number_input(
+            "Probability of surgery",
+            min_value=0.0, max_value=1.0, step=0.01, key="p_surgery",
+            help=h("p_surgery",
+                   "Global probability that a patient proceeds to surgery. "
+                   "Dose-independent. Subacute toxicity only observed in these patients.")
+        )
+        st.number_input(
+            "Start dose level (1-based)",
+            min_value=1, max_value=5, step=1, key="start_level_1b",
+            help=h("start_level_1b", "Starting dose level (1 = lowest).")
+        )
+
+        st.markdown("#### Simulation")
+        st.number_input(
+            "Number of simulated trials",
+            min_value=50, max_value=5000, step=50, key="n_sims",
+            help=h("n_sims", "Replicates for the simulation study.")
+        )
+        st.number_input(
+            "Random seed",
+            min_value=1, max_value=10_000_000, step=1, key="seed",
+            help=h("seed", "Random seed for reproducibility.")
+        )
+        st.number_input(
+            "Avg patients per month",
+            min_value=0.1, max_value=20.0, step=0.1, key="accrual_per_month",
+            help=h("accrual_per_month",
+                   "Average accrual rate. Arrivals simulated as a Poisson process "
+                   "(exponential inter-arrival times at this rate).")
+        )
+
+    with _ec2:
+        st.markdown("#### Timing (days)")
+        st.number_input(
+            "Inclusion to RT start",
+            min_value=0, max_value=180, step=1, key="incl_to_rt",
+            help=h("incl_to_rt",
+                   "Days from enrolment to start of radiotherapy. "
+                   "Tox1 window begins at RT start. Default ≈ 3 weeks.")
+        )
+        st.number_input(
+            "Radiotherapy duration",
+            min_value=1, max_value=60, step=1, key="rt_dur",
+            help=h("rt_dur",
+                   "Duration of radiotherapy in days. Default ≈ 2 weeks (10 fractions).")
+        )
+        st.number_input(
+            "RT end to surgery",
+            min_value=1, max_value=365, step=1, key="rt_to_surg",
+            help=h("rt_to_surg",
+                   "Days from end of radiotherapy to surgery. Default 84 days ≈ 12 weeks. "
+                   "The tox1 (acute) follow-up window is derived as RT duration + this value, "
+                   "so it always extends from RT start to the moment of surgery.")
+        )
+        st.number_input(
+            "Tox2 follow-up window (days)",
+            min_value=7, max_value=180, step=1, key="tox2_win",
+            help=h("tox2_win",
+                   "Post-surgery window for subacute toxicity assessment. Default 30 days.")
+        )
+
+        st.markdown("#### Sample size")
+        st.number_input(
+            "Max sample size (6+3)",
+            min_value=6, max_value=200, step=3, key="max_n_63",
+            help=h("max_n_63",
+                   "Maximum total enrolled patients in the 6+3 arm, including "
+                   "bridging patients treated at lower doses while awaiting evaluability.")
+        )
+        st.number_input(
+            "Max sample size (CRM)",
+            min_value=6, max_value=200, step=3, key="max_n_crm",
+            help=h("max_n_crm", "Maximum total enrolled patients in the TITE-CRM arm.")
+        )
+        st.number_input(
+            "Cohort size (CRM)",
+            min_value=1, max_value=12, step=1, key="cohort_size",
+            help=h("cohort_size",
+                   "Number of patients per CRM cohort. CRM updates after each "
+                   "cohort is fully enrolled, using TITE weights at that moment.")
+        )
+
+    with _ec3:
+        st.markdown("#### CRM integration")
+        st.selectbox(
+            "Gauss–Hermite points",
+            options=[31, 41, 61, 81], key="gh_n",
+            help=h("gh_n",
+                   "Quadrature points for CRM posterior. Higher = more accurate, slower.")
+        )
+        st.selectbox(
+            "Max dose step per update",
+            options=[1, 2], key="max_step",
+            help=h("max_step",
+                   "Max dose levels the CRM can move per cohort update.")
+        )
+        st.slider(
+            "Prior sigma on theta",
+            min_value=0.2, max_value=5.0, step=0.1, key="sigma",
+            help=h("sigma",
+                   "SD of theta in the CRM prior (shared for both endpoints). "
+                   "Larger = more diffuse prior.",
+                   r_name="prior.sigma / sigma")
+        )
+
+        st.markdown("#### CRM safety / selection")
+        st.toggle(
+            "Guardrail: next dose ≤ highest tried + 1",
+            key="enforce_guardrail",
+            help=h("enforce_guardrail", "Prevent skipping untried dose levels.")
+        )
+        st.toggle(
+            "Final MTD must be among tried doses",
+            key="restrict_final_mtd",
+            help=h("restrict_final_mtd",
+                   "Restrict final MTD selection to doses where n > 0.")
+        )
+
+        st.markdown("#### CRM behaviour")
+        st.toggle(
+            "Burn-in until first tox1 DLT",
+            key="burn_in",
+            help=h("burn_in",
+                   "Escalate one level at a time until the first observed acute DLT, "
+                   "then switch to CRM updates.")
+        )
+        st.toggle(
+            "Enable EWOC joint overdose control",
+            key="ewoc_on",
+            help=h("ewoc_on",
+                   "Restrict doses where BOTH P(tox1 OD) and P(tox2 OD) < EWOC alpha.")
+        )
+        st.number_input(
+            "EWOC alpha",
+            min_value=0.01, max_value=0.99, step=0.01, key="ewoc_alpha",
+            disabled=(not bool(st.session_state["ewoc_on"])),
+            help=h("ewoc_alpha",
+                   "EWOC threshold applied to both endpoints independently.")
+        )
+
+        st.markdown("#### CRM decision trace")
+        st.toggle(
+            "Explain first CRM trial",
+            key="show_crm_trace",
+            help=h("show_crm_trace",
+                   "When ON, shows a detailed walkthrough for the first simulated "
+                   "CRM trial only: which dose each patient received, what follow-up "
+                   "data were available at each decision point, how the model judged "
+                   "safety for each dose level, and why the next dose was chosen. "
+                   "Has no effect on the summary results across all simulated trials.")
+        )
+
+    st.markdown("---")
     st.markdown("#### 6+3 stopping rules")
     st.info(
         "**Modified 6+3 (TITE version) — full evaluability required.**\n\n"
@@ -1131,7 +1158,7 @@ with st.sidebar:
     st.write("")
     st.button("Reset to defaults", on_click=_do_reset)
 
-    # ── Timeline: rendered inside Essentials, spans full width below columns ──
+    st.markdown("---")
     st.markdown(
         "<div style='font-size:0.78rem;font-weight:600;color:#555;margin-top:0.3rem;'>"
         "Patient timeline (based on current timing settings)</div>",
@@ -1146,10 +1173,10 @@ with st.sidebar:
     st.image(fig_to_png_bytes(_tl_fig), use_container_width=True)
 
 # ==============================================================================
-# PLAYGROUND
+# PLAYGROUND VIEW
 # ==============================================================================
 
-with st.expander("Playground", expanded=True):
+elif view == "Playground":
     left, mid, right = st.columns([1.00, 1.02, 1.12], gap="large")
 
     # ── Left: true probabilities ──────────────────────────────────────────────
@@ -1318,141 +1345,141 @@ with st.expander("Playground", expanded=True):
         fig.tight_layout(pad=0.5)
         st.image(fig_to_png_bytes(fig), width=int(st.session_state["preview_w_px"]))
 
-# ==============================================================================
-# Run simulations
-# ==============================================================================
+    # ==============================================================================
+    # Run simulations
+    # ==============================================================================
 
-if "run" in locals() and run:
-    rng_master = np.random.default_rng(int(st.session_state["seed"]))
-    ns         = int(st.session_state["n_sims"])
-    start_0b   = int(np.clip(int(st.session_state["start_level_1b"]) - 1, 0, 4))
+    if run:
+        rng_master = np.random.default_rng(int(st.session_state["seed"]))
+        ns         = int(st.session_state["n_sims"])
+        start_0b   = int(np.clip(int(st.session_state["start_level_1b"]) - 1, 0, 4))
 
-    sel_63  = np.zeros(5, dtype=int)
-    sel_crm = np.zeros(5, dtype=int)
+        sel_63  = np.zeros(5, dtype=int)
+        sel_crm = np.zeros(5, dtype=int)
 
-    nmat_63  = np.zeros((ns, 5), dtype=float)
-    nmat_crm = np.zeros((ns, 5), dtype=float)
-    nsurg_63  = np.zeros((ns, 5), dtype=float)
-    nsurg_crm = np.zeros((ns, 5), dtype=float)
+        nmat_63  = np.zeros((ns, 5), dtype=float)
+        nmat_crm = np.zeros((ns, 5), dtype=float)
+        nsurg_63  = np.zeros((ns, 5), dtype=float)
+        nsurg_crm = np.zeros((ns, 5), dtype=float)
 
-    ya63  = np.zeros(ns); ys63  = np.zeros(ns); ns63  = np.zeros(ns)
-    yacrm = np.zeros(ns); yscrm = np.zeros(ns); nscrm = np.zeros(ns)
+        ya63  = np.zeros(ns); ys63  = np.zeros(ns); ns63  = np.zeros(ns)
+        yacrm = np.zeros(ns); yscrm = np.zeros(ns); nscrm = np.zeros(ns)
 
-    dur_63  = np.zeros(ns)
-    dur_crm = np.zeros(ns)
-    nbridg  = np.zeros(ns, dtype=int)
+        dur_63  = np.zeros(ns)
+        dur_crm = np.zeros(ns)
+        nbridg  = np.zeros(ns, dtype=int)
 
-    # tox1_win is derived: extends from RT start all the way to surgery
-    # = RT duration + (RT end → surgery) — no separate UI input needed
-    _tox1_win_derived = int(st.session_state["rt_dur"]) + int(st.session_state["rt_to_surg"])
+        # tox1_win is derived: extends from RT start all the way to surgery
+        # = RT duration + (RT end → surgery) — no separate UI input needed
+        _tox1_win_derived = int(st.session_state["rt_dur"]) + int(st.session_state["rt_to_surg"])
 
-    timing_kw = dict(
-        accrual_per_month = float(st.session_state["accrual_per_month"]),
-        incl_to_rt        = int(st.session_state["incl_to_rt"]),
-        rt_dur            = int(st.session_state["rt_dur"]),
-        rt_to_surg        = int(st.session_state["rt_to_surg"]),
-        tox1_win          = _tox1_win_derived,
-        tox2_win          = int(st.session_state["tox2_win"]),
-    )
-
-    for s in range(ns):
-        rng_s = np.random.default_rng(rng_master.integers(0, 2**31))
-
-        # ── TITE 6+3 ─────────────────────────────────────────────────────────
-        sel63, pts63, sd63, nb63 = run_tite_6plus3(
-            true_t1=true_t1, p_surgery=p_surg_val, true_t2=true_t2,
-            start_level=start_0b,
-            max_n=int(st.session_state["max_n_63"]),
-            a6_esc_max  = int(st.session_state["a6_esc_max"]),
-            a6_stop_min = int(st.session_state["a6_stop_min"]),
-            a9_esc_max  = int(st.session_state["a9_esc_max"]),
-            s6_esc_max  = int(st.session_state["s6_esc_max"]),
-            s6_stop_min = int(st.session_state["s6_stop_min"]),
-            s9_esc_max  = int(st.session_state["s9_esc_max"]),
-            s9_stop_min = int(st.session_state["s9_stop_min"]),
-            rng=rng_s, **timing_kw,
+        timing_kw = dict(
+            accrual_per_month = float(st.session_state["accrual_per_month"]),
+            incl_to_rt        = int(st.session_state["incl_to_rt"]),
+            rt_dur            = int(st.session_state["rt_dur"]),
+            rt_to_surg        = int(st.session_state["rt_to_surg"]),
+            tox1_win          = _tox1_win_derived,
+            tox2_win          = int(st.session_state["tox2_win"]),
         )
-        sel_63[sel63] += 1
-        for p in pts63:
-            nmat_63[s, p["dose"]]  += 1
-            nsurg_63[s, p["dose"]] += int(p["has_surgery"])
-            ya63[s]  += int(p["has_tox1"])
-            ys63[s]  += int(p["has_tox2"])
-            ns63[s]  += int(p["has_surgery"])
-        dur_63[s]  = sd63
-        nbridg[s]  = nb63
 
-        # ── TITE-CRM ─────────────────────────────────────────────────────────
-        rng_s2 = np.random.default_rng(rng_master.integers(0, 2**31))
-        selc, ptsc, sdc, trace_s = run_tite_crm(
-            true_t1=true_t1, p_surgery=p_surg_val, true_t2=true_t2,
-            target1=target_t1_val, target2=target_t2_val,
-            skel1=skel_t1, skel2=skel_t2,
-            sigma        = float(st.session_state["sigma"]),
-            start_level  = start_0b,
-            max_n        = int(st.session_state["max_n_crm"]),
-            cohort_size  = int(st.session_state["cohort_size"]),
-            max_step     = int(st.session_state["max_step"]),
-            gh_n         = int(st.session_state["gh_n"]),
-            enforce_guardrail      = bool(st.session_state["enforce_guardrail"]),
-            restrict_final_to_tried= bool(st.session_state["restrict_final_mtd"]),
-            ewoc_on      = bool(st.session_state["ewoc_on"]),
-            ewoc_alpha   = float(st.session_state["ewoc_alpha"]),
-            burn_in      = bool(st.session_state["burn_in"]),
-            rng=rng_s2, **timing_kw,
-            collect_trace=(s == 0),   # record full trace for first trial only
-        )
-        # Save first-trial trace for the decision walkthrough display
-        if s == 0:
-            _crm_trace_first = {
-                "patients":   ptsc,
-                "decisions":  trace_s,
-                "true_t1":    list(true_t1),
-                "true_t2":    list(true_t2),
-                "tox1_win":   _tox1_win_derived,
-                "tox2_win":   int(st.session_state["tox2_win"]),
-            }
-        sel_crm[selc] += 1
-        for p in ptsc:
-            nmat_crm[s, p["dose"]]  += 1
-            nsurg_crm[s, p["dose"]] += int(p["has_surgery"])
-            yacrm[s]  += int(p["has_tox1"])
-            yscrm[s]  += int(p["has_tox2"])
-            nscrm[s]  += int(p["has_surgery"])
-        dur_crm[s] = sdc
+        for s in range(ns):
+            rng_s = np.random.default_rng(rng_master.integers(0, 2**31))
 
-    # Store results
-    p63   = sel_63  / ns
-    pcrm  = sel_crm / ns
-    st.session_state["_tite_results"] = {
-        "p63":  p63, "pcrm": pcrm,
-        "avg_n63":      nmat_63.mean(axis=0),
-        "avg_ncrm":     nmat_crm.mean(axis=0),
-        "avg_nsurg63":  nsurg_63.mean(axis=0),
-        "avg_nsurgcrm": nsurg_crm.mean(axis=0),
-        "acute_rate_63":  ya63.sum()  / max(1, nmat_63.sum()),
-        "acute_rate_crm": yacrm.sum() / max(1, nmat_crm.sum()),
-        "sub_gs_rate_63":  ys63.sum()  / max(1, ns63.sum()),
-        "sub_gs_rate_crm": yscrm.sum() / max(1, nscrm.sum()),
-        "surg_rate_63":   ns63.mean()  / max(1, nmat_63.sum() / ns),
-        "surg_rate_crm":  nscrm.mean() / max(1, nmat_crm.sum() / ns),
-        "dur63_mean":  dur_63.mean()  / MONTH,
-        "dur63_med":   float(np.median(dur_63))  / MONTH,
-        "durcrm_mean": dur_crm.mean() / MONTH,
-        "durcrm_med":  float(np.median(dur_crm)) / MONTH,
-        "avg_bridging": float(nbridg.mean()),
-        "true_safe": true_safe,
-        "ns": ns,
-        "seed": int(st.session_state["seed"]),
-        "p_surgery": p_surg_val,
-        "crm_trace": _crm_trace_first,   # first-trial trace for walkthrough
-    }
+            # ── TITE 6+3 ─────────────────────────────────────────────────────
+            sel63, pts63, sd63, nb63 = run_tite_6plus3(
+                true_t1=true_t1, p_surgery=p_surg_val, true_t2=true_t2,
+                start_level=start_0b,
+                max_n=int(st.session_state["max_n_63"]),
+                a6_esc_max  = int(st.session_state["a6_esc_max"]),
+                a6_stop_min = int(st.session_state["a6_stop_min"]),
+                a9_esc_max  = int(st.session_state["a9_esc_max"]),
+                s6_esc_max  = int(st.session_state["s6_esc_max"]),
+                s6_stop_min = int(st.session_state["s6_stop_min"]),
+                s9_esc_max  = int(st.session_state["s9_esc_max"]),
+                s9_stop_min = int(st.session_state["s9_stop_min"]),
+                rng=rng_s, **timing_kw,
+            )
+            sel_63[sel63] += 1
+            for p in pts63:
+                nmat_63[s, p["dose"]]  += 1
+                nsurg_63[s, p["dose"]] += int(p["has_surgery"])
+                ya63[s]  += int(p["has_tox1"])
+                ys63[s]  += int(p["has_tox2"])
+                ns63[s]  += int(p["has_surgery"])
+            dur_63[s]  = sd63
+            nbridg[s]  = nb63
+
+            # ── TITE-CRM ─────────────────────────────────────────────────────
+            rng_s2 = np.random.default_rng(rng_master.integers(0, 2**31))
+            selc, ptsc, sdc, trace_s = run_tite_crm(
+                true_t1=true_t1, p_surgery=p_surg_val, true_t2=true_t2,
+                target1=target_t1_val, target2=target_t2_val,
+                skel1=skel_t1, skel2=skel_t2,
+                sigma        = float(st.session_state["sigma"]),
+                start_level  = start_0b,
+                max_n        = int(st.session_state["max_n_crm"]),
+                cohort_size  = int(st.session_state["cohort_size"]),
+                max_step     = int(st.session_state["max_step"]),
+                gh_n         = int(st.session_state["gh_n"]),
+                enforce_guardrail      = bool(st.session_state["enforce_guardrail"]),
+                restrict_final_to_tried= bool(st.session_state["restrict_final_mtd"]),
+                ewoc_on      = bool(st.session_state["ewoc_on"]),
+                ewoc_alpha   = float(st.session_state["ewoc_alpha"]),
+                burn_in      = bool(st.session_state["burn_in"]),
+                rng=rng_s2, **timing_kw,
+                collect_trace=(s == 0),   # record full trace for first trial only
+            )
+            # Save first-trial trace for the decision walkthrough display
+            if s == 0:
+                _crm_trace_first = {
+                    "patients":   ptsc,
+                    "decisions":  trace_s,
+                    "true_t1":    list(true_t1),
+                    "true_t2":    list(true_t2),
+                    "tox1_win":   _tox1_win_derived,
+                    "tox2_win":   int(st.session_state["tox2_win"]),
+                }
+            sel_crm[selc] += 1
+            for p in ptsc:
+                nmat_crm[s, p["dose"]]  += 1
+                nsurg_crm[s, p["dose"]] += int(p["has_surgery"])
+                yacrm[s]  += int(p["has_tox1"])
+                yscrm[s]  += int(p["has_tox2"])
+                nscrm[s]  += int(p["has_surgery"])
+            dur_crm[s] = sdc
+
+        # Store results
+        p63   = sel_63  / ns
+        pcrm  = sel_crm / ns
+        st.session_state["_tite_results"] = {
+            "p63":  p63, "pcrm": pcrm,
+            "avg_n63":      nmat_63.mean(axis=0),
+            "avg_ncrm":     nmat_crm.mean(axis=0),
+            "avg_nsurg63":  nsurg_63.mean(axis=0),
+            "avg_nsurgcrm": nsurg_crm.mean(axis=0),
+            "acute_rate_63":  ya63.sum()  / max(1, nmat_63.sum()),
+            "acute_rate_crm": yacrm.sum() / max(1, nmat_crm.sum()),
+            "sub_gs_rate_63":  ys63.sum()  / max(1, ns63.sum()),
+            "sub_gs_rate_crm": yscrm.sum() / max(1, nscrm.sum()),
+            "surg_rate_63":   ns63.mean()  / max(1, nmat_63.sum() / ns),
+            "surg_rate_crm":  nscrm.mean() / max(1, nmat_crm.sum() / ns),
+            "dur63_mean":  dur_63.mean()  / MONTH,
+            "dur63_med":   float(np.median(dur_63))  / MONTH,
+            "durcrm_mean": dur_crm.mean() / MONTH,
+            "durcrm_med":  float(np.median(dur_crm)) / MONTH,
+            "avg_bridging": float(nbridg.mean()),
+            "true_safe": true_safe,
+            "ns": ns,
+            "seed": int(st.session_state["seed"]),
+            "p_surgery": p_surg_val,
+            "crm_trace": _crm_trace_first,   # first-trial trace for walkthrough
+        }
 
 # ==============================================================================
 # Results
 # ==============================================================================
 
-if "_tite_results" in st.session_state:
+if view == "Playground" and "_tite_results" in st.session_state:
     res = st.session_state["_tite_results"]
     p63  = res["p63"]
     pcrm = res["pcrm"]
@@ -1562,7 +1589,8 @@ if "_tite_results" in st.session_state:
 #   C. TITE follow-up accumulation (total effective n for tox1 and tox2)
 # ==============================================================================
 
-if ("_tite_results" in st.session_state
+if (view == "Playground"
+        and "_tite_results" in st.session_state
         and bool(st.session_state.get("show_crm_trace", False))):
 
     import pandas as pd  # local import — only needed for trace tables
