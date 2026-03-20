@@ -1247,7 +1247,11 @@ elif view == "Playground":
         prior_model_val = str(st.session_state["prior_model"])
         intcpt_val      = float(st.session_state["logistic_intcpt"])
 
-        # Force-write halfwidth keys before any slider is created (Streamlit safety)
+        # Clamp halfwidth/prior-nu keys only when their valid range shrinks
+        # (e.g. prior_target moved closer to 0 or 1).
+        # Do NOT write when no change is needed — writing to a widget key
+        # from script-body code on every rerun clears Streamlit's committed-
+        # interaction flag and causes the slider to reset unexpectedly.
         _pt1     = float(st.session_state["prior_target_t1"])
         _max_hw1 = round(max(0.01, min(0.30, _pt1 - 0.01, 1.0 - _pt1 - 0.01)), 2)
         _pt2     = float(st.session_state["prior_target_t2"])
@@ -1262,8 +1266,10 @@ elif view == "Playground":
             ("prior_nu_t2",     int,   1,    5,        R_DEFAULTS["prior_nu_t2"]),
         ]
         for _k, _typ, _lo, _hi, _def in _prior_init:
-            _v = _typ(st.session_state.get(_k, _def))
-            st.session_state[_k] = _typ(np.clip(_v, _lo, _hi))
+            _v       = _typ(st.session_state.get(_k, _def))
+            _clipped = _typ(np.clip(_v, _lo, _hi))
+            if _clipped != _v:                    # only write when clipping changes the value
+                st.session_state[_k] = _clipped
 
         ep_tab = st.radio(
             "Endpoint",
@@ -2320,6 +2326,18 @@ if view == "Design Exploration":
                           ("de_seed",    42)]:
             if _dk not in _ss:
                 _ss[_dk] = _dv
+
+        # Clamp de_sig_max / de_ea_max so their stored value is always
+        # above their dynamic min_value.  This prevents Streamlit from
+        # raising an exception or silently clipping the widget value when
+        # de_sig_min / de_ea_min is raised above the stored max.
+        _sig_min_floor = round(float(_ss["de_sig_min"]) + 0.1, 1)
+        if float(_ss["de_sig_max"]) < _sig_min_floor:
+            _ss["de_sig_max"] = min(_sig_min_floor, 5.0)
+
+        _ea_min_floor = round(float(_ss["de_ea_min"]) + 0.01, 2)
+        if float(_ss["de_ea_max"]) < _ea_min_floor:
+            _ss["de_ea_max"] = min(_ea_min_floor, 0.60)
 
         if _de_param == "sigma":
             _c1, _c2, _c3 = st.columns(3)
