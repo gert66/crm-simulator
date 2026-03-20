@@ -918,7 +918,7 @@ def _draw_timeline(incl_to_rt, rt_dur, rt_to_surg, tox2_win):
 
 view = st.sidebar.selectbox(
     "View",
-    options=["Essentials", "Playground"],
+    options=["Essentials", "Playground", "Design Exploration"],
     key="nav_view",
     label_visibility="collapsed",
 )
@@ -2174,3 +2174,209 @@ def _plot_sweep_results(df, param_label):
 # ==============================================================================
 # --- Design Exploration merged code end ---
 # ==============================================================================
+
+# ==============================================================================
+# DESIGN EXPLORATION VIEW
+# ==============================================================================
+# Placed here (after helper function definitions) so _quality_score,
+# _true_optimal, run_parameter_sweep and _plot_sweep_results are already
+# defined when this block executes.
+# ==============================================================================
+
+if view == "Design Exploration":
+    _N_LEVELS = 5
+    _ss = st.session_state
+
+    st.markdown("#### Design Exploration — TITE-CRM Parameter Sweep")
+    st.caption(
+        "Varies one design parameter while keeping all others fixed at the "
+        "current Essentials / Playground settings.  Uses TITE-CRM only."
+    )
+
+    # ── Compute skeletons from Playground priors ──────────────────────────
+    try:
+        _de_pt1  = float(_ss.get("prior_target_t1", R_DEFAULTS["prior_target_t1"]))
+        _de_hw1  = float(_ss.get("halfwidth_t1",    R_DEFAULTS["halfwidth_t1"]))
+        _de_nu1  = int  (_ss.get("prior_nu_t1",     R_DEFAULTS["prior_nu_t1"]))
+        _de_pt2  = float(_ss.get("prior_target_t2", R_DEFAULTS["prior_target_t2"]))
+        _de_hw2  = float(_ss.get("halfwidth_t2",    R_DEFAULTS["halfwidth_t2"]))
+        _de_nu2  = int  (_ss.get("prior_nu_t2",     R_DEFAULTS["prior_nu_t2"]))
+        _de_sk1  = dfcrm_getprior(_de_hw1, _de_pt1, _de_nu1, _N_LEVELS)
+        _de_sk2  = dfcrm_getprior(_de_hw2, _de_pt2, _de_nu2, _N_LEVELS)
+        _de_skel_ok = True
+    except Exception as _de_err:
+        st.error(f"Skeleton error (check Playground priors): {_de_err}")
+        _de_skel_ok = False
+        _de_sk1 = _de_sk2 = None
+
+    # ── True toxicity arrays from Playground session state ────────────────
+    _de_t1 = np.array([float(_ss.get(k, d))
+                       for k, d in zip(TRUE_T1_KEYS, DEFAULT_TRUE_T1)])
+    _de_t2 = np.array([float(_ss.get(k, d))
+                       for k, d in zip(TRUE_T2_KEYS, DEFAULT_TRUE_T2)])
+
+    # ── True optimal dose + baseline summary ──────────────────────────────
+    if _de_skel_ok:
+        _de_opt = _true_optimal(_de_t1, _de_t2,
+                                float(_ss["target_t1"]),
+                                float(_ss["target_t2"]))
+        _ewoc_str = (f"ON α={float(_ss['ewoc_alpha']):.2f}"
+                     if bool(_ss.get("ewoc_on", True)) else "OFF")
+        st.info(
+            f"True optimal dose (min max-excess): **L{_de_opt}** — "
+            f"Tox1 = {_de_t1[_de_opt]:.3f},  Tox2 = {_de_t2[_de_opt]:.3f}\n\n"
+            f"Baseline — σ = {float(_ss['sigma']):.2f} · EWOC {_ewoc_str} · "
+            f"max N = {int(_ss['max_n_crm'])} · cohort = {int(_ss['cohort_size'])}"
+        )
+
+    # ── Sweep controls ────────────────────────────────────────────────────
+    _de_ctrl, _ = st.columns([2, 3])
+    with _de_ctrl:
+        _de_param = st.selectbox(
+            "Parameter to sweep",
+            ["sigma", "ewoc_alpha", "max_n", "cohort_size"],
+            format_func={
+                "sigma":       "σ — Prior sigma on theta",
+                "ewoc_alpha":  "EWOC α — Overdose threshold",
+                "max_n":       "Max N — CRM sample size",
+                "cohort_size": "Cohort size",
+            }.get,
+            key="de_param_name",
+        )
+
+        if _de_param == "sigma":
+            _c1, _c2, _c3 = st.columns(3)
+            _de_sig_min = _c1.number_input("Min σ", 0.1, 4.9, 0.3,
+                                           step=0.1, key="de_sig_min")
+            _de_sig_max = _c2.number_input("Max σ",
+                                           float(max(_de_sig_min + 0.1, 0.2)),
+                                           5.0, 2.0,
+                                           step=0.1, key="de_sig_max")
+            _de_sig_pts = _c3.slider("Points", 3, 20, 8, key="de_sig_pts")
+            _de_pv      = np.linspace(_de_sig_min, _de_sig_max,
+                                      _de_sig_pts).tolist()
+            _de_label   = "σ (prior sigma)"
+            _de_ptype   = "continuous"
+
+        elif _de_param == "ewoc_alpha":
+            _c1, _c2, _c3 = st.columns(3)
+            _de_ea_min  = _c1.number_input("Min α", 0.05, 0.55, 0.15,
+                                           step=0.01, key="de_ea_min")
+            _de_ea_max  = _c2.number_input("Max α",
+                                           float(max(_de_ea_min + 0.01, 0.06)),
+                                           0.60, 0.45,
+                                           step=0.01, key="de_ea_max")
+            _de_ea_pts  = _c3.slider("Points", 3, 20, 8, key="de_ea_pts")
+            _de_inc_off = st.checkbox("Include EWOC OFF as a point",
+                                      value=True, key="de_inc_off")
+            _de_pv      = (([None] if _de_inc_off else []) +
+                           np.linspace(_de_ea_min, _de_ea_max,
+                                       _de_ea_pts).tolist())
+            _de_label   = "EWOC α"
+            _de_ptype   = "continuous"
+
+        elif _de_param == "max_n":
+            _de_pv = st.multiselect(
+                "Max N values to sweep",
+                [12, 15, 18, 21, 24, 27, 30, 33, 36],
+                default=[18, 21, 24, 27, 30],
+                key="de_max_n_vals",
+            )
+            _de_label = "Max N"
+            _de_ptype = "discrete"
+
+        else:  # cohort_size
+            _de_pv = st.multiselect(
+                "Cohort sizes to sweep",
+                [1, 2, 3, 4, 5, 6],
+                default=[1, 2, 3, 4],
+                key="de_cohort_vals",
+            )
+            _de_label = "Cohort size"
+            _de_ptype = "discrete"
+
+        st.divider()
+        _de_n_sim  = st.slider("Simulations per point", 50, 2000, 200,
+                               step=50, key="de_n_sim")
+        _de_seed   = st.number_input("Seed", 0, 99999, 42,
+                                     step=1, key="de_seed")
+        _de_speed  = st.checkbox(
+            "Speed mode (faster, less precise)",
+            key="de_speed_mode",
+            help="Reduces simulations per point to max(50, n÷4) and caps "
+                 "the grid to ≤8 continuous / ≤3 discrete points. "
+                 "Results are approximate.",
+        )
+
+        if _de_speed:
+            _de_n_eff = max(50, int(_de_n_sim) // 4)
+            _de_pv_eff = (_de_pv[:8] if _de_ptype == "continuous"
+                          else _de_pv[:3])
+            st.caption(
+                f":orange[Speed mode — {_de_n_eff} sims × "
+                f"{len(_de_pv_eff)} points (approximate)]"
+            )
+        else:
+            _de_n_eff  = int(_de_n_sim)
+            _de_pv_eff = list(_de_pv)
+            if _de_pv_eff:
+                st.caption(
+                    f"{_de_n_eff} sims × {len(_de_pv_eff)} points = "
+                    f"{_de_n_eff * len(_de_pv_eff):,} total trials"
+                )
+
+        _de_run_btn = st.button(
+            "▶ Run Sweep", type="primary", key="de_run_btn",
+            disabled=(not _de_skel_ok or len(_de_pv_eff) == 0),
+        )
+
+    # ── Execute sweep ─────────────────────────────────────────────────────
+    if _de_run_btn and _de_skel_ok and len(_de_pv_eff) > 0:
+        _de_base_ss = dict(
+            target_tox1          = float(_ss["target_t1"]),
+            target_tox2          = float(_ss["target_t2"]),
+            p_surgery            = float(_ss["p_surgery"]),
+            sigma                = float(_ss["sigma"]),
+            ewoc_on              = bool (_ss["ewoc_on"]),
+            ewoc_alpha           = float(_ss["ewoc_alpha"]),
+            max_n                = int  (_ss["max_n_crm"]),
+            cohort_size          = int  (_ss["cohort_size"]),
+            start_level          = int  (_ss["start_level_1b"]) - 1,
+            accrual_per_month    = float(_ss["accrual_per_month"]),
+            incl_to_rt           = int  (_ss["incl_to_rt"]),
+            rt_dur               = int  (_ss["rt_dur"]),
+            rt_to_surg           = int  (_ss["rt_to_surg"]),
+            tox2_win             = int  (_ss["tox2_win"]),
+            max_step             = int  (_ss["max_step"]),
+            gh_n                 = int  (_ss["gh_n"]),
+            burn_in              = bool (_ss["burn_in"]),
+            enforce_guardrail    = bool (_ss["enforce_guardrail"]),
+            restrict_final_to_tried = bool(_ss["restrict_final_mtd"]),
+        )
+        _de_total = _de_n_eff * len(_de_pv_eff)
+        with st.spinner(f"Running {_de_total:,} trials…"):
+            _de_result_df = run_parameter_sweep(
+                _de_param, _de_pv_eff, _de_base_ss,
+                _de_t1, _de_t2, _de_sk1, _de_sk2,
+                _de_n_eff, int(_de_seed),
+            )
+        _ss["_de_df"]    = _de_result_df
+        _ss["_de_label"] = _de_label
+
+    # ── Display results ───────────────────────────────────────────────────
+    if "_de_df" in _ss:
+        _df  = _ss["_de_df"]
+        _lbl = _ss["_de_label"]
+
+        _fig = _plot_sweep_results(_df, _lbl)
+        st.pyplot(_fig)
+        plt.close(_fig)
+
+        _disp = _df[["param_label", "quality_score",
+                     "pct_correct_selection", "overdose_rate"]].copy()
+        _disp.columns = [_lbl, "Quality score",
+                         "% Correct selection", "Overdose rate (%)"]
+        _disp["Quality score"]       = _disp["Quality score"].round(4)
+        _disp["% Correct selection"] = _disp["% Correct selection"].round(1)
+        _disp["Overdose rate (%)"]   = _disp["Overdose rate (%)"].round(1)
+        st.dataframe(_disp, use_container_width=True, hide_index=True)
