@@ -911,7 +911,7 @@ _ALL_CONFIG_KEYS = list(_ALL_DEFAULTS.keys())
 # Single-source-of-truth state management
 # ==============================================================================
 
-_STATE_VERSION = "2026-03-21"
+_STATE_VERSION = "2026-03-21b"
 
 def init_state() -> None:
     """Seed EVERY canonical config key exactly once per session.
