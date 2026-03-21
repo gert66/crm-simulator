@@ -918,7 +918,7 @@ _ALL_CONFIG_KEYS = list(_ALL_DEFAULTS.keys())
 # Single-source-of-truth state management
 # ==============================================================================
 
-_STATE_VERSION = "2026-03-21d"
+_STATE_VERSION = "2026-03-21e"
 
 def init_state() -> None:
     """Seed EVERY canonical config key exactly once per session.
@@ -1284,18 +1284,30 @@ if view == "Essentials":
 
     with _ec3:
         st.markdown("#### CRM integration")
+
+        # ── gh_n ──────────────────────────────────────────────────────────
+        # Pre-write canonical → widget so the selectbox always shows the
+        # correct value even after a simulation rerun with Essentials absent.
+        st.session_state["wl_gh_n"] = int(_cfg("gh_n"))
         st.selectbox(
             "Gauss–Hermite points",
-            options=[31, 41, 61, 81], key="gh_n",
+            options=[31, 41, 61, 81], key="wl_gh_n",
             help=h("gh_n",
                    "Quadrature points for CRM posterior. Higher = more accurate, slower.")
         )
+        st.session_state["gh_n"] = st.session_state["wl_gh_n"]
+
+        # ── max_step ──────────────────────────────────────────────────────
+        st.session_state["wl_max_step"] = int(_cfg("max_step"))
         st.selectbox(
             "Max dose step per update",
-            options=[1, 2], key="max_step",
+            options=[1, 2], key="wl_max_step",
             help=h("max_step",
                    "Max dose levels the CRM can move per cohort update.")
         )
+        st.session_state["max_step"] = st.session_state["wl_max_step"]
+
+        # ── sigma (already using sl_ pattern) ────────────────────────────
         st.session_state["sl_sigma"] = float(_cfg("sigma"))
         st.slider(
             "Prior sigma on theta",
@@ -1309,44 +1321,77 @@ if view == "Essentials":
         st.caption(f"[dbg sigma] cfg={_cfg('sigma'):.1f}  widget={st.session_state['sl_sigma']:.1f}")
 
         st.markdown("#### CRM safety / selection")
+
+        # ── enforce_guardrail ─────────────────────────────────────────────
+        st.session_state["wl_enforce_guardrail"] = bool(_cfg("enforce_guardrail"))
         st.toggle(
             "Guardrail: next dose ≤ highest tried + 1",
-            key="enforce_guardrail",
+            key="wl_enforce_guardrail",
             help=h("enforce_guardrail", "Prevent skipping untried dose levels.")
         )
+        st.session_state["enforce_guardrail"] = st.session_state["wl_enforce_guardrail"]
+        st.caption(f"[dbg guardrail] cfg={_cfg('enforce_guardrail')}  "
+                   f"widget={st.session_state['wl_enforce_guardrail']}")
+
+        # ── restrict_final_mtd ────────────────────────────────────────────
+        st.session_state["wl_restrict_final_mtd"] = bool(_cfg("restrict_final_mtd"))
         st.toggle(
             "Final MTD must be among tried doses",
-            key="restrict_final_mtd",
+            key="wl_restrict_final_mtd",
             help=h("restrict_final_mtd",
                    "Restrict final MTD selection to doses where n > 0.")
         )
+        st.session_state["restrict_final_mtd"] = st.session_state["wl_restrict_final_mtd"]
+        st.caption(f"[dbg restrict_mtd] cfg={_cfg('restrict_final_mtd')}  "
+                   f"widget={st.session_state['wl_restrict_final_mtd']}")
 
         st.markdown("#### CRM behaviour")
+
+        # ── burn_in ───────────────────────────────────────────────────────
+        st.session_state["wl_burn_in"] = bool(_cfg("burn_in"))
         st.toggle(
             "Burn-in until first tox1 DLT",
-            key="burn_in",
+            key="wl_burn_in",
             help=h("burn_in",
                    "Escalate one level at a time until the first observed acute DLT, "
                    "then switch to CRM updates.")
         )
+        st.session_state["burn_in"] = st.session_state["wl_burn_in"]
+        st.caption(f"[dbg burn_in] cfg={_cfg('burn_in')}  "
+                   f"widget={st.session_state['wl_burn_in']}")
+
+        # ── ewoc_on ───────────────────────────────────────────────────────
+        st.session_state["wl_ewoc_on"] = bool(_cfg("ewoc_on"))
         st.toggle(
             "Enable EWOC joint overdose control",
-            key="ewoc_on",
+            key="wl_ewoc_on",
             help=h("ewoc_on",
                    "Restrict doses where BOTH P(tox1 OD) and P(tox2 OD) < EWOC alpha.")
         )
+        # Post-read immediately so ewoc_alpha disabled= sees the updated value.
+        st.session_state["ewoc_on"] = st.session_state["wl_ewoc_on"]
+
+        # ── ewoc_alpha ────────────────────────────────────────────────────
+        st.session_state["wl_ewoc_alpha"] = float(_cfg("ewoc_alpha"))
         st.number_input(
             "EWOC alpha",
-            min_value=0.01, max_value=0.99, step=0.01, key="ewoc_alpha",
+            min_value=0.01, max_value=0.99, step=0.01, key="wl_ewoc_alpha",
             disabled=(not bool(_cfg("ewoc_on"))),
             help=h("ewoc_alpha",
                    "EWOC threshold applied to both endpoints independently.")
         )
+        st.session_state["ewoc_alpha"] = st.session_state["wl_ewoc_alpha"]
+        st.caption(f"[dbg ewoc] on={_cfg('ewoc_on')}  "
+                   f"alpha cfg={_cfg('ewoc_alpha'):.2f}  "
+                   f"widget={st.session_state['wl_ewoc_alpha']:.2f}")
 
         st.markdown("#### CRM decision trace")
+
+        # ── show_crm_trace ────────────────────────────────────────────────
+        st.session_state["wl_show_crm_trace"] = bool(_cfg("show_crm_trace"))
         st.toggle(
             "Explain first CRM trial",
-            key="show_crm_trace",
+            key="wl_show_crm_trace",
             help=h("show_crm_trace",
                    "When ON, shows a detailed walkthrough for the first simulated "
                    "CRM trial only: which dose each patient received, what follow-up "
@@ -1354,6 +1399,9 @@ if view == "Essentials":
                    "safety for each dose level, and why the next dose was chosen. "
                    "Has no effect on the summary results across all simulated trials.")
         )
+        st.session_state["show_crm_trace"] = st.session_state["wl_show_crm_trace"]
+        st.caption(f"[dbg crm_trace] cfg={_cfg('show_crm_trace')}  "
+                   f"widget={st.session_state['wl_show_crm_trace']}")
 
     st.markdown("---")
     st.markdown("#### 6+3 stopping rules")
@@ -1377,17 +1425,23 @@ if view == "Essentials":
     )
     _ar1, _ar2, _ar3 = st.columns(3, gap="small")
     with _ar1:
+        st.session_state["wl_a6_esc_max"] = int(_cfg("a6_esc_max"))
         st.number_input("≥6 — esc if tox1 ≤", min_value=0, max_value=5,
-                        step=1, key="a6_esc_max",
+                        step=1, key="wl_a6_esc_max",
                         help=h("a6_esc_max", "Phase 1 acute escalation threshold."))
+        st.session_state["a6_esc_max"] = st.session_state["wl_a6_esc_max"]
     with _ar2:
+        st.session_state["wl_a6_stop_min"] = int(_cfg("a6_stop_min"))
         st.number_input("≥6 — stop if tox1 ≥", min_value=1, max_value=6,
-                        step=1, key="a6_stop_min",
+                        step=1, key="wl_a6_stop_min",
                         help=h("a6_stop_min", "Phase 1 acute stopping threshold."))
+        st.session_state["a6_stop_min"] = st.session_state["wl_a6_stop_min"]
     with _ar3:
+        st.session_state["wl_a9_esc_max"] = int(_cfg("a9_esc_max"))
         st.number_input("≥9 — esc if tox1 ≤", min_value=0, max_value=8,
-                        step=1, key="a9_esc_max",
+                        step=1, key="wl_a9_esc_max",
                         help=h("a9_esc_max", "Phase 2 acute escalation threshold."))
+        st.session_state["a9_esc_max"] = st.session_state["wl_a9_esc_max"]
 
     st.markdown(
         "<div style='font-size:0.79rem;font-weight:600;color:#a0a0c0;margin-top:0.3rem;'>"
@@ -1396,21 +1450,29 @@ if view == "Essentials":
     )
     _sr1, _sr2, _sr3, _sr4 = st.columns(4, gap="small")
     with _sr1:
+        st.session_state["wl_s6_esc_max"] = int(_cfg("s6_esc_max"))
         st.number_input("≥6 surg — esc if tox2 ≤", min_value=0, max_value=6,
-                        step=1, key="s6_esc_max",
+                        step=1, key="wl_s6_esc_max",
                         help=h("s6_esc_max", "Phase 1 subacute escalation threshold."))
+        st.session_state["s6_esc_max"] = st.session_state["wl_s6_esc_max"]
     with _sr2:
+        st.session_state["wl_s6_stop_min"] = int(_cfg("s6_stop_min"))
         st.number_input("≥6 surg — stop if tox2 ≥", min_value=1, max_value=6,
-                        step=1, key="s6_stop_min",
+                        step=1, key="wl_s6_stop_min",
                         help=h("s6_stop_min", "Phase 1 subacute stopping threshold."))
+        st.session_state["s6_stop_min"] = st.session_state["wl_s6_stop_min"]
     with _sr3:
+        st.session_state["wl_s9_esc_max"] = int(_cfg("s9_esc_max"))
         st.number_input("≥9 surg — esc if tox2 ≤", min_value=0, max_value=9,
-                        step=1, key="s9_esc_max",
+                        step=1, key="wl_s9_esc_max",
                         help=h("s9_esc_max", "Phase 2 subacute escalation threshold."))
+        st.session_state["s9_esc_max"] = st.session_state["wl_s9_esc_max"]
     with _sr4:
+        st.session_state["wl_s9_stop_min"] = int(_cfg("s9_stop_min"))
         st.number_input("≥9 surg — stop if tox2 ≥", min_value=1, max_value=9,
-                        step=1, key="s9_stop_min",
+                        step=1, key="wl_s9_stop_min",
                         help=h("s9_stop_min", "Phase 2 subacute stopping threshold."))
+        st.session_state["s9_stop_min"] = st.session_state["wl_s9_stop_min"]
 
     st.write("")
     st.button("Reset to defaults", on_click=_do_reset)
