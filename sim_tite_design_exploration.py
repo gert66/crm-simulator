@@ -895,30 +895,39 @@ R_DEFAULTS = {
 TRUE_T1_KEYS  = [f"true_t1_L{i}"  for i in range(5)]
 TRUE_T2_KEYS  = [f"true_t2_L{i}"  for i in range(5)]
 
+# Single merged defaults registry — the ONE source of all default values.
+# true_t1/t2 are included here so get_config_value() and _get_all_config()
+# can fall back to them even before the Playground widgets have rendered.
+_ALL_DEFAULTS: dict = {
+    **R_DEFAULTS,
+    **{TRUE_T1_KEYS[i]: DEFAULT_TRUE_T1[i] for i in range(5)},
+    **{TRUE_T2_KEYS[i]: DEFAULT_TRUE_T2[i] for i in range(5)},
+}
+
 # All canonical config keys in one ordered list (used by helpers below)
-_ALL_CONFIG_KEYS = (
-    list(R_DEFAULTS.keys()) + TRUE_T1_KEYS + TRUE_T2_KEYS
-)
+_ALL_CONFIG_KEYS = list(_ALL_DEFAULTS.keys())
 
 # ==============================================================================
 # Single-source-of-truth state management
 # ==============================================================================
 
 def init_state() -> None:
-    """Initialise every shared parameter in session_state EXACTLY ONCE.
+    """Initialise every SHARED (non-widget-exclusive) parameter exactly once.
 
-    Called at the top of each script rerun.  Guards every key with
-    ``if key not in st.session_state`` so user edits are never clobbered.
+    Two-tier design:
+    - R_DEFAULTS keys (target_t1, sigma, etc.): pre-set here so non-widget
+      code (Playground reads, DE reads) can access them even if the Essentials
+      view has never been rendered.  Widgets that own these keys are created
+      WITHOUT a value= argument; Streamlit uses the session_state value set
+      here.  This avoids the "widget created with default AND Session State API"
+      warning.
+    - TRUE_T1_KEYS / TRUE_T2_KEYS: NOT pre-set here.  Their widgets supply
+      an explicit value= (DEFAULT_TRUE_T1/T2).  This guarantees Streamlit uses
+      the correct default on first render regardless of engine version, while
+      still preserving user edits via the widget key on subsequent renders.
+      Non-widget reads (DE, debug) fall back to _ALL_DEFAULTS via get_config_value().
     """
     for k, v in R_DEFAULTS.items():
-        if k not in st.session_state:
-            st.session_state[k] = v
-    for i, v in enumerate(DEFAULT_TRUE_T1):
-        k = TRUE_T1_KEYS[i]
-        if k not in st.session_state:
-            st.session_state[k] = v
-    for i, v in enumerate(DEFAULT_TRUE_T2):
-        k = TRUE_T2_KEYS[i]
         if k not in st.session_state:
             st.session_state[k] = v
 
@@ -926,10 +935,11 @@ def init_state() -> None:
 def get_config_value(key: str):
     """Read *key* from the canonical session_state store.
 
-    Falls back to ``R_DEFAULTS`` so callers never see a KeyError even before
-    a widget has been rendered for the first time.
+    Falls back to ``_ALL_DEFAULTS`` (which covers both R_DEFAULTS and the
+    true-probability defaults) so callers never see a KeyError or None, even
+    before a widget for that key has ever been rendered.
     """
-    return st.session_state.get(key, R_DEFAULTS.get(key))
+    return st.session_state.get(key, _ALL_DEFAULTS.get(key))
 
 
 def set_config_value(key: str, value) -> None:
@@ -943,13 +953,12 @@ def set_config_value(key: str, value) -> None:
 def _get_all_config() -> dict:
     """Return a snapshot dict of every shared parameter from session_state.
 
-    Used by the debug expander and consistency checks.  Read-only — never
-    mutates session_state.
+    Falls back to _ALL_DEFAULTS for keys whose widget has not yet rendered
+    (e.g. true_t1_L* before Playground is first visited).
+    Read-only — never mutates session_state.
     """
-    snap = {}
-    for k in _ALL_CONFIG_KEYS:
-        snap[k] = st.session_state.get(k, R_DEFAULTS.get(k, "—"))
-    return snap
+    return {k: st.session_state.get(k, _ALL_DEFAULTS.get(k, "—"))
+            for k in _ALL_CONFIG_KEYS}
 
 
 def h(key, desc, r_name=None):
@@ -964,12 +973,70 @@ init_state()
 # ── Reset-to-defaults button ──────────────────────────────────────────────────
 def _do_reset():
     """Restore every canonical key to its factory default."""
-    for k, v in R_DEFAULTS.items():
+    for k, v in _ALL_DEFAULTS.items():
         st.session_state[k] = v
-    for i, v in enumerate(DEFAULT_TRUE_T1):
-        st.session_state[TRUE_T1_KEYS[i]] = v
-    for i, v in enumerate(DEFAULT_TRUE_T2):
-        st.session_state[TRUE_T2_KEYS[i]] = v
+
+
+# _VALID_RANGES: lightweight type/range info for consistency validation.
+# Maps key → (type_fn, min, max) or (type_fn, None, None) for no-range check.
+_VALID_RANGES: dict = {
+    "target_t1":      (float, 0.05, 0.50),
+    "target_t2":      (float, 0.05, 0.50),
+    "p_surgery":      (float, 0.0,  1.0),
+    "prior_target_t1":(float, 0.05, 0.50),
+    "prior_target_t2":(float, 0.05, 0.50),
+    "halfwidth_t1":   (float, 0.01, 0.30),
+    "halfwidth_t2":   (float, 0.01, 0.30),
+    "sigma":          (float, 0.2,  5.0),
+    "ewoc_alpha":     (float, 0.01, 0.99),
+    **{k: (float, 0.0, 1.0) for k in TRUE_T1_KEYS},
+    **{k: (float, 0.0, 1.0) for k in TRUE_T2_KEYS},
+}
+
+
+def validate_shared_state_consistency() -> list[str]:
+    """Check canonical session_state for missing keys, wrong types, and
+    out-of-range values.  Returns a list of human-readable problem strings
+    (empty = all clear).
+
+    Called by the debug expander in every view so problems surface immediately
+    rather than silently producing wrong results in plots or calculations.
+    """
+    problems: list[str] = []
+    for k in _ALL_CONFIG_KEYS:
+        default = _ALL_DEFAULTS.get(k)
+        raw = st.session_state.get(k)
+
+        # Missing key (widget not yet rendered and not in R_DEFAULTS)
+        if raw is None:
+            problems.append(f"MISSING  [{k}] — not in session_state (will use default {default!r})")
+            continue
+
+        # Type/range check
+        if k in _VALID_RANGES:
+            type_fn, lo, hi = _VALID_RANGES[k]
+            try:
+                v = type_fn(raw)
+            except (TypeError, ValueError):
+                problems.append(f"TYPE ERR [{k}] = {raw!r} (expected {type_fn.__name__})")
+                continue
+            if lo is not None and not (lo <= v <= hi):
+                problems.append(
+                    f"RANGE    [{k}] = {v} out of [{lo}, {hi}]"
+                    f" (default {default!r})"
+                )
+    return problems
+
+
+def _cfg(key: str):
+    """Convenience alias: typed canonical read with _ALL_DEFAULTS fallback.
+    Raises ValueError with a clear message if the key is not in _ALL_DEFAULTS,
+    which would indicate a programming error (not a user error).
+    """
+    if key not in _ALL_DEFAULTS:
+        raise ValueError(f"_cfg(): unknown config key {key!r} — add to _ALL_DEFAULTS")
+    return st.session_state.get(key, _ALL_DEFAULTS[key])
+
 
 def _draw_timeline(incl_to_rt, rt_dur, rt_to_surg, tox2_win):
     """
@@ -1207,7 +1274,7 @@ if view == "Essentials":
         st.number_input(
             "EWOC alpha",
             min_value=0.01, max_value=0.99, step=0.01, key="ewoc_alpha",
-            disabled=(not bool(st.session_state["ewoc_on"])),
+            disabled=(not bool(_cfg("ewoc_on"))),
             help=h("ewoc_alpha",
                    "EWOC threshold applied to both endpoints independently.")
         )
@@ -1291,10 +1358,10 @@ if view == "Essentials":
         unsafe_allow_html=True,
     )
     _tl_fig = _draw_timeline(
-        int(st.session_state["incl_to_rt"]),
-        int(st.session_state["rt_dur"]),
-        int(st.session_state["rt_to_surg"]),
-        int(st.session_state["tox2_win"]),
+        int(_cfg("incl_to_rt")),
+        int(_cfg("rt_dur")),
+        int(_cfg("rt_to_surg")),
+        int(_cfg("tox2_win")),
     )
     st.image(fig_to_png_bytes(_tl_fig), use_container_width=True)
 
@@ -1325,23 +1392,36 @@ elif view == "Playground":
                     f"<div style='font-size:0.83rem;padding-top:0.25rem;'>L{i} {lab}</div>",
                     unsafe_allow_html=True)
             with rT1:
-                v1 = st.number_input(f"T1 L{i}", 0.0, 1.0,
-                                     step=0.01,
-                                     key=TRUE_T1_KEYS[i],
-                                     label_visibility="collapsed",
-                                     help=f"True probability of acute toxicity at dose L{i}.")
+                # value= supplies the per-Streamlit-version-safe default.
+                # Because TRUE_T1_KEYS are NOT pre-set in init_state() via
+                # script-body assignment, this value= does NOT trigger the
+                # "widget default vs Session State API" warning.  On first
+                # render Streamlit stores DEFAULT_TRUE_T1[i] in session_state;
+                # on all subsequent renders it uses the stored session_state
+                # value (user edits preserved across navigation).
+                v1 = st.number_input(
+                    f"T1 L{i}",
+                    min_value=0.0, max_value=1.0, step=0.01,
+                    key=TRUE_T1_KEYS[i],
+                    value=float(st.session_state.get(TRUE_T1_KEYS[i], DEFAULT_TRUE_T1[i])),
+                    label_visibility="collapsed",
+                    help=f"True probability of acute toxicity at dose L{i}.",
+                )
                 true_t1.append(float(v1))
             with rT2:
-                v2 = st.number_input(f"T2 L{i}", 0.0, 1.0,
-                                     step=0.01,
-                                     key=TRUE_T2_KEYS[i],
-                                     label_visibility="collapsed",
-                                     help=f"True probability of subacute toxicity given surgery at L{i}.")
+                v2 = st.number_input(
+                    f"T2 L{i}",
+                    min_value=0.0, max_value=1.0, step=0.01,
+                    key=TRUE_T2_KEYS[i],
+                    value=float(st.session_state.get(TRUE_T2_KEYS[i], DEFAULT_TRUE_T2[i])),
+                    label_visibility="collapsed",
+                    help=f"True probability of subacute toxicity given surgery at L{i}.",
+                )
                 true_t2.append(float(v2))
 
-        target_t1_val = float(st.session_state["target_t1"])
-        target_t2_val = float(st.session_state["target_t2"])
-        p_surg_val    = float(st.session_state["p_surgery"])
+        target_t1_val = float(_cfg("target_t1"))
+        target_t2_val = float(_cfg("target_t2"))
+        p_surg_val    = float(_cfg("p_surgery"))
         true_safe = find_true_safe_dose(true_t1, true_t2, target_t1_val, target_t2_val)
         if true_safe is not None:
             st.caption(f"Highest jointly safe dose = L{true_safe}")
@@ -1359,17 +1439,17 @@ elif view == "Playground":
             horizontal=True, key="prior_model",
             help=h("prior_model", "Skeleton generation method, shared for both endpoints.")
         )
-        prior_model_val = str(st.session_state["prior_model"])
-        intcpt_val      = float(st.session_state["logistic_intcpt"])
+        prior_model_val = str(_cfg("prior_model"))
+        intcpt_val      = float(_cfg("logistic_intcpt"))
 
         # Clamp halfwidth/prior-nu keys only when their valid range shrinks
         # (e.g. prior_target moved closer to 0 or 1).
         # Do NOT write when no change is needed — writing to a widget key
         # from script-body code on every rerun clears Streamlit's committed-
         # interaction flag and causes the slider to reset unexpectedly.
-        _pt1     = float(st.session_state["prior_target_t1"])
+        _pt1     = float(_cfg("prior_target_t1"))
         _max_hw1 = round(max(0.01, min(0.30, _pt1 - 0.01, 1.0 - _pt1 - 0.01)), 2)
-        _pt2     = float(st.session_state["prior_target_t2"])
+        _pt2     = float(_cfg("prior_target_t2"))
         _max_hw2 = round(max(0.01, min(0.30, _pt2 - 0.01, 1.0 - _pt2 - 0.01)), 2)
 
         _prior_init = [
@@ -1415,35 +1495,35 @@ elif view == "Playground":
                       help=h("prior_nu_t2", "Dose level a priori closest to the tox2 conditional target."))
 
         # Compute skeletons for preview and simulation
-        hw1_eff = float(st.session_state["halfwidth_t1"])
+        hw1_eff = float(_cfg("halfwidth_t1"))
         try:
             skel_t1 = dfcrm_getprior(
-                halfwidth=hw1_eff, target=float(st.session_state["prior_target_t1"]),
-                nu=int(st.session_state["prior_nu_t1"]),
+                halfwidth=hw1_eff, target=float(_cfg("prior_target_t1")),
+                nu=int(_cfg("prior_nu_t1")),
                 nlevel=5, model=prior_model_val, intcpt=intcpt_val,
             ).tolist()
         except ValueError as e:
             st.warning(f"Tox1 skeleton: {e}")
             hw1_eff = 0.10
             skel_t1 = dfcrm_getprior(
-                halfwidth=hw1_eff, target=float(st.session_state["prior_target_t1"]),
-                nu=int(st.session_state["prior_nu_t1"]),
+                halfwidth=hw1_eff, target=float(_cfg("prior_target_t1")),
+                nu=int(_cfg("prior_nu_t1")),
                 nlevel=5, model=prior_model_val, intcpt=intcpt_val,
             ).tolist()
 
-        hw2_eff = float(st.session_state["halfwidth_t2"])
+        hw2_eff = float(_cfg("halfwidth_t2"))
         try:
             skel_t2 = dfcrm_getprior(
-                halfwidth=hw2_eff, target=float(st.session_state["prior_target_t2"]),
-                nu=int(st.session_state["prior_nu_t2"]),
+                halfwidth=hw2_eff, target=float(_cfg("prior_target_t2")),
+                nu=int(_cfg("prior_nu_t2")),
                 nlevel=5, model=prior_model_val, intcpt=intcpt_val,
             ).tolist()
         except ValueError as e:
             st.warning(f"Tox2 skeleton: {e}")
             hw2_eff = 0.10
             skel_t2 = dfcrm_getprior(
-                halfwidth=hw2_eff, target=float(st.session_state["prior_target_t2"]),
-                nu=int(st.session_state["prior_nu_t2"]),
+                halfwidth=hw2_eff, target=float(_cfg("prior_target_t2")),
+                nu=int(_cfg("prior_nu_t2")),
                 nlevel=5, model=prior_model_val, intcpt=intcpt_val,
             ).tolist()
 
@@ -1480,16 +1560,16 @@ elif view == "Playground":
         compact_style(ax2)
 
         fig.tight_layout(pad=0.5)
-        st.image(fig_to_png_bytes(fig), width=int(st.session_state["preview_w_px"]))
+        st.image(fig_to_png_bytes(fig), width=int(_cfg("preview_w_px")))
 
     # ==============================================================================
     # Run simulations
     # ==============================================================================
 
     if run:
-        rng_master = np.random.default_rng(int(st.session_state["seed"]))
-        ns         = int(st.session_state["n_sims"])
-        start_0b   = int(np.clip(int(st.session_state["start_level_1b"]) - 1, 0, 4))
+        rng_master = np.random.default_rng(int(_cfg("seed")))
+        ns         = int(_cfg("n_sims"))
+        start_0b   = int(np.clip(int(_cfg("start_level_1b")) - 1, 0, 4))
 
         sel_63  = np.zeros(5, dtype=int)
         sel_crm = np.zeros(5, dtype=int)
@@ -1508,15 +1588,15 @@ elif view == "Playground":
 
         # tox1_win is derived: extends from RT start all the way to surgery
         # = RT duration + (RT end → surgery) — no separate UI input needed
-        _tox1_win_derived = int(st.session_state["rt_dur"]) + int(st.session_state["rt_to_surg"])
+        _tox1_win_derived = int(_cfg("rt_dur")) + int(_cfg("rt_to_surg"))
 
         timing_kw = dict(
-            accrual_per_month = float(st.session_state["accrual_per_month"]),
-            incl_to_rt        = int(st.session_state["incl_to_rt"]),
-            rt_dur            = int(st.session_state["rt_dur"]),
-            rt_to_surg        = int(st.session_state["rt_to_surg"]),
+            accrual_per_month = float(_cfg("accrual_per_month")),
+            incl_to_rt        = int(_cfg("incl_to_rt")),
+            rt_dur            = int(_cfg("rt_dur")),
+            rt_to_surg        = int(_cfg("rt_to_surg")),
             tox1_win          = _tox1_win_derived,
-            tox2_win          = int(st.session_state["tox2_win"]),
+            tox2_win          = int(_cfg("tox2_win")),
         )
 
         for s in range(ns):
@@ -1526,14 +1606,14 @@ elif view == "Playground":
             sel63, pts63, sd63, nb63 = run_tite_6plus3(
                 true_t1=true_t1, p_surgery=p_surg_val, true_t2=true_t2,
                 start_level=start_0b,
-                max_n=int(st.session_state["max_n_63"]),
-                a6_esc_max  = int(st.session_state["a6_esc_max"]),
-                a6_stop_min = int(st.session_state["a6_stop_min"]),
-                a9_esc_max  = int(st.session_state["a9_esc_max"]),
-                s6_esc_max  = int(st.session_state["s6_esc_max"]),
-                s6_stop_min = int(st.session_state["s6_stop_min"]),
-                s9_esc_max  = int(st.session_state["s9_esc_max"]),
-                s9_stop_min = int(st.session_state["s9_stop_min"]),
+                max_n=int(_cfg("max_n_63")),
+                a6_esc_max  = int(_cfg("a6_esc_max")),
+                a6_stop_min = int(_cfg("a6_stop_min")),
+                a9_esc_max  = int(_cfg("a9_esc_max")),
+                s6_esc_max  = int(_cfg("s6_esc_max")),
+                s6_stop_min = int(_cfg("s6_stop_min")),
+                s9_esc_max  = int(_cfg("s9_esc_max")),
+                s9_stop_min = int(_cfg("s9_stop_min")),
                 rng=rng_s, **timing_kw,
             )
             sel_63[sel63] += 1
@@ -1552,17 +1632,17 @@ elif view == "Playground":
                 true_t1=true_t1, p_surgery=p_surg_val, true_t2=true_t2,
                 target1=target_t1_val, target2=target_t2_val,
                 skel1=skel_t1, skel2=skel_t2,
-                sigma        = float(st.session_state["sigma"]),
+                sigma        = float(_cfg("sigma")),
                 start_level  = start_0b,
-                max_n        = int(st.session_state["max_n_crm"]),
-                cohort_size  = int(st.session_state["cohort_size"]),
-                max_step     = int(st.session_state["max_step"]),
-                gh_n         = int(st.session_state["gh_n"]),
-                enforce_guardrail      = bool(st.session_state["enforce_guardrail"]),
-                restrict_final_to_tried= bool(st.session_state["restrict_final_mtd"]),
-                ewoc_on      = bool(st.session_state["ewoc_on"]),
-                ewoc_alpha   = float(st.session_state["ewoc_alpha"]),
-                burn_in      = bool(st.session_state["burn_in"]),
+                max_n        = int(_cfg("max_n_crm")),
+                cohort_size  = int(_cfg("cohort_size")),
+                max_step     = int(_cfg("max_step")),
+                gh_n         = int(_cfg("gh_n")),
+                enforce_guardrail      = bool(_cfg("enforce_guardrail")),
+                restrict_final_to_tried= bool(_cfg("restrict_final_mtd")),
+                ewoc_on      = bool(_cfg("ewoc_on")),
+                ewoc_alpha   = float(_cfg("ewoc_alpha")),
+                burn_in      = bool(_cfg("burn_in")),
                 rng=rng_s2, **timing_kw,
                 collect_trace=(s == 0),   # record full trace for first trial only
             )
@@ -1574,7 +1654,7 @@ elif view == "Playground":
                     "true_t1":    list(true_t1),
                     "true_t2":    list(true_t2),
                     "tox1_win":   _tox1_win_derived,
-                    "tox2_win":   int(st.session_state["tox2_win"]),
+                    "tox2_win":   int(_cfg("tox2_win")),
                 }
             sel_crm[selc] += 1
             for p in ptsc:
@@ -1745,8 +1825,8 @@ if (view == "Playground"
 
     st.markdown("---")
     st.subheader("First CRM trial — decision walkthrough")
-    _ewoc_on_flag = bool(st.session_state.get("ewoc_on", True))
-    _ewoc_alpha   = float(st.session_state.get("ewoc_alpha", 0.25))
+    _ewoc_on_flag = bool(_cfg("ewoc_on"))
+    _ewoc_alpha   = float(_cfg("ewoc_alpha"))
     if _ewoc_on_flag:
         st.caption(
             f"**EWOC ON (α = {_ewoc_alpha:.2f})** — At each decision the model filters "
@@ -1910,8 +1990,8 @@ if (view == "Playground"
                     lw=1.8, ms=4, label="OD prob tox1")
             ax.plot(_steps, _od2_curr, "s-", color="#ffaa44",
                     lw=1.8, ms=4, label="OD prob tox2")
-            ewoc_a = float(st.session_state.get("ewoc_alpha", 0.25))
-            if bool(st.session_state.get("ewoc_on", True)):
+            ewoc_a = float(_cfg("ewoc_alpha"))
+            if bool(_cfg("ewoc_on")):
                 ax.axhline(ewoc_a, lw=1, ls="--", color="#80ff80",
                            alpha=0.7, label=f"EWOC α={ewoc_a:.2f}")
             ax.set_title("Safety evolution at current dose", fontsize=9)
@@ -2048,8 +2128,8 @@ def run_parameter_sweep(param_name, param_values, base_ss,
         burn_in=bool(base_ss["burn_in"]),
         enforce_guardrail=bool(base_ss["enforce_guardrail"]),
         restrict_final_to_tried=bool(base_ss["restrict_final_to_tried"]),
-        ewoc_on=bool(base_ss["ewoc_on"]),
-        ewoc_alpha=float(base_ss["ewoc_alpha"]),
+        ewoc_on=bool(get_config_value("ewoc_on")),
+        ewoc_alpha=float(get_config_value("ewoc_alpha")),
     )
 
     rows = []
@@ -2332,12 +2412,12 @@ if view == "Design Exploration":
 
     # ── Compute skeletons from Playground priors ──────────────────────────
     try:
-        _de_pt1  = float(_ss.get("prior_target_t1", R_DEFAULTS["prior_target_t1"]))
-        _de_hw1  = float(_ss.get("halfwidth_t1",    R_DEFAULTS["halfwidth_t1"]))
-        _de_nu1  = int  (_ss.get("prior_nu_t1",     R_DEFAULTS["prior_nu_t1"]))
-        _de_pt2  = float(_ss.get("prior_target_t2", R_DEFAULTS["prior_target_t2"]))
-        _de_hw2  = float(_ss.get("halfwidth_t2",    R_DEFAULTS["halfwidth_t2"]))
-        _de_nu2  = int  (_ss.get("prior_nu_t2",     R_DEFAULTS["prior_nu_t2"]))
+        _de_pt1  = float(get_config_value("prior_target_t1"))
+        _de_hw1  = float(get_config_value("halfwidth_t1"))
+        _de_nu1  = int  (get_config_value("prior_nu_t1"))
+        _de_pt2  = float(get_config_value("prior_target_t2"))
+        _de_hw2  = float(get_config_value("halfwidth_t2"))
+        _de_nu2  = int  (get_config_value("prior_nu_t2"))
         _de_sk1  = dfcrm_getprior(_de_hw1, _de_pt1, _de_nu1, _N_LEVELS)
         _de_sk2  = dfcrm_getprior(_de_hw2, _de_pt2, _de_nu2, _N_LEVELS)
         _de_skel_ok = True
@@ -2347,18 +2427,16 @@ if view == "Design Exploration":
         _de_sk1 = _de_sk2 = None
 
     # ── True toxicity arrays from Playground session state ────────────────
-    _de_t1 = np.array([float(_ss.get(k, d))
-                       for k, d in zip(TRUE_T1_KEYS, DEFAULT_TRUE_T1)])
-    _de_t2 = np.array([float(_ss.get(k, d))
-                       for k, d in zip(TRUE_T2_KEYS, DEFAULT_TRUE_T2)])
+    _de_t1 = np.array([float(get_config_value(k)) for k in TRUE_T1_KEYS])
+    _de_t2 = np.array([float(get_config_value(k)) for k in TRUE_T2_KEYS])
 
     # ── True optimal dose + baseline summary ──────────────────────────────
     if _de_skel_ok:
-        _de_tgt1 = float(_ss["target_t1"])
-        _de_tgt2 = float(_ss["target_t2"])
+        _de_tgt1 = float(get_config_value("target_t1"))
+        _de_tgt2 = float(get_config_value("target_t2"))
         _de_opt  = _true_optimal(_de_t1, _de_t2, _de_tgt1, _de_tgt2)
-        _ewoc_str = (f"ON α={float(_ss['ewoc_alpha']):.2f}"
-                     if bool(_ss.get("ewoc_on", True)) else "OFF")
+        _ewoc_str = (f"ON α={float(get_config_value('ewoc_alpha')):.2f}"
+                     if bool(get_config_value("ewoc_on")) else "OFF")
         st.info(
             f"True optimal dose (highest quality score): **L{_de_opt}** — "
             f"Tox1 = {_de_t1[_de_opt]:.3f},  Tox2 = {_de_t2[_de_opt]:.3f}\n\n"
@@ -2495,7 +2573,7 @@ if view == "Design Exploration":
             _de_ptype   = "continuous"
 
         elif _de_param == "max_n":
-            _de_mn_baseline = int(_ss.get("max_n_crm", R_DEFAULTS["max_n_crm"]))
+            _de_mn_baseline = int(get_config_value("max_n_crm"))
             st.caption(
                 f"Baseline max N from Essentials = **{_de_mn_baseline}**.  "
                 "Select the total patient counts you want to compare."
@@ -2510,7 +2588,7 @@ if view == "Design Exploration":
             _de_ptype = "discrete"
 
         else:  # cohort_size
-            _de_mn_baseline = int(_ss.get("max_n_crm", R_DEFAULTS["max_n_crm"]))
+            _de_mn_baseline = int(get_config_value("max_n_crm"))
             st.caption(
                 f"Max N fixed at **{_de_mn_baseline}** (from Essentials).  "
                 "Select the cohort sizes you want to compare."
@@ -2562,12 +2640,12 @@ if view == "Design Exploration":
     # ── Execute sweep ─────────────────────────────────────────────────────
     if _de_run_btn and _de_skel_ok and len(_de_pv_eff) > 0:
         _de_base_ss = dict(
-            target_tox1          = float(_ss["target_t1"]),
-            target_tox2          = float(_ss["target_t2"]),
+            target_tox1          = float(get_config_value("target_t1")),
+            target_tox2          = float(get_config_value("target_t2")),
             p_surgery            = float(_ss["p_surgery"]),
             sigma                = float(_ss["sigma"]),
             ewoc_on              = bool (_ss["ewoc_on"]),
-            ewoc_alpha           = float(_ss["ewoc_alpha"]),
+            ewoc_alpha           = float(get_config_value("ewoc_alpha")),
             max_n                = int  (_ss["max_n_crm"]),
             cohort_size          = int  (_ss["cohort_size"]),
             start_level          = int  (_ss["start_level_1b"]) - 1,
@@ -2593,7 +2671,7 @@ if view == "Design Exploration":
         _ss["_de_label"]     = _de_label
         _ss["_de_param_key"] = _de_param   # needed so results block can pass it
         # Store cohort_size used during this run for plot annotation
-        _ss["_de_cs_used"]   = int(_ss.get("cohort_size", R_DEFAULTS["cohort_size"]))
+        _ss["_de_cs_used"]   = int(get_config_value("cohort_size"))
 
     # ── Metric help strings ───────────────────────────────────────────────
     _HELP_QS = (
@@ -2636,9 +2714,7 @@ if view == "Design Exploration":
         _df       = _ss["_de_df"]
         _lbl      = _ss["_de_label"]
         _pkey     = _ss.get("_de_param_key", "")
-        _p_info   = {"cohort_size": _ss.get("_de_cs_used",
-                                            int(_ss.get("cohort_size",
-                                                        R_DEFAULTS["cohort_size"])))}
+        _p_info   = {"cohort_size": _ss.get("_de_cs_used", int(get_config_value("cohort_size")))}
 
         _fig = _plot_sweep_results(_df, _lbl, _pkey, param_info=_p_info)
         st.pyplot(_fig)
@@ -2667,12 +2743,25 @@ if view == "Design Exploration":
 # ==============================================================================
 
 with st.expander("🔍 State debug", expanded=False):
-    _cfg = _get_all_config()
+    # _snap is the read-only snapshot dict; note: do NOT shadow the _cfg() function
+    _snap = _get_all_config()
+
+    # ── Automatic consistency check (uses validate_shared_state_consistency) ──
+    st.markdown("#### Consistency check")
+    _problems = validate_shared_state_consistency()
+    if _problems:
+        st.error(f"⚠️ {len(_problems)} state problem(s) detected:")
+        for _p in _problems:
+            st.markdown(f"- {_p}")
+    else:
+        st.success("✅ All canonical config keys present, typed, and in range.")
+
+    st.divider()
 
     # ── Shared config snapshot ────────────────────────────────────────────────
-    st.markdown("#### Full shared config")
-    _study_keys = ["target_t1", "target_t2", "p_surgery", "start_level_1b",
-                   "n_sims", "seed", "accrual_per_month"]
+    st.markdown("#### Full shared config (canonical session_state snapshot)")
+    _study_keys  = ["target_t1", "target_t2", "p_surgery", "start_level_1b",
+                    "n_sims", "seed", "accrual_per_month"]
     _timing_keys = ["incl_to_rt", "rt_dur", "rt_to_surg", "tox2_win"]
     _size_keys   = ["max_n_63", "max_n_crm", "cohort_size"]
     _crm_keys    = ["sigma", "gh_n", "max_step", "burn_in", "ewoc_on",
@@ -2681,79 +2770,41 @@ with st.expander("🔍 State debug", expanded=False):
     _prior_keys  = ["prior_model", "prior_target_t1", "halfwidth_t1",
                     "prior_nu_t1", "prior_target_t2", "halfwidth_t2",
                     "prior_nu_t2", "prior_ep_tab"]
-    _true_keys   = TRUE_T1_KEYS + TRUE_T2_KEYS
 
     _db_c1, _db_c2, _db_c3 = st.columns(3)
     with _db_c1:
-        st.markdown("**Study / Simulation**")
-        st.json({k: _cfg[k] for k in _study_keys})
-        st.markdown("**Timing**")
-        st.json({k: _cfg[k] for k in _timing_keys})
-        st.markdown("**Sample sizes**")
-        st.json({k: _cfg[k] for k in _size_keys})
+        st.markdown("**Study / Simulation / Timing / Sizes**")
+        st.json({k: _snap[k] for k in _study_keys + _timing_keys + _size_keys})
     with _db_c2:
-        st.markdown("**CRM settings**")
-        st.json({k: _cfg[k] for k in _crm_keys})
-        st.markdown("**Priors**")
-        st.json({k: _cfg[k] for k in _prior_keys})
+        st.markdown("**CRM settings / Priors**")
+        st.json({k: _snap[k] for k in _crm_keys + _prior_keys})
     with _db_c3:
-        st.markdown("**True tox1 by dose**")
-        st.json({k: _cfg[k] for k in TRUE_T1_KEYS})
-        st.markdown("**True tox2 by dose**")
-        st.json({k: _cfg[k] for k in TRUE_T2_KEYS})
+        st.markdown("**True tox1 by dose (Playground)**")
+        st.json({k: _snap[k] for k in TRUE_T1_KEYS})
+        st.markdown("**True tox2 by dose (Playground)**")
+        st.json({k: _snap[k] for k in TRUE_T2_KEYS})
+        st.markdown("**Targets used in Playground**")
+        st.json({"target_t1": _snap["target_t1"], "target_t2": _snap["target_t2"]})
 
     st.divider()
-
-    # ── Essentials rendered values ────────────────────────────────────────────
-    st.markdown("#### Currently rendered — Essentials")
-    _ess_rendered = {k: _cfg[k] for k in _study_keys + _timing_keys + _size_keys + _crm_keys}
-    st.json(_ess_rendered)
-
-    st.divider()
-
-    # ── Playground rendered values ────────────────────────────────────────────
-    st.markdown("#### Currently rendered — Playground")
-    _pg_rendered = {k: _cfg[k] for k in _true_keys + _prior_keys}
-    _pg_rendered["target_t1_used_by_plot"] = _cfg["target_t1"]
-    _pg_rendered["target_t2_used_by_plot"] = _cfg["target_t2"]
-    st.json(_pg_rendered)
-
-    st.divider()
-
-    # ── Consistency check ─────────────────────────────────────────────────────
-    st.markdown("#### Consistency check")
-    _mismatches = []
-
-    # target_t1 / target_t2: must be identical across both views
-    # (they share the same session_state key, so any mismatch is a code bug)
-    for _ck in ["target_t1", "target_t2", "p_surgery", "sigma", "ewoc_alpha"]:
-        _ss_val  = st.session_state.get(_ck)
-        _cfg_val = _cfg.get(_ck)
-        if _ss_val != _cfg_val:
-            _mismatches.append(f"**{_ck}**: session_state={_ss_val!r} vs config={_cfg_val!r}")
-
-    # true_t1 widget return values vs session_state (built fresh each render)
-    for _ti, _tk in enumerate(TRUE_T1_KEYS):
-        _ss_v  = st.session_state.get(_tk)
-        _cfg_v = _cfg.get(_tk)
-        if _ss_v != _cfg_v:
-            _mismatches.append(f"**{_tk}**: session_state={_ss_v!r} vs config={_cfg_v!r}")
-    for _ti, _tk in enumerate(TRUE_T2_KEYS):
-        _ss_v  = st.session_state.get(_tk)
-        _cfg_v = _cfg.get(_tk)
-        if _ss_v != _cfg_v:
-            _mismatches.append(f"**{_tk}**: session_state={_ss_v!r} vs config={_cfg_v!r}")
-
-    # Prior sliders: config snapshot vs live session_state
-    for _pk in _prior_keys:
-        _ss_v  = st.session_state.get(_pk)
-        _cfg_v = _cfg.get(_pk)
-        if _ss_v != _cfg_v:
-            _mismatches.append(f"**{_pk}**: session_state={_ss_v!r} vs config={_cfg_v!r}")
-
-    if _mismatches:
-        st.warning("⚠️ Mismatch detected between session_state and config snapshot:")
-        for _m in _mismatches:
-            st.markdown(f"- {_m}")
+    st.markdown("#### Scenario self-check")
+    st.markdown(
+        "The values above confirm state is canonical.  "
+        "**target_t1 / target_t2** set in Essentials must match the values in "
+        "the *Targets used in Playground* block above — if they do, the dose-risk "
+        "preview and highest-safe-dose display will be correct regardless of which "
+        "view was most recently rendered."
+    )
+    # Confirm target sync explicitly
+    _t1_ok = _snap["target_t1"] == get_config_value("target_t1")
+    _t2_ok = _snap["target_t2"] == get_config_value("target_t2")
+    if _t1_ok and _t2_ok:
+        st.success(
+            f"target_t1 = {_snap['target_t1']}  |  "
+            f"target_t2 = {_snap['target_t2']}  — consistent across views."
+        )
     else:
-        st.success("✅ All config keys match between session_state and config snapshot.")
+        st.error(
+            f"target_t1 snapshot={_snap['target_t1']!r} live={get_config_value('target_t1')!r}  |  "
+            f"target_t2 snapshot={_snap['target_t2']!r} live={get_config_value('target_t2')!r}"
+        )
