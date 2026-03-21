@@ -1970,6 +1970,19 @@ elif view == "Playground":
                     "true_t2":    list(true_t2),
                     "tox1_win":   _tox1_win_derived,
                     "tox2_win":   int(_cfg("tox2_win")),
+                    # Final MTD for this trial and CRM parameters needed to
+                    # re-compute posterior summaries in the UI explanation table.
+                    "final_mtd":  selc,
+                    "study_days": sdc,
+                    "sigma":      float(_cfg("sigma")),
+                    "skel_t1":    list(skel_t1),
+                    "skel_t2":    list(skel_t2),
+                    "target_t1":  float(_cfg("target_t1")),
+                    "target_t2":  float(_cfg("target_t2")),
+                    "gh_n":       int(_cfg("gh_n")),
+                    "ewoc_on":    bool(_cfg("ewoc_on")),
+                    "ewoc_alpha": float(_cfg("ewoc_alpha")),
+                    "restrict_final_mtd": bool(_cfg("restrict_final_mtd")),
                 }
             sel_crm[selc] += 1
             for p in ptsc:
@@ -2260,6 +2273,165 @@ if (view == "Playground"
             "OD prob tox2 < α; the highest allowed dose is selected. "
             "**EWOC OFF**: no OD filter — the dose with post mean tox1 closest to "
             "target1 is selected (argmin rule)."
+        )
+
+    # ── Final MTD selection ────────────────────────────────────────────────────
+    _final_mtd   = _tr.get("final_mtd")
+    _sigma_tr    = _tr.get("sigma",    float(_cfg("sigma")))
+    _skel_t1_tr  = _tr.get("skel_t1")
+    _skel_t2_tr  = _tr.get("skel_t2")
+    _tgt1_tr     = _tr.get("target_t1", float(_cfg("target_t1")))
+    _tgt2_tr     = _tr.get("target_t2", float(_cfg("target_t2")))
+    _gh_n_tr     = _tr.get("gh_n",     int(_cfg("gh_n")))
+    _ewoc_on_tr  = _tr.get("ewoc_on",  bool(_cfg("ewoc_on")))
+    _ewoc_a_tr   = _tr.get("ewoc_alpha", float(_cfg("ewoc_alpha")))
+    _restr_tr    = _tr.get("restrict_final_mtd", bool(_cfg("restrict_final_mtd")))
+    _sd_tr       = _tr.get("study_days", 0.0)
+
+    if _final_mtd is not None and _skel_t1_tr is not None:
+        import pandas as pd  # noqa: F811
+        st.markdown("---")
+        st.subheader("Final MTD selection — this trial")
+
+        # Prominent MTD banner
+        st.markdown(
+            f"<div style='font-size:1.35em; font-weight:700; padding:0.5em 0.8em; "
+            f"border-radius:6px; background:#1a3a5c; color:#e8f4ff; "
+            f"border-left:5px solid #4da6ff; margin-bottom:0.6em;'>"
+            f"&#128073; Final selected MTD (this trial): "
+            f"<span style='color:#7dd3fc;'>L{_final_mtd}</span>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
+        # Re-compute final-state TITE weights (full follow-up = study end)
+        _n1f_arr = np.zeros(5)
+        _y1f_arr = np.zeros(5)
+        _n2f_arr = np.zeros(5)
+        _y2f_arr = np.zeros(5)
+        if _pts:
+            _n1f_arr, _y1f_arr, _n2f_arr, _y2f_arr = tite_weights(
+                _pts, _sd_tr, _tox1_win, _tox2_win, 5
+            )
+
+        # Final posterior summaries for tox1 and tox2
+        _pm1f, _od1f = crm_posterior_summaries(
+            _sigma_tr, _skel_t1_tr, _n1f_arr, _y1f_arr, _tgt1_tr, gh_n=_gh_n_tr
+        )
+        _pm2f, _od2f = crm_posterior_summaries(
+            _sigma_tr, _skel_t2_tr, _n2f_arr, _y2f_arr, _tgt2_tr, gh_n=_gh_n_tr
+        )
+
+        # Determine per-dose status using the same logic as crm_select_mtd()
+        _n_levels = 5
+        _tried    = set(int(i) for i in range(_n_levels) if _n1f_arr[i] > 0)
+
+        # Step 1: EWOC admissibility filter
+        if _ewoc_on_tr:
+            _ewoc_cands = set(
+                i for i in range(_n_levels)
+                if float(_od1f[i]) < _ewoc_a_tr and float(_od2f[i]) < _ewoc_a_tr
+            )
+        else:
+            _ewoc_cands = set(range(_n_levels))  # all doses when EWOC OFF
+
+        # Step 2: Intersect with tried (if restrict_final_mtd); fall back to
+        #         tried-only when intersection is empty (mirrors crm_select_mtd)
+        if _restr_tr and _tried:
+            _cands_intersect = _ewoc_cands & _tried
+            _final_cands = _cands_intersect if _cands_intersect else _tried
+        else:
+            _final_cands = _ewoc_cands
+
+        # Step 3: Selection rule
+        if _ewoc_on_tr:
+            _sel_rule_str = (
+                f"**EWOC ON (α = {_ewoc_a_tr:.2f})**: doses admitted only where "
+                f"P(tox1 OD) < α **and** P(tox2 OD) < α.  "
+                f"Among admitted {'tried ' if _restr_tr else ''}doses, "
+                f"the **highest** is selected."
+            )
+        else:
+            _sel_rule_str = (
+                "**EWOC OFF**: no overdose-probability filter.  "
+                f"Among {'tried ' if _restr_tr else ''}doses, the one with "
+                f"posterior mean P(tox1) **closest to target ({_tgt1_tr:.2f})** "
+                "is selected (standard CRM argmin rule)."
+            )
+        st.caption(_sel_rule_str)
+
+        # Build the per-dose explanation table
+        _exp_rows = []
+        for _i in range(_n_levels):
+            _tried_str   = "Yes" if _i in _tried   else "No"
+            _ewoc_ok_1   = float(_od1f[_i]) < _ewoc_a_tr
+            _ewoc_ok_2   = float(_od2f[_i]) < _ewoc_a_tr
+            _in_cands    = _i in _final_cands
+
+            # Build exclusion reason
+            if _i == _final_mtd:
+                _status  = "Selected ★"
+                _reason  = "Final MTD"
+            elif _i in _final_cands:
+                _status  = "Allowed ✅"
+                _reason  = "Admissible — not selected"
+            else:
+                _status  = "Excluded ❌"
+                # Determine primary exclusion cause
+                _excl_parts = []
+                if _ewoc_on_tr:
+                    if not _ewoc_ok_1 and not _ewoc_ok_2:
+                        _excl_parts.append(
+                            f"OD prob too high for both tox1 ({_od1f[_i]:.2f} ≥ {_ewoc_a_tr:.2f}) "
+                            f"and tox2 ({_od2f[_i]:.2f} ≥ {_ewoc_a_tr:.2f})"
+                        )
+                    elif not _ewoc_ok_1:
+                        _excl_parts.append(
+                            f"tox1 OD prob {_od1f[_i]:.2f} ≥ α ({_ewoc_a_tr:.2f})"
+                        )
+                    elif not _ewoc_ok_2:
+                        _excl_parts.append(
+                            f"tox2 OD prob {_od2f[_i]:.2f} ≥ α ({_ewoc_a_tr:.2f})"
+                        )
+                if _restr_tr and _i not in _tried and not _ewoc_cands.isdisjoint(_tried):
+                    _excl_parts.append("dose not tried")
+                _reason = "Excluded: " + "; ".join(_excl_parts) if _excl_parts else "Excluded"
+
+            _exp_rows.append({
+                "Dose":              f"L{_i}",
+                "Tried":             _tried_str,
+                "Post mean tox1":    round(float(_pm1f[_i]), 3),
+                "Post mean tox2":    round(float(_pm2f[_i]), 3),
+                "OD prob tox1":      round(float(_od1f[_i]), 3),
+                "OD prob tox2":      round(float(_od2f[_i]), 3),
+                "Status":            _status,
+                "Reason":            _reason,
+            })
+
+        _exp_df = pd.DataFrame(_exp_rows)
+
+        # Colour rows: selected = gold, allowed = green tint, excluded = red tint
+        def _colour_row(row):
+            if "Selected" in row["Status"]:
+                bg = "background-color:#1a3a1a; color:#7dffab; font-weight:700"
+            elif "Allowed" in row["Status"]:
+                bg = "background-color:#0d2a1a; color:#a3e4c0"
+            else:
+                bg = "background-color:#2a0d0d; color:#e4a3a3"
+            return [bg] * len(row)
+
+        st.dataframe(
+            _exp_df.style.apply(_colour_row, axis=1),
+            use_container_width=True, hide_index=True,
+        )
+        st.caption(
+            "Final posterior computed at study end (full TITE follow-up weights). "
+            "OD prob = P(true tox > target). "
+            + ("EWOC filter requires OD prob < α for **both** tox1 and tox2 simultaneously. "
+               if _ewoc_on_tr else
+               "EWOC OFF: no overdose filter applied; selection is argmin |post mean tox1 − target|. ")
+            + ("Excluded doses that passed the safety filter but were never treated are "
+               "marked 'dose not tried'." if _restr_tr else "")
         )
 
     # ── Trace plots ────────────────────────────────────────────────────────────
