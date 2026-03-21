@@ -2292,6 +2292,9 @@ def _plot_sweep_results(df, param_label, param_name="", param_info=None):
     - sigma/ewoc  : parameter value; fixed N shown in xlabel
     """
     param_info = param_info or {}
+    # Sort bars low-to-high by the swept parameter value so the x-axis is
+    # always in ascending order regardless of selection order.
+    df = df.sort_values("param_raw", ascending=True).reset_index(drop=True)
     fig, axes  = plt.subplots(1, 3, figsize=(13, 3.6))
     x          = np.arange(len(df))
 
