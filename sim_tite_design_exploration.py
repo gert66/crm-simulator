@@ -68,10 +68,26 @@ MONTH = 30.0   # days per month (accrual unit conversion)
 def safe_probs(x):
     return np.clip(np.asarray(x, dtype=float), 1e-6, 1 - 1e-6)
 
+_DARK_BG  = "#1a1a2e"
+_DARK_AX  = "#16213e"
+_DARK_FG  = "#e0e0e0"
+_DARK_GRD = "#2a2a4a"
+
+def _apply_dark_fig(fig, *axes):
+    fig.patch.set_facecolor(_DARK_BG)
+    for ax in axes:
+        ax.set_facecolor(_DARK_AX)
+        ax.tick_params(colors=_DARK_FG, labelsize=8)
+        for spine in ax.spines.values():
+            spine.set_edgecolor(_DARK_GRD)
+        ax.xaxis.label.set_color(_DARK_FG)
+        ax.yaxis.label.set_color(_DARK_FG)
+        ax.title.set_color(_DARK_FG)
+
 def compact_style(ax):
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
-    ax.grid(axis="y", linewidth=0.5, alpha=0.25)
+    ax.grid(axis="y", linewidth=0.5, alpha=0.3, color=_DARK_GRD)
 
 def fig_to_png_bytes(fig):
     buf = BytesIO()
@@ -744,6 +760,27 @@ st.set_page_config(
 
 st.markdown("""
 <style>
+  /* ── Force dark theme ── */
+  html, body, [data-testid="stAppViewContainer"], [data-testid="stApp"],
+  [data-testid="stHeader"], [data-testid="stToolbar"],
+  .main, .block-container, section[data-testid="stSidebar"] {
+    background-color: #1a1a2e !important;
+    color: #e0e0e0 !important;
+  }
+  section[data-testid="stSidebar"] { background-color: #16213e !important; }
+  section[data-testid="stSidebar"] * { color: #e0e0e0 !important; }
+  [data-testid="stWidgetLabel"] p,
+  .stMarkdown p, .stMarkdown h4, label { color: #e0e0e0 !important; }
+  [data-testid="stNumberInput"] input,
+  [data-testid="stTextInput"] input,
+  [data-testid="stSelectbox"] select,
+  div[data-baseweb="select"] { background-color: #0f3460 !important; color: #e0e0e0 !important; }
+  [data-testid="stSlider"] div[data-baseweb="slider"] div { background-color: #e0e0e0 !important; }
+  [data-testid="stMetric"]       { background-color: #16213e !important; border-radius: 6px; padding: 0.4rem !important; }
+  [data-testid="stMetricLabel"]  { color: #a0a0c0 !important; }
+  [data-testid="stMetricValue"]  { color: #e0e0e0 !important; }
+
+  /* ── Layout tweaks ── */
   .block-container { padding-top: 2.6rem; padding-bottom: 0.5rem; }
   .element-container { margin-bottom: 0.12rem; }
 
@@ -917,8 +954,8 @@ def _draw_timeline(incl_to_rt, rt_dur, rt_to_surg, tox2_win):
     Tox1 window is derived as rt_dur + rt_to_surg, so it ends exactly at
     surgery — the same derivation used in the simulation.
     """
-    _BG = "#f5f5f5"   # fixed light background — readable on any Streamlit theme
-    _FG = "#1a1a1a"   # dark foreground for text / markers
+    _BG = _DARK_BG
+    _FG = _DARK_FG
 
     fig, ax = plt.subplots(figsize=(9.0, 0.9), dpi=120)
     fig.patch.set_facecolor(_BG)
@@ -981,7 +1018,7 @@ def _draw_timeline(incl_to_rt, rt_dur, rt_to_surg, tox2_win):
 # Navigation (sidebar)
 # ==============================================================================
 
-view = st.sidebar.selectbox(
+view = st.sidebar.radio(
     "View",
     options=["Essentials", "Playground", "Design Exploration"],
     key="nav_view",
@@ -1423,26 +1460,27 @@ elif view == "Playground":
         fig, (ax1, ax2) = plt.subplots(2, 1,
                                        figsize=(PREVIEW_W_IN, PREVIEW_H_IN),
                                        dpi=PREVIEW_DPI)
-        x = np.arange(5)
+        _apply_dark_fig(fig, ax1, ax2)
+        x = np.arange(5); bw = 0.38
 
-        ax1.plot(x, true_t1,  "o-",  color="tab:blue",   lw=1.5, label="True tox1")
-        ax1.plot(x, skel_t1,  "o--", color="tab:blue",   lw=1.5, label="Skel tox1")
-        ax1.axhline(target_t1_val, lw=1, alpha=0.55, color="tab:blue")
-        ax1.set_ylabel("P(tox1)", fontsize=8)
+        ax1.bar(x - bw/2, true_t1, bw, color="#4a9eff", label="True tox1")
+        ax1.bar(x + bw/2, skel_t1, bw, color="#4a9eff", alpha=0.5, label="Skel tox1", hatch="//")
+        ax1.axhline(target_t1_val, lw=1, alpha=0.7, color="#80c0ff", ls="--")
+        ax1.set_ylabel("P(tox1)", fontsize=8, color=_DARK_FG)
         ax1.set_xticks(x); ax1.set_xticklabels([f"L{i}" for i in range(5)], fontsize=8)
         _y1 = max(max(true_t1), max(skel_t1), target_t1_val)
         ax1.set_ylim(0, min(1.0, _y1 * 1.3 + 0.02))
-        ax1.legend(fontsize=7, frameon=False, loc="upper left")
+        ax1.legend(fontsize=7, frameon=False, loc="upper left", labelcolor=_DARK_FG)
         compact_style(ax1)
 
-        ax2.plot(x, true_t2,  "s-",  color="tab:orange", lw=1.5, label="True tox2")
-        ax2.plot(x, skel_t2,  "s--", color="tab:orange", lw=1.5, label="Skel tox2")
-        ax2.axhline(target_t2_val, lw=1, alpha=0.55, color="tab:orange")
-        ax2.set_ylabel("P(tox2)", fontsize=8)
+        ax2.bar(x - bw/2, true_t2, bw, color="#ffaa44", label="True tox2")
+        ax2.bar(x + bw/2, skel_t2, bw, color="#ffaa44", alpha=0.5, label="Skel tox2", hatch="//")
+        ax2.axhline(target_t2_val, lw=1, alpha=0.7, color="#ffd080", ls="--")
+        ax2.set_ylabel("P(tox2)", fontsize=8, color=_DARK_FG)
         ax2.set_xticks(x); ax2.set_xticklabels([f"L{i}" for i in range(5)], fontsize=8)
         _y2 = max(max(true_t2), max(skel_t2), target_t2_val)
         ax2.set_ylim(0, min(1.0, _y2 * 1.25 + 0.02))
-        ax2.legend(fontsize=7, frameon=False, loc="upper left")
+        ax2.legend(fontsize=7, frameon=False, loc="upper left", labelcolor=_DARK_FG)
         compact_style(ax2)
 
         fig.tight_layout(pad=0.5)
@@ -1593,18 +1631,19 @@ if view == "Playground" and "_tite_results" in st.session_state:
 
     with r1:
         fig, ax = plt.subplots(figsize=(RESULT_W_IN, RESULT_H_IN), dpi=RESULT_DPI)
+        _apply_dark_fig(fig, ax)
         xx = np.arange(5); w = 0.38
-        ax.bar(xx - w/2, p63,  w, label="TITE 6+3")
-        ax.bar(xx + w/2, pcrm, w, label="TITE-CRM")
+        ax.bar(xx - w/2, p63,  w, color="#4a9eff", label="TITE 6+3")
+        ax.bar(xx + w/2, pcrm, w, color="#ffaa44", label="TITE-CRM")
         ax.set_title("P(select dose as MTD)", fontsize=10)
         ax.set_xticks(xx)
         ax.set_xticklabels([f"L{i}" for i in range(5)], fontsize=9)
         ax.set_ylabel("Probability", fontsize=9)
         ax.set_ylim(0, max(p63.max(), pcrm.max()) * 1.15 + 1e-6)
         if ts is not None:
-            ax.axvline(ts, lw=1, alpha=0.6, label=f"True safe=L{ts}")
+            ax.axvline(ts, lw=1, alpha=0.6, color="#80ff80", label=f"True safe=L{ts}")
         compact_style(ax)
-        ax.legend(fontsize=8, frameon=False)
+        ax.legend(fontsize=8, frameon=False, labelcolor=_DARK_FG)
         fig.tight_layout(pad=0.4)
         st.image(fig_to_png_bytes(fig), use_container_width=True)
 
@@ -1612,24 +1651,25 @@ if view == "Playground" and "_tite_results" in st.session_state:
         fig, (ax_n, ax_s) = plt.subplots(2, 1,
                                           figsize=(RESULT_W_IN, RESULT_H_IN),
                                           dpi=RESULT_DPI)
+        _apply_dark_fig(fig, ax_n, ax_s)
         xx = np.arange(5); w = 0.38
-        ax_n.bar(xx - w/2, res["avg_n63"],    w, label="6+3")
-        ax_n.bar(xx + w/2, res["avg_ncrm"],   w, label="CRM")
+        ax_n.bar(xx - w/2, res["avg_n63"],    w, color="#4a9eff", label="6+3")
+        ax_n.bar(xx + w/2, res["avg_ncrm"],   w, color="#ffaa44", label="CRM")
         ax_n.set_title("Avg patients treated", fontsize=9)
         ax_n.set_xticks(xx)
         ax_n.set_xticklabels([f"L{i}" for i in range(5)], fontsize=8)
         ax_n.set_ylabel("Patients", fontsize=8)
         compact_style(ax_n)
-        ax_n.legend(fontsize=7, frameon=False)
+        ax_n.legend(fontsize=7, frameon=False, labelcolor=_DARK_FG)
 
-        ax_s.bar(xx - w/2, res["avg_nsurg63"],  w, label="6+3")
-        ax_s.bar(xx + w/2, res["avg_nsurgcrm"], w, label="CRM")
+        ax_s.bar(xx - w/2, res["avg_nsurg63"],  w, color="#4a9eff", label="6+3")
+        ax_s.bar(xx + w/2, res["avg_nsurgcrm"], w, color="#ffaa44", label="CRM")
         ax_s.set_title("Avg surgery patients", fontsize=9)
         ax_s.set_xticks(xx)
         ax_s.set_xticklabels([f"L{i}" for i in range(5)], fontsize=8)
         ax_s.set_ylabel("Patients", fontsize=8)
         compact_style(ax_s)
-        ax_s.legend(fontsize=7, frameon=False)
+        ax_s.legend(fontsize=7, frameon=False, labelcolor=_DARK_FG)
 
         fig.tight_layout(pad=0.4)
         st.image(fig_to_png_bytes(fig), use_container_width=True)
@@ -1849,16 +1889,17 @@ if (view == "Playground"
         # ── Plot A: dose level assigned per cohort step ───────────────────────
         with _tc1:
             fig, ax = plt.subplots(figsize=(4.2, 2.8), dpi=130)
-            ax.step(_steps, _curr, where="post", color="tab:blue",
+            _apply_dark_fig(fig, ax)
+            ax.step(_steps, _curr, where="post", color="#4a9eff",
                     lw=2, label="Dose assigned")
-            ax.step(_steps, _next, where="post", color="tab:blue",
+            ax.step(_steps, _next, where="post", color="#4a9eff",
                     lw=1.2, ls="--", alpha=0.6, label="Next dose chosen")
             ax.set_title("Dose level over cohort steps", fontsize=9)
             ax.set_xlabel("Decision step", fontsize=8)
             ax.set_ylabel("Dose level (L0 – L4)", fontsize=8)
             ax.set_yticks(range(5))
             ax.set_yticklabels([f"L{i}" for i in range(5)], fontsize=7)
-            ax.legend(fontsize=7, frameon=False)
+            ax.legend(fontsize=7, frameon=False, labelcolor=_DARK_FG)
             compact_style(ax)
             fig.tight_layout(pad=0.5)
             st.image(fig_to_png_bytes(fig), use_container_width=True)
@@ -1868,19 +1909,20 @@ if (view == "Playground"
         # ── Plot B: overdose probabilities at the current dose over time ──────
         with _tc2:
             fig, ax = plt.subplots(figsize=(4.2, 2.8), dpi=130)
-            ax.plot(_steps, _od1_curr, "o-", color="tab:blue",
+            _apply_dark_fig(fig, ax)
+            ax.plot(_steps, _od1_curr, "o-", color="#4a9eff",
                     lw=1.8, ms=4, label="OD prob tox1")
-            ax.plot(_steps, _od2_curr, "s-", color="tab:orange",
+            ax.plot(_steps, _od2_curr, "s-", color="#ffaa44",
                     lw=1.8, ms=4, label="OD prob tox2")
             ewoc_a = float(st.session_state.get("ewoc_alpha", 0.25))
             if bool(st.session_state.get("ewoc_on", True)):
-                ax.axhline(ewoc_a, lw=1, ls="--", color="#888",
+                ax.axhline(ewoc_a, lw=1, ls="--", color="#80ff80",
                            alpha=0.7, label=f"EWOC α={ewoc_a:.2f}")
             ax.set_title("Safety evolution at current dose", fontsize=9)
             ax.set_xlabel("Decision step", fontsize=8)
             ax.set_ylabel("P(overdose)", fontsize=8)
             ax.set_ylim(0, min(1.05, max(max(_od1_curr), max(_od2_curr)) * 1.3 + 0.05))
-            ax.legend(fontsize=7, frameon=False)
+            ax.legend(fontsize=7, frameon=False, labelcolor=_DARK_FG)
             compact_style(ax)
             fig.tight_layout(pad=0.5)
             st.image(fig_to_png_bytes(fig), use_container_width=True)
@@ -1893,16 +1935,17 @@ if (view == "Playground"
         # ── Plot C: TITE follow-up accumulation ───────────────────────────────
         with _tc3:
             fig, ax = plt.subplots(figsize=(4.2, 2.8), dpi=130)
-            ax.plot(_steps, _n1_sum, "o-", color="tab:blue",
+            _apply_dark_fig(fig, ax)
+            ax.plot(_steps, _n1_sum, "o-", color="#4a9eff",
                     lw=1.8, ms=4, label="Effective n (tox1)")
-            ax.plot(_steps, _n2_sum, "s-", color="tab:orange",
+            ax.plot(_steps, _n2_sum, "s-", color="#ffaa44",
                     lw=1.8, ms=4, label="Effective n (tox2)")
-            ax.plot(_steps, _n_enr,  "^--", color="#aaa",
+            ax.plot(_steps, _n_enr,  "^--", color="#c0c0c0",
                     lw=1.2, ms=4, label="Patients enrolled")
             ax.set_title("TITE follow-up accumulation", fontsize=9)
             ax.set_xlabel("Decision step", fontsize=8)
             ax.set_ylabel("Effective patient count", fontsize=8)
-            ax.legend(fontsize=7, frameon=False)
+            ax.legend(fontsize=7, frameon=False, labelcolor=_DARK_FG)
             compact_style(ax)
             fig.tight_layout(pad=0.5)
             st.image(fig_to_png_bytes(fig), use_container_width=True)
@@ -2092,13 +2135,14 @@ def _plot_sweep_results(df, param_label, param_name="", param_info=None):
         xtick_labels = df["param_label"].tolist()
         xlabel = f"{param_label}  (N = {n_fixed} pts)"
 
+    _apply_dark_fig(fig, *axes)
     specs = [
-        ("quality_score",         "Quality score",       "#2563eb"),
-        ("pct_correct_selection", "% Correct selection", "#16a34a"),
-        ("overdose_rate",         "Overdose rate (%)",   "#dc2626"),
+        ("quality_score",         "Quality score",       "#4a9eff"),
+        ("pct_correct_selection", "% Correct selection", "#44dd88"),
+        ("overdose_rate",         "Overdose rate (%)",   "#ff6666"),
     ]
     for ax, (col, ylabel, color) in zip(axes, specs):
-        ax.plot(x, df[col].values, marker="o", color=color, lw=2, ms=5)
+        ax.bar(x, df[col].values, color=color, alpha=0.85)
         ax.set_xticks(x)
         ax.set_xticklabels(xtick_labels,
                            rotation=35 if len(x) > 6 else 0,
@@ -2107,7 +2151,7 @@ def _plot_sweep_results(df, param_label, param_name="", param_info=None):
         ax.set_title(ylabel, fontsize=10, fontweight="bold")
         ax.spines["top"].set_visible(False)
         ax.spines["right"].set_visible(False)
-        ax.grid(axis="y", lw=0.5, alpha=0.3)
+        ax.grid(axis="y", lw=0.5, alpha=0.3, color=_DARK_GRD)
     fig.tight_layout(pad=1.5)
     return fig
 
