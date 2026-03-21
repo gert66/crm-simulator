@@ -918,7 +918,7 @@ _ALL_CONFIG_KEYS = list(_ALL_DEFAULTS.keys())
 # Single-source-of-truth state management
 # ==============================================================================
 
-_STATE_VERSION = "2026-03-21c"
+_STATE_VERSION = "2026-03-21d"
 
 def init_state() -> None:
     """Seed EVERY canonical config key exactly once per session.
@@ -1078,23 +1078,25 @@ def _cfg(key: str):
 # BEFORE the next render, so no "widget default vs Session State API" warning.
 
 def _clamp_halfwidth_t1() -> None:
-    """Clamp halfwidth_t1 when prior_target_t1 changes."""
-    pt  = float(st.session_state.get("prior_target_t1",
-                                     R_DEFAULTS["prior_target_t1"]))
+    """Sync target slider→config and clamp halfwidth_t1 when prior_target_t1 changes."""
+    pt = float(st.session_state.get("sl_prior_target_t1", R_DEFAULTS["prior_target_t1"]))
+    st.session_state["prior_target_t1"] = pt
     max_hw = max(0.01, round(min(pt - 0.01, 1.0 - pt - 0.01), 2))
     hw = float(st.session_state.get("halfwidth_t1", R_DEFAULTS["halfwidth_t1"]))
     if hw > max_hw:
         st.session_state["halfwidth_t1"] = max_hw
+        st.session_state["sl_halfwidth_t1"] = max_hw
 
 
 def _clamp_halfwidth_t2() -> None:
-    """Clamp halfwidth_t2 when prior_target_t2 changes."""
-    pt  = float(st.session_state.get("prior_target_t2",
-                                     R_DEFAULTS["prior_target_t2"]))
+    """Sync target slider→config and clamp halfwidth_t2 when prior_target_t2 changes."""
+    pt = float(st.session_state.get("sl_prior_target_t2", R_DEFAULTS["prior_target_t2"]))
+    st.session_state["prior_target_t2"] = pt
     max_hw = max(0.01, round(min(pt - 0.01, 1.0 - pt - 0.01), 2))
     hw = float(st.session_state.get("halfwidth_t2", R_DEFAULTS["halfwidth_t2"]))
     if hw > max_hw:
         st.session_state["halfwidth_t2"] = max_hw
+        st.session_state["sl_halfwidth_t2"] = max_hw
 
 
 def _draw_timeline(incl_to_rt, rt_dur, rt_to_surg, tox2_win):
@@ -1294,14 +1296,17 @@ if view == "Essentials":
             help=h("max_step",
                    "Max dose levels the CRM can move per cohort update.")
         )
+        st.session_state["sl_sigma"] = float(_cfg("sigma"))
         st.slider(
             "Prior sigma on theta",
-            min_value=0.2, max_value=5.0, step=0.1, key="sigma",
+            min_value=0.2, max_value=5.0, step=0.1, key="sl_sigma",
             help=h("sigma",
                    "SD of theta in the CRM prior (shared for both endpoints). "
                    "Larger = more diffuse prior.",
                    r_name="prior.sigma / sigma")
         )
+        st.session_state["sigma"] = st.session_state["sl_sigma"]
+        st.caption(f"[dbg sigma] cfg={_cfg('sigma'):.1f}  widget={st.session_state['sl_sigma']:.1f}")
 
         st.markdown("#### CRM safety / selection")
         st.toggle(
@@ -1496,14 +1501,6 @@ elif view == "Playground":
         prior_model_val = str(_cfg("prior_model"))
         intcpt_val      = float(_cfg("logistic_intcpt"))
 
-        # Compute dynamic halfwidth upper bounds from current prior_target values.
-        # No script-body writes to widget keys — clamping is handled by the
-        # _clamp_halfwidth_t1/t2 callbacks attached to the prior_target sliders.
-        _pt1     = float(_cfg("prior_target_t1"))
-        _max_hw1 = max(0.01, round(min(_pt1 - 0.01, 1.0 - _pt1 - 0.01), 2))
-        _pt2     = float(_cfg("prior_target_t2"))
-        _max_hw2 = max(0.01, round(min(_pt2 - 0.01, 1.0 - _pt2 - 0.01), 2))
-
         ep_tab = st.radio(
             "Endpoint",
             options=["Tox1 (acute)", "Tox2 (subacute | surgery)"],
@@ -1512,33 +1509,80 @@ elif view == "Playground":
         )
 
         if ep_tab == "Tox1 (acute)":
+            # ── Prior target ──────────────────────────────────────────────
+            # Pre-write canonical → widget key so the thumb always reflects
+            # the config value (pending user interactions still win over this).
+            st.session_state["sl_prior_target_t1"] = float(_cfg("prior_target_t1"))
             st.slider("Prior target (tox1)", 0.05, 0.50, step=0.01,
-                      key="prior_target_t1",
+                      key="sl_prior_target_t1",
                       on_change=_clamp_halfwidth_t1,
                       help=h("prior_target_t1", "Target probability for the tox1 skeleton."))
-            _hw1_raw = float(st.session_state.get("halfwidth_t1", R_DEFAULTS["halfwidth_t1"]))
-            if _hw1_raw > _max_hw1:
-                st.session_state["halfwidth_t1"] = _max_hw1
+            # Post-read widget → canonical config
+            st.session_state["prior_target_t1"] = st.session_state["sl_prior_target_t1"]
+            st.caption(f"[dbg t1 target] cfg={_cfg('prior_target_t1'):.2f}  "
+                       f"widget={st.session_state['sl_prior_target_t1']:.2f}")
+
+            # Recompute halfwidth bound from the now-updated target
+            _pt1     = float(_cfg("prior_target_t1"))
+            _max_hw1 = max(0.01, round(min(_pt1 - 0.01, 1.0 - _pt1 - 0.01), 2))
+
+            # ── Halfwidth ─────────────────────────────────────────────────
+            _hw1_clamped = min(float(_cfg("halfwidth_t1")), _max_hw1)
+            st.session_state["sl_halfwidth_t1"] = _hw1_clamped
             st.slider("Halfwidth (tox1)", 0.01, float(_max_hw1), step=0.01,
-                      key="halfwidth_t1",
+                      key="sl_halfwidth_t1",
                       help=h("halfwidth_t1", "Skeleton steepness. target ± halfwidth must stay in (0,1)."))
+            st.session_state["halfwidth_t1"] = st.session_state["sl_halfwidth_t1"]
+            st.caption(f"[dbg t1 hw] cfg={_cfg('halfwidth_t1'):.2f}  "
+                       f"widget={st.session_state['sl_halfwidth_t1']:.2f}")
+
+            # ── Prior MTD level ───────────────────────────────────────────
+            st.session_state["sl_prior_nu_t1"] = int(_cfg("prior_nu_t1"))
             st.slider("Prior MTD level (tox1, 1-based)", 1, 5, step=1,
-                      key="prior_nu_t1",
+                      key="sl_prior_nu_t1",
                       help=h("prior_nu_t1", "Dose level a priori closest to the tox1 target."))
+            st.session_state["prior_nu_t1"] = st.session_state["sl_prior_nu_t1"]
+            st.caption(f"[dbg t1 nu] cfg={_cfg('prior_nu_t1')}  "
+                       f"widget={st.session_state['sl_prior_nu_t1']}")
         else:
+            # ── Prior target (tox2) ───────────────────────────────────────
+            st.session_state["sl_prior_target_t2"] = float(_cfg("prior_target_t2"))
             st.slider("Prior target (tox2)", 0.05, 0.50, step=0.01,
-                      key="prior_target_t2",
+                      key="sl_prior_target_t2",
                       on_change=_clamp_halfwidth_t2,
                       help=h("prior_target_t2", "Target probability for the tox2 skeleton."))
-            _hw2_raw = float(st.session_state.get("halfwidth_t2", R_DEFAULTS["halfwidth_t2"]))
-            if _hw2_raw > _max_hw2:
-                st.session_state["halfwidth_t2"] = _max_hw2
+            st.session_state["prior_target_t2"] = st.session_state["sl_prior_target_t2"]
+            st.caption(f"[dbg t2 target] cfg={_cfg('prior_target_t2'):.2f}  "
+                       f"widget={st.session_state['sl_prior_target_t2']:.2f}")
+
+            _pt2     = float(_cfg("prior_target_t2"))
+            _max_hw2 = max(0.01, round(min(_pt2 - 0.01, 1.0 - _pt2 - 0.01), 2))
+
+            # ── Halfwidth (tox2) ──────────────────────────────────────────
+            _hw2_clamped = min(float(_cfg("halfwidth_t2")), _max_hw2)
+            st.session_state["sl_halfwidth_t2"] = _hw2_clamped
             st.slider("Halfwidth (tox2)", 0.01, float(_max_hw2), step=0.01,
-                      key="halfwidth_t2",
+                      key="sl_halfwidth_t2",
                       help=h("halfwidth_t2", "Skeleton steepness. target ± halfwidth must stay in (0,1)."))
+            st.session_state["halfwidth_t2"] = st.session_state["sl_halfwidth_t2"]
+            st.caption(f"[dbg t2 hw] cfg={_cfg('halfwidth_t2'):.2f}  "
+                       f"widget={st.session_state['sl_halfwidth_t2']:.2f}")
+
+            # ── Prior MTD level (tox2) ────────────────────────────────────
+            st.session_state["sl_prior_nu_t2"] = int(_cfg("prior_nu_t2"))
             st.slider("Prior MTD level (tox2, 1-based)", 1, 5, step=1,
-                      key="prior_nu_t2",
+                      key="sl_prior_nu_t2",
                       help=h("prior_nu_t2", "Dose level a priori closest to the tox2 conditional target."))
+            st.session_state["prior_nu_t2"] = st.session_state["sl_prior_nu_t2"]
+            st.caption(f"[dbg t2 nu] cfg={_cfg('prior_nu_t2')}  "
+                       f"widget={st.session_state['sl_prior_nu_t2']}")
+
+        # Refresh _max_hw1/2 for use in skeleton computation below (based on
+        # the canonical values that were just updated by post-reads above).
+        _pt1     = float(_cfg("prior_target_t1"))
+        _max_hw1 = max(0.01, round(min(_pt1 - 0.01, 1.0 - _pt1 - 0.01), 2))
+        _pt2     = float(_cfg("prior_target_t2"))
+        _max_hw2 = max(0.01, round(min(_pt2 - 0.01, 1.0 - _pt2 - 0.01), 2))
 
         # Compute skeletons for preview and simulation.
         # Pre-clamp hw_eff to guarantee dfcrm_getprior receives a strictly
