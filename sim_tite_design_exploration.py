@@ -1062,7 +1062,7 @@ def _clamp_halfwidth_t1() -> None:
     """Clamp halfwidth_t1 when prior_target_t1 changes."""
     pt  = float(st.session_state.get("prior_target_t1",
                                      R_DEFAULTS["prior_target_t1"]))
-    max_hw = round(max(0.01, min(0.30, pt - 0.01, 1.0 - pt - 0.01)), 2)
+    max_hw = max(0.01, round(min(pt - 0.01, 1.0 - pt - 0.01), 2))
     hw = float(st.session_state.get("halfwidth_t1", R_DEFAULTS["halfwidth_t1"]))
     if hw > max_hw:
         st.session_state["halfwidth_t1"] = max_hw
@@ -1072,7 +1072,7 @@ def _clamp_halfwidth_t2() -> None:
     """Clamp halfwidth_t2 when prior_target_t2 changes."""
     pt  = float(st.session_state.get("prior_target_t2",
                                      R_DEFAULTS["prior_target_t2"]))
-    max_hw = round(max(0.01, min(0.30, pt - 0.01, 1.0 - pt - 0.01)), 2)
+    max_hw = max(0.01, round(min(pt - 0.01, 1.0 - pt - 0.01), 2))
     hw = float(st.session_state.get("halfwidth_t2", R_DEFAULTS["halfwidth_t2"]))
     if hw > max_hw:
         st.session_state["halfwidth_t2"] = max_hw
@@ -1484,9 +1484,9 @@ elif view == "Playground":
         # No script-body writes to widget keys — clamping is handled by the
         # _clamp_halfwidth_t1/t2 callbacks attached to the prior_target sliders.
         _pt1     = float(_cfg("prior_target_t1"))
-        _max_hw1 = round(max(0.01, min(0.30, _pt1 - 0.01, 1.0 - _pt1 - 0.01)), 2)
+        _max_hw1 = max(0.01, round(min(_pt1 - 0.01, 1.0 - _pt1 - 0.01), 2))
         _pt2     = float(_cfg("prior_target_t2"))
-        _max_hw2 = round(max(0.01, min(0.30, _pt2 - 0.01, 1.0 - _pt2 - 0.01)), 2)
+        _max_hw2 = max(0.01, round(min(_pt2 - 0.01, 1.0 - _pt2 - 0.01), 2))
 
         ep_tab = st.radio(
             "Endpoint",
@@ -1534,7 +1534,7 @@ elif view == "Playground":
             ).tolist()
         except ValueError as e:
             st.warning(f"Tox1 skeleton: {e}")
-            hw1_eff = 0.10
+            hw1_eff = min(0.10, _max_hw1)
             skel_t1 = dfcrm_getprior(
                 halfwidth=hw1_eff, target=float(_cfg("prior_target_t1")),
                 nu=int(_cfg("prior_nu_t1")),
@@ -1550,7 +1550,7 @@ elif view == "Playground":
             ).tolist()
         except ValueError as e:
             st.warning(f"Tox2 skeleton: {e}")
-            hw2_eff = 0.10
+            hw2_eff = min(0.10, _max_hw2)
             skel_t2 = dfcrm_getprior(
                 halfwidth=hw2_eff, target=float(_cfg("prior_target_t2")),
                 nu=int(_cfg("prior_nu_t2")),
