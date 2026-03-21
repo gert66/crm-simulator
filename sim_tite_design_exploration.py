@@ -1099,6 +1099,34 @@ def _clamp_halfwidth_t2() -> None:
         st.session_state["sl_halfwidth_t2"] = max_hw
 
 
+def _sync_halfwidth_t1() -> None:
+    """Sync halfwidth_t1 widget → canonical config when the user moves that slider."""
+    st.session_state["halfwidth_t1"] = float(
+        st.session_state.get("sl_halfwidth_t1", R_DEFAULTS["halfwidth_t1"])
+    )
+
+
+def _sync_halfwidth_t2() -> None:
+    """Sync halfwidth_t2 widget → canonical config when the user moves that slider."""
+    st.session_state["halfwidth_t2"] = float(
+        st.session_state.get("sl_halfwidth_t2", R_DEFAULTS["halfwidth_t2"])
+    )
+
+
+def _sync_prior_nu_t1() -> None:
+    """Sync prior_nu_t1 widget → canonical config when the user moves that slider."""
+    st.session_state["prior_nu_t1"] = int(
+        st.session_state.get("sl_prior_nu_t1", R_DEFAULTS["prior_nu_t1"])
+    )
+
+
+def _sync_prior_nu_t2() -> None:
+    """Sync prior_nu_t2 widget → canonical config when the user moves that slider."""
+    st.session_state["prior_nu_t2"] = int(
+        st.session_state.get("sl_prior_nu_t2", R_DEFAULTS["prior_nu_t2"])
+    )
+
+
 def _draw_timeline(incl_to_rt, rt_dur, rt_to_surg, tox2_win):
     """
     Single-row horizontal timeline with labelled coloured bands.
@@ -1593,6 +1621,7 @@ elif view == "Playground":
             st.session_state["sl_halfwidth_t1"] = _hw1_clamped
             st.slider("Halfwidth (tox1)", 0.01, float(_max_hw1), step=0.01,
                       key="sl_halfwidth_t1",
+                      on_change=_sync_halfwidth_t1,
                       help=h("halfwidth_t1", "Skeleton steepness. target ± halfwidth must stay in (0,1)."))
             st.session_state["halfwidth_t1"] = st.session_state["sl_halfwidth_t1"]
             st.caption(f"[dbg t1 hw] cfg={_cfg('halfwidth_t1'):.2f}  "
@@ -1602,6 +1631,7 @@ elif view == "Playground":
             st.session_state["sl_prior_nu_t1"] = int(_cfg("prior_nu_t1"))
             st.slider("Prior MTD level (tox1, 1-based)", 1, 5, step=1,
                       key="sl_prior_nu_t1",
+                      on_change=_sync_prior_nu_t1,
                       help=h("prior_nu_t1", "Dose level a priori closest to the tox1 target."))
             st.session_state["prior_nu_t1"] = st.session_state["sl_prior_nu_t1"]
             st.caption(f"[dbg t1 nu] cfg={_cfg('prior_nu_t1')}  "
@@ -1625,6 +1655,7 @@ elif view == "Playground":
             st.session_state["sl_halfwidth_t2"] = _hw2_clamped
             st.slider("Halfwidth (tox2)", 0.01, float(_max_hw2), step=0.01,
                       key="sl_halfwidth_t2",
+                      on_change=_sync_halfwidth_t2,
                       help=h("halfwidth_t2", "Skeleton steepness. target ± halfwidth must stay in (0,1)."))
             st.session_state["halfwidth_t2"] = st.session_state["sl_halfwidth_t2"]
             st.caption(f"[dbg t2 hw] cfg={_cfg('halfwidth_t2'):.2f}  "
@@ -1634,6 +1665,7 @@ elif view == "Playground":
             st.session_state["sl_prior_nu_t2"] = int(_cfg("prior_nu_t2"))
             st.slider("Prior MTD level (tox2, 1-based)", 1, 5, step=1,
                       key="sl_prior_nu_t2",
+                      on_change=_sync_prior_nu_t2,
                       help=h("prior_nu_t2", "Dose level a priori closest to the tox2 conditional target."))
             st.session_state["prior_nu_t2"] = st.session_state["sl_prior_nu_t2"]
             st.caption(f"[dbg t2 nu] cfg={_cfg('prior_nu_t2')}  "
