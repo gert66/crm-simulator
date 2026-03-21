@@ -918,7 +918,7 @@ _ALL_CONFIG_KEYS = list(_ALL_DEFAULTS.keys())
 # Single-source-of-truth state management
 # ==============================================================================
 
-_STATE_VERSION = "2026-03-21e"
+_STATE_VERSION = "2026-03-21f"
 
 def init_state() -> None:
     """Seed EVERY canonical config key exactly once per session.
@@ -1127,6 +1127,65 @@ def _sync_prior_nu_t2() -> None:
     )
 
 
+# ── Generic sync-callback factory ─────────────────────────────────────────────
+# Every Essentials widget uses the pre-write / post-read (wl_) pattern:
+#   1. pre-write:  session_state["wl_X"] = canonical_config_value  (before render)
+#   2. render:     st.<widget>(key="wl_X", on_change=_sync_X)
+#   3. on_change:  session_state["X"] = widget_value               (before next run)
+#   4. post-read:  session_state["X"] = session_state["wl_X"]      (after render)
+#
+# The on_change callback is critical: without it, step 1 reads the STALE
+# canonical value (not yet updated from the widget), overwrites the user's
+# pending interaction, and the widget snaps back.  With on_change, the
+# canonical is updated BEFORE the next script run, so step 1 reads the
+# correct new value.
+
+def _make_sync(canonical_key: str, type_fn, wl_key: str):
+    """Return an on_change callback that commits wl_key → canonical_key."""
+    def _cb():
+        st.session_state[canonical_key] = type_fn(
+            st.session_state.get(wl_key, R_DEFAULTS[canonical_key])
+        )
+    _cb.__name__ = f"_sync_{canonical_key}"
+    return _cb
+
+
+# Essentials left column
+_sync_target_t1      = _make_sync("target_t1",       float, "wl_target_t1")
+_sync_target_t2      = _make_sync("target_t2",       float, "wl_target_t2")
+_sync_p_surgery      = _make_sync("p_surgery",       float, "wl_p_surgery")
+_sync_start_level_1b = _make_sync("start_level_1b",  int,   "wl_start_level_1b")
+_sync_n_sims         = _make_sync("n_sims",          int,   "wl_n_sims")
+_sync_seed           = _make_sync("seed",            int,   "wl_seed")
+_sync_accrual        = _make_sync("accrual_per_month", float, "wl_accrual_per_month")
+# Essentials middle column
+_sync_incl_to_rt     = _make_sync("incl_to_rt",      int,   "wl_incl_to_rt")
+_sync_rt_dur         = _make_sync("rt_dur",          int,   "wl_rt_dur")
+_sync_rt_to_surg     = _make_sync("rt_to_surg",      int,   "wl_rt_to_surg")
+_sync_tox2_win       = _make_sync("tox2_win",        int,   "wl_tox2_win")
+_sync_max_n_63       = _make_sync("max_n_63",        int,   "wl_max_n_63")
+_sync_max_n_crm      = _make_sync("max_n_crm",       int,   "wl_max_n_crm")
+_sync_cohort_size    = _make_sync("cohort_size",     int,   "wl_cohort_size")
+# Essentials right column
+_sync_gh_n              = _make_sync("gh_n",              int,   "wl_gh_n")
+_sync_max_step          = _make_sync("max_step",          int,   "wl_max_step")
+_sync_sigma             = _make_sync("sigma",             float, "sl_sigma")
+_sync_enforce_guardrail = _make_sync("enforce_guardrail", bool,  "wl_enforce_guardrail")
+_sync_restrict_final_mtd= _make_sync("restrict_final_mtd",bool,  "wl_restrict_final_mtd")
+_sync_burn_in           = _make_sync("burn_in",           bool,  "wl_burn_in")
+_sync_ewoc_on           = _make_sync("ewoc_on",           bool,  "wl_ewoc_on")
+_sync_ewoc_alpha        = _make_sync("ewoc_alpha",        float, "wl_ewoc_alpha")
+_sync_show_crm_trace    = _make_sync("show_crm_trace",    bool,  "wl_show_crm_trace")
+# 6+3 thresholds
+_sync_a6_esc_max  = _make_sync("a6_esc_max",  int, "wl_a6_esc_max")
+_sync_a6_stop_min = _make_sync("a6_stop_min", int, "wl_a6_stop_min")
+_sync_a9_esc_max  = _make_sync("a9_esc_max",  int, "wl_a9_esc_max")
+_sync_s6_esc_max  = _make_sync("s6_esc_max",  int, "wl_s6_esc_max")
+_sync_s6_stop_min = _make_sync("s6_stop_min", int, "wl_s6_stop_min")
+_sync_s9_esc_max  = _make_sync("s9_esc_max",  int, "wl_s9_esc_max")
+_sync_s9_stop_min = _make_sync("s9_stop_min", int, "wl_s9_stop_min")
+
+
 def _draw_timeline(incl_to_rt, rt_dur, rt_to_surg, tox2_win):
     """
     Single-row horizontal timeline with labelled coloured bands.
@@ -1215,100 +1274,156 @@ if view == "Essentials":
 
     with _ec1:
         st.markdown("#### Study endpoints")
+
+        st.session_state["wl_target_t1"] = float(_cfg("target_t1"))
         st.number_input(
             "Target tox1 (acute) rate",
-            min_value=0.05, max_value=0.50, step=0.01, key="target_t1",
+            min_value=0.05, max_value=0.50, step=0.01, key="wl_target_t1",
+            on_change=_sync_target_t1,
             help=h("target_t1", "Target acute DLT probability for MTD definition.")
         )
+        st.session_state["target_t1"] = st.session_state["wl_target_t1"]
+
+        st.session_state["wl_target_t2"] = float(_cfg("target_t2"))
         st.number_input(
             "Target tox2 (subacute | surgery) rate",
-            min_value=0.05, max_value=0.50, step=0.01, key="target_t2",
+            min_value=0.05, max_value=0.50, step=0.01, key="wl_target_t2",
+            on_change=_sync_target_t2,
             help=h("target_t2",
                    "Target subacute DLT probability conditional on surgery. "
                    "Only surgery patients contribute to the tox2 model.")
         )
+        st.session_state["target_t2"] = st.session_state["wl_target_t2"]
+
+        st.session_state["wl_p_surgery"] = float(_cfg("p_surgery"))
         st.number_input(
             "Probability of surgery",
-            min_value=0.0, max_value=1.0, step=0.01, key="p_surgery",
+            min_value=0.0, max_value=1.0, step=0.01, key="wl_p_surgery",
+            on_change=_sync_p_surgery,
             help=h("p_surgery",
                    "Global probability that a patient proceeds to surgery. "
                    "Dose-independent. Subacute toxicity only observed in these patients.")
         )
+        st.session_state["p_surgery"] = st.session_state["wl_p_surgery"]
+
+        st.session_state["wl_start_level_1b"] = int(_cfg("start_level_1b"))
         st.number_input(
             "Start dose level (1-based)",
-            min_value=1, max_value=5, step=1, key="start_level_1b",
+            min_value=1, max_value=5, step=1, key="wl_start_level_1b",
+            on_change=_sync_start_level_1b,
             help=h("start_level_1b", "Starting dose level (1 = lowest).")
         )
+        st.session_state["start_level_1b"] = st.session_state["wl_start_level_1b"]
 
         st.markdown("#### Simulation")
+
+        st.session_state["wl_n_sims"] = int(_cfg("n_sims"))
         st.number_input(
             "Number of simulated trials",
-            min_value=50, max_value=5000, step=50, key="n_sims",
+            min_value=50, max_value=5000, step=50, key="wl_n_sims",
+            on_change=_sync_n_sims,
             help=h("n_sims", "Replicates for the simulation study.")
         )
+        st.session_state["n_sims"] = st.session_state["wl_n_sims"]
+
+        st.session_state["wl_seed"] = int(_cfg("seed"))
         st.number_input(
             "Random seed",
-            min_value=1, max_value=10_000_000, step=1, key="seed",
+            min_value=1, max_value=10_000_000, step=1, key="wl_seed",
+            on_change=_sync_seed,
             help=h("seed", "Random seed for reproducibility.")
         )
+        st.session_state["seed"] = st.session_state["wl_seed"]
+
+        st.session_state["wl_accrual_per_month"] = float(_cfg("accrual_per_month"))
         st.number_input(
             "Avg patients per month",
-            min_value=0.1, max_value=20.0, step=0.1, key="accrual_per_month",
+            min_value=0.1, max_value=20.0, step=0.1, key="wl_accrual_per_month",
+            on_change=_sync_accrual,
             help=h("accrual_per_month",
                    "Average accrual rate. Arrivals simulated as a Poisson process "
                    "(exponential inter-arrival times at this rate).")
         )
+        st.session_state["accrual_per_month"] = st.session_state["wl_accrual_per_month"]
 
     with _ec2:
         st.markdown("#### Timing (days)")
+
+        st.session_state["wl_incl_to_rt"] = int(_cfg("incl_to_rt"))
         st.number_input(
             "Inclusion to RT start",
-            min_value=0, max_value=180, step=1, key="incl_to_rt",
+            min_value=0, max_value=180, step=1, key="wl_incl_to_rt",
+            on_change=_sync_incl_to_rt,
             help=h("incl_to_rt",
                    "Days from enrolment to start of radiotherapy. "
                    "Tox1 window begins at RT start. Default ≈ 3 weeks.")
         )
+        st.session_state["incl_to_rt"] = st.session_state["wl_incl_to_rt"]
+
+        st.session_state["wl_rt_dur"] = int(_cfg("rt_dur"))
         st.number_input(
             "Radiotherapy duration",
-            min_value=1, max_value=60, step=1, key="rt_dur",
+            min_value=1, max_value=60, step=1, key="wl_rt_dur",
+            on_change=_sync_rt_dur,
             help=h("rt_dur",
                    "Duration of radiotherapy in days. Default ≈ 2 weeks (10 fractions).")
         )
+        st.session_state["rt_dur"] = st.session_state["wl_rt_dur"]
+
+        st.session_state["wl_rt_to_surg"] = int(_cfg("rt_to_surg"))
         st.number_input(
             "RT end to surgery",
-            min_value=1, max_value=365, step=1, key="rt_to_surg",
+            min_value=1, max_value=365, step=1, key="wl_rt_to_surg",
+            on_change=_sync_rt_to_surg,
             help=h("rt_to_surg",
                    "Days from end of radiotherapy to surgery. Default 84 days ≈ 12 weeks. "
                    "The tox1 (acute) follow-up window is derived as RT duration + this value, "
                    "so it always extends from RT start to the moment of surgery.")
         )
+        st.session_state["rt_to_surg"] = st.session_state["wl_rt_to_surg"]
+
+        st.session_state["wl_tox2_win"] = int(_cfg("tox2_win"))
         st.number_input(
             "Tox2 follow-up window (days)",
-            min_value=7, max_value=180, step=1, key="tox2_win",
+            min_value=7, max_value=180, step=1, key="wl_tox2_win",
+            on_change=_sync_tox2_win,
             help=h("tox2_win",
                    "Post-surgery window for subacute toxicity assessment. Default 30 days.")
         )
+        st.session_state["tox2_win"] = st.session_state["wl_tox2_win"]
 
         st.markdown("#### Sample size")
+
+        st.session_state["wl_max_n_63"] = int(_cfg("max_n_63"))
         st.number_input(
             "Max sample size (6+3)",
-            min_value=6, max_value=200, step=3, key="max_n_63",
+            min_value=6, max_value=200, step=3, key="wl_max_n_63",
+            on_change=_sync_max_n_63,
             help=h("max_n_63",
                    "Maximum total enrolled patients in the 6+3 arm, including "
                    "bridging patients treated at lower doses while awaiting evaluability.")
         )
+        st.session_state["max_n_63"] = st.session_state["wl_max_n_63"]
+
+        st.session_state["wl_max_n_crm"] = int(_cfg("max_n_crm"))
         st.number_input(
             "Max sample size (CRM)",
-            min_value=6, max_value=200, step=3, key="max_n_crm",
+            min_value=6, max_value=200, step=3, key="wl_max_n_crm",
+            on_change=_sync_max_n_crm,
             help=h("max_n_crm", "Maximum total enrolled patients in the TITE-CRM arm.")
         )
+        st.session_state["max_n_crm"] = st.session_state["wl_max_n_crm"]
+
+        st.session_state["wl_cohort_size"] = int(_cfg("cohort_size"))
         st.number_input(
             "Cohort size (CRM)",
-            min_value=1, max_value=12, step=1, key="cohort_size",
+            min_value=1, max_value=12, step=1, key="wl_cohort_size",
+            on_change=_sync_cohort_size,
             help=h("cohort_size",
                    "Number of patients per CRM cohort. CRM updates after each "
                    "cohort is fully enrolled, using TITE weights at that moment.")
         )
+        st.session_state["cohort_size"] = st.session_state["wl_cohort_size"]
 
     with _ec3:
         st.markdown("#### CRM integration")
@@ -1320,6 +1435,7 @@ if view == "Essentials":
         st.selectbox(
             "Gauss–Hermite points",
             options=[31, 41, 61, 81], key="wl_gh_n",
+            on_change=_sync_gh_n,
             help=h("gh_n",
                    "Quadrature points for CRM posterior. Higher = more accurate, slower.")
         )
@@ -1330,16 +1446,18 @@ if view == "Essentials":
         st.selectbox(
             "Max dose step per update",
             options=[1, 2], key="wl_max_step",
+            on_change=_sync_max_step,
             help=h("max_step",
                    "Max dose levels the CRM can move per cohort update.")
         )
         st.session_state["max_step"] = st.session_state["wl_max_step"]
 
-        # ── sigma (already using sl_ pattern) ────────────────────────────
+        # ── sigma ─────────────────────────────────────────────────────────
         st.session_state["sl_sigma"] = float(_cfg("sigma"))
         st.slider(
             "Prior sigma on theta",
             min_value=0.2, max_value=5.0, step=0.1, key="sl_sigma",
+            on_change=_sync_sigma,
             help=h("sigma",
                    "SD of theta in the CRM prior (shared for both endpoints). "
                    "Larger = more diffuse prior.",
@@ -1355,6 +1473,7 @@ if view == "Essentials":
         st.toggle(
             "Guardrail: next dose ≤ highest tried + 1",
             key="wl_enforce_guardrail",
+            on_change=_sync_enforce_guardrail,
             help=h("enforce_guardrail", "Prevent skipping untried dose levels.")
         )
         st.session_state["enforce_guardrail"] = st.session_state["wl_enforce_guardrail"]
@@ -1366,6 +1485,7 @@ if view == "Essentials":
         st.toggle(
             "Final MTD must be among tried doses",
             key="wl_restrict_final_mtd",
+            on_change=_sync_restrict_final_mtd,
             help=h("restrict_final_mtd",
                    "Restrict final MTD selection to doses where n > 0.")
         )
@@ -1380,6 +1500,7 @@ if view == "Essentials":
         st.toggle(
             "Burn-in until first tox1 DLT",
             key="wl_burn_in",
+            on_change=_sync_burn_in,
             help=h("burn_in",
                    "Escalate one level at a time until the first observed acute DLT, "
                    "then switch to CRM updates.")
@@ -1393,6 +1514,7 @@ if view == "Essentials":
         st.toggle(
             "Enable EWOC joint overdose control",
             key="wl_ewoc_on",
+            on_change=_sync_ewoc_on,
             help=h("ewoc_on",
                    "Restrict doses where BOTH P(tox1 OD) and P(tox2 OD) < EWOC alpha.")
         )
@@ -1404,6 +1526,7 @@ if view == "Essentials":
         st.number_input(
             "EWOC alpha",
             min_value=0.01, max_value=0.99, step=0.01, key="wl_ewoc_alpha",
+            on_change=_sync_ewoc_alpha,
             disabled=(not bool(_cfg("ewoc_on"))),
             help=h("ewoc_alpha",
                    "EWOC threshold applied to both endpoints independently.")
@@ -1420,6 +1543,7 @@ if view == "Essentials":
         st.toggle(
             "Explain first CRM trial",
             key="wl_show_crm_trace",
+            on_change=_sync_show_crm_trace,
             help=h("show_crm_trace",
                    "When ON, shows a detailed walkthrough for the first simulated "
                    "CRM trial only: which dose each patient received, what follow-up "
@@ -1455,19 +1579,19 @@ if view == "Essentials":
     with _ar1:
         st.session_state["wl_a6_esc_max"] = int(_cfg("a6_esc_max"))
         st.number_input("≥6 — esc if tox1 ≤", min_value=0, max_value=5,
-                        step=1, key="wl_a6_esc_max",
+                        step=1, key="wl_a6_esc_max", on_change=_sync_a6_esc_max,
                         help=h("a6_esc_max", "Phase 1 acute escalation threshold."))
         st.session_state["a6_esc_max"] = st.session_state["wl_a6_esc_max"]
     with _ar2:
         st.session_state["wl_a6_stop_min"] = int(_cfg("a6_stop_min"))
         st.number_input("≥6 — stop if tox1 ≥", min_value=1, max_value=6,
-                        step=1, key="wl_a6_stop_min",
+                        step=1, key="wl_a6_stop_min", on_change=_sync_a6_stop_min,
                         help=h("a6_stop_min", "Phase 1 acute stopping threshold."))
         st.session_state["a6_stop_min"] = st.session_state["wl_a6_stop_min"]
     with _ar3:
         st.session_state["wl_a9_esc_max"] = int(_cfg("a9_esc_max"))
         st.number_input("≥9 — esc if tox1 ≤", min_value=0, max_value=8,
-                        step=1, key="wl_a9_esc_max",
+                        step=1, key="wl_a9_esc_max", on_change=_sync_a9_esc_max,
                         help=h("a9_esc_max", "Phase 2 acute escalation threshold."))
         st.session_state["a9_esc_max"] = st.session_state["wl_a9_esc_max"]
 
@@ -1480,25 +1604,25 @@ if view == "Essentials":
     with _sr1:
         st.session_state["wl_s6_esc_max"] = int(_cfg("s6_esc_max"))
         st.number_input("≥6 surg — esc if tox2 ≤", min_value=0, max_value=6,
-                        step=1, key="wl_s6_esc_max",
+                        step=1, key="wl_s6_esc_max", on_change=_sync_s6_esc_max,
                         help=h("s6_esc_max", "Phase 1 subacute escalation threshold."))
         st.session_state["s6_esc_max"] = st.session_state["wl_s6_esc_max"]
     with _sr2:
         st.session_state["wl_s6_stop_min"] = int(_cfg("s6_stop_min"))
         st.number_input("≥6 surg — stop if tox2 ≥", min_value=1, max_value=6,
-                        step=1, key="wl_s6_stop_min",
+                        step=1, key="wl_s6_stop_min", on_change=_sync_s6_stop_min,
                         help=h("s6_stop_min", "Phase 1 subacute stopping threshold."))
         st.session_state["s6_stop_min"] = st.session_state["wl_s6_stop_min"]
     with _sr3:
         st.session_state["wl_s9_esc_max"] = int(_cfg("s9_esc_max"))
         st.number_input("≥9 surg — esc if tox2 ≤", min_value=0, max_value=9,
-                        step=1, key="wl_s9_esc_max",
+                        step=1, key="wl_s9_esc_max", on_change=_sync_s9_esc_max,
                         help=h("s9_esc_max", "Phase 2 subacute escalation threshold."))
         st.session_state["s9_esc_max"] = st.session_state["wl_s9_esc_max"]
     with _sr4:
         st.session_state["wl_s9_stop_min"] = int(_cfg("s9_stop_min"))
         st.number_input("≥9 surg — stop if tox2 ≥", min_value=1, max_value=9,
-                        step=1, key="wl_s9_stop_min",
+                        step=1, key="wl_s9_stop_min", on_change=_sync_s9_stop_min,
                         help=h("s9_stop_min", "Phase 2 subacute stopping threshold."))
         st.session_state["s9_stop_min"] = st.session_state["wl_s9_stop_min"]
 
