@@ -904,6 +904,13 @@ _ALL_DEFAULTS: dict = {
     **R_DEFAULTS,
 }
 
+# Separate read-only fallback for true-tox keys, used only by get_config_value
+# so Design Exploration works even before Playground has been visited once.
+_TRUE_DEFAULTS: dict = {
+    **{TRUE_T1_KEYS[i]: DEFAULT_TRUE_T1[i] for i in range(5)},
+    **{TRUE_T2_KEYS[i]: DEFAULT_TRUE_T2[i] for i in range(5)},
+}
+
 # All canonical config keys in one ordered list (used by helpers below)
 _ALL_CONFIG_KEYS = list(_ALL_DEFAULTS.keys())
 
@@ -944,11 +951,12 @@ def init_state() -> None:
 def get_config_value(key: str):
     """Read *key* from the canonical session_state store.
 
-    Falls back to ``_ALL_DEFAULTS`` (which covers both R_DEFAULTS and the
-    true-probability defaults) so callers never see a KeyError or None, even
-    before a widget for that key has ever been rendered.
+    Falls back to ``_ALL_DEFAULTS`` then ``_TRUE_DEFAULTS`` so callers never
+    see a KeyError or None, even before any widget for that key has rendered.
     """
-    return st.session_state.get(key, _ALL_DEFAULTS.get(key))
+    return st.session_state.get(
+        key, _ALL_DEFAULTS.get(key, _TRUE_DEFAULTS.get(key))
+    )
 
 
 def set_config_value(key: str, value) -> None:
