@@ -911,6 +911,8 @@ _ALL_CONFIG_KEYS = list(_ALL_DEFAULTS.keys())
 # Single-source-of-truth state management
 # ==============================================================================
 
+_STATE_VERSION = "2026-03-21"
+
 def init_state() -> None:
     """Seed EVERY canonical config key exactly once per session.
 
@@ -924,10 +926,19 @@ def init_state() -> None:
     StreamlitAPIException ("widget value cannot be set via st.session_state
     AND the widget's value= argument simultaneously").  Halfwidth clamping
     when prior_target sliders change is handled by on_change callbacks.
+
+    Version check: if _STATE_VERSION has changed (e.g. after a code update),
+    ALL canonical keys are force-reset to factory defaults so stale session
+    state from crashes or previous test sessions never persists.
     """
-    for k, v in _ALL_DEFAULTS.items():
-        if k not in st.session_state:
+    if st.session_state.get("_state_version") != _STATE_VERSION:
+        for k, v in _ALL_DEFAULTS.items():
             st.session_state[k] = v
+        st.session_state["_state_version"] = _STATE_VERSION
+    else:
+        for k, v in _ALL_DEFAULTS.items():
+            if k not in st.session_state:
+                st.session_state[k] = v
 
 
 def get_config_value(key: str):
@@ -973,6 +984,7 @@ def _do_reset():
     """Restore every canonical key to its factory default."""
     for k, v in _ALL_DEFAULTS.items():
         st.session_state[k] = v
+    st.session_state["_state_version"] = _STATE_VERSION
 
 
 # _VALID_RANGES: lightweight type/range info for consistency validation.
@@ -983,8 +995,8 @@ _VALID_RANGES: dict = {
     "p_surgery":      (float, 0.0,  1.0),
     "prior_target_t1":(float, 0.05, 0.50),
     "prior_target_t2":(float, 0.05, 0.50),
-    "halfwidth_t1":   (float, 0.01, 0.30),
-    "halfwidth_t2":   (float, 0.01, 0.30),
+    "halfwidth_t1":   (float, 0.01, 0.49),
+    "halfwidth_t2":   (float, 0.01, 0.49),
     "sigma":          (float, 0.2,  5.0),
     "ewoc_alpha":     (float, 0.01, 0.99),
 }
