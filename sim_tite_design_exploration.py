@@ -918,7 +918,7 @@ _ALL_CONFIG_KEYS = list(_ALL_DEFAULTS.keys())
 # Single-source-of-truth state management
 # ==============================================================================
 
-_STATE_VERSION = "2026-03-21b"
+_STATE_VERSION = "2026-03-21c"
 
 def init_state() -> None:
     """Seed EVERY canonical config key exactly once per session.
@@ -942,6 +942,7 @@ def init_state() -> None:
         for k, v in _ALL_DEFAULTS.items():
             st.session_state[k] = v
         st.session_state["_state_version"] = _STATE_VERSION
+        st.rerun()  # widgets re-read fresh session_state on next run
     else:
         for k, v in _ALL_DEFAULTS.items():
             if k not in st.session_state:
@@ -1539,11 +1540,16 @@ elif view == "Playground":
                       key="prior_nu_t2",
                       help=h("prior_nu_t2", "Dose level a priori closest to the tox2 conditional target."))
 
-        # Compute skeletons for preview and simulation
-        hw1_eff = float(_cfg("halfwidth_t1"))
+        # Compute skeletons for preview and simulation.
+        # Pre-clamp hw_eff to guarantee dfcrm_getprior receives a strictly
+        # valid halfwidth even when session_state diverges from slider display
+        # (e.g. during the render cycle after a force-reset).
+        _t1 = float(_cfg("prior_target_t1"))
+        _safe_hw1 = max(1e-4, min(_t1 - 1e-4, 1.0 - _t1 - 1e-4))
+        hw1_eff = min(float(_cfg("halfwidth_t1")), _safe_hw1)
         try:
             skel_t1 = dfcrm_getprior(
-                halfwidth=hw1_eff, target=float(_cfg("prior_target_t1")),
+                halfwidth=hw1_eff, target=_t1,
                 nu=int(_cfg("prior_nu_t1")),
                 nlevel=5, model=prior_model_val, intcpt=intcpt_val,
             ).tolist()
@@ -1551,15 +1557,17 @@ elif view == "Playground":
             st.warning(f"Tox1 skeleton: {e}")
             hw1_eff = min(0.10, _max_hw1)
             skel_t1 = dfcrm_getprior(
-                halfwidth=hw1_eff, target=float(_cfg("prior_target_t1")),
+                halfwidth=hw1_eff, target=_t1,
                 nu=int(_cfg("prior_nu_t1")),
                 nlevel=5, model=prior_model_val, intcpt=intcpt_val,
             ).tolist()
 
-        hw2_eff = float(_cfg("halfwidth_t2"))
+        _t2 = float(_cfg("prior_target_t2"))
+        _safe_hw2 = max(1e-4, min(_t2 - 1e-4, 1.0 - _t2 - 1e-4))
+        hw2_eff = min(float(_cfg("halfwidth_t2")), _safe_hw2)
         try:
             skel_t2 = dfcrm_getprior(
-                halfwidth=hw2_eff, target=float(_cfg("prior_target_t2")),
+                halfwidth=hw2_eff, target=_t2,
                 nu=int(_cfg("prior_nu_t2")),
                 nlevel=5, model=prior_model_val, intcpt=intcpt_val,
             ).tolist()
@@ -1567,7 +1575,7 @@ elif view == "Playground":
             st.warning(f"Tox2 skeleton: {e}")
             hw2_eff = min(0.10, _max_hw2)
             skel_t2 = dfcrm_getprior(
-                halfwidth=hw2_eff, target=float(_cfg("prior_target_t2")),
+                halfwidth=hw2_eff, target=_t2,
                 nu=int(_cfg("prior_nu_t2")),
                 nlevel=5, model=prior_model_val, intcpt=intcpt_val,
             ).tolist()
