@@ -896,12 +896,12 @@ TRUE_T1_KEYS  = [f"true_t1_L{i}"  for i in range(5)]
 TRUE_T2_KEYS  = [f"true_t2_L{i}"  for i in range(5)]
 
 # Single merged defaults registry — the ONE source of all default values.
-# true_t1/t2 are included here so get_config_value() and _get_all_config()
-# can fall back to them even before the Playground widgets have rendered.
+# true_t1/t2 are intentionally EXCLUDED: those number_input widgets supply
+# value=DEFAULT_TRUE_T* so Streamlit seeds session_state on first render.
+# Pre-seeding them here via init_state() causes Streamlit ≥1.31 to reset
+# the displayed value to min_value (0.0) instead of the intended default.
 _ALL_DEFAULTS: dict = {
     **R_DEFAULTS,
-    **{TRUE_T1_KEYS[i]: DEFAULT_TRUE_T1[i] for i in range(5)},
-    **{TRUE_T2_KEYS[i]: DEFAULT_TRUE_T2[i] for i in range(5)},
 }
 
 # All canonical config keys in one ordered list (used by helpers below)
@@ -987,8 +987,6 @@ _VALID_RANGES: dict = {
     "halfwidth_t2":   (float, 0.01, 0.30),
     "sigma":          (float, 0.2,  5.0),
     "ewoc_alpha":     (float, 0.01, 0.99),
-    **{k: (float, 0.0, 1.0) for k in TRUE_T1_KEYS},
-    **{k: (float, 0.0, 1.0) for k in TRUE_T2_KEYS},
 }
 
 
@@ -1432,16 +1430,12 @@ elif view == "Playground":
                     f"<div style='font-size:0.83rem;padding-top:0.25rem;'>L{i} {lab}</div>",
                     unsafe_allow_html=True)
             with rT1:
-                # value= supplies the per-Streamlit-version-safe default.
-                # Because TRUE_T1_KEYS are NOT pre-set in init_state() via
-                # script-body assignment, this value= does NOT trigger the
-                # "widget default vs Session State API" warning.  On first
-                # render Streamlit stores DEFAULT_TRUE_T1[i] in session_state;
-                # on all subsequent renders it uses the stored session_state
-                # value (user edits preserved across navigation).
+                # value= seeds session_state on first render (safe because
+                # TRUE_T1_KEYS are NOT pre-seeded by init_state()).
                 v1 = st.number_input(
                     f"T1 L{i}",
                     min_value=0.0, max_value=1.0, step=0.01,
+                    value=DEFAULT_TRUE_T1[i],
                     key=TRUE_T1_KEYS[i],
                     label_visibility="collapsed",
                     help=f"True probability of acute toxicity at dose L{i}.",
@@ -1451,6 +1445,7 @@ elif view == "Playground":
                 v2 = st.number_input(
                     f"T2 L{i}",
                     min_value=0.0, max_value=1.0, step=0.01,
+                    value=DEFAULT_TRUE_T2[i],
                     key=TRUE_T2_KEYS[i],
                     label_visibility="collapsed",
                     help=f"True probability of subacute toxicity given surgery at L{i}.",
