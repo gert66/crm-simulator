@@ -912,22 +912,31 @@ _ALL_CONFIG_KEYS = list(_ALL_DEFAULTS.keys())
 # ==============================================================================
 
 def init_state() -> None:
-    """Initialise every SHARED (non-widget-exclusive) parameter exactly once.
+    """Initialise ONLY keys that have no Streamlit widget.
 
-    Two-tier design:
-    - R_DEFAULTS keys (target_t1, sigma, etc.): pre-set here so non-widget
-      code (Playground reads, DE reads) can access them even if the Essentials
-      view has never been rendered.  Widgets that own these keys are created
-      WITHOUT a value= argument; Streamlit uses the session_state value set
-      here.  This avoids the "widget created with default AND Session State API"
-      warning.
-    - TRUE_T1_KEYS / TRUE_T2_KEYS: NOT pre-set here.  Their widgets supply
-      an explicit value= (DEFAULT_TRUE_T1/T2).  This guarantees Streamlit uses
-      the correct default on first render regardless of engine version, while
-      still preserving user edits via the widget key on subsequent renders.
-      Non-widget reads (DE, debug) fall back to _ALL_DEFAULTS via get_config_value().
+    All widget-owned keys (target_t1, sigma, etc.) are intentionally NOT
+    pre-set here.  Each widget supplies an explicit value= argument so that
+    Streamlit always uses the correct default regardless of engine version,
+    without triggering the "widget created with default AND Session State API"
+    warning (which fires when both script-body assignment and value= are used
+    for the same key in the same render).
+
+    Keys pre-set here (no widget owns them):
+      - logistic_intcpt  : passed directly to dfcrm_getprior
+      - preview_w_px / result_w_px : display constants
+      - prior_ep_tab     : kept here so the radio conditional never sees
+                           an undefined key on first Playground load.
+
+    Non-widget reads (_cfg / get_config_value / DE snapshot) fall back to
+    _ALL_DEFAULTS for any key not yet in session_state.
     """
-    for k, v in R_DEFAULTS.items():
+    _NON_WIDGET_KEYS = {
+        "logistic_intcpt": R_DEFAULTS["logistic_intcpt"],
+        "preview_w_px":    R_DEFAULTS["preview_w_px"],
+        "result_w_px":     R_DEFAULTS["result_w_px"],
+        "prior_ep_tab":    R_DEFAULTS["prior_ep_tab"],
+    }
+    for k, v in _NON_WIDGET_KEYS.items():
         if k not in st.session_state:
             st.session_state[k] = v
 
@@ -1038,6 +1047,32 @@ def _cfg(key: str):
     return st.session_state.get(key, _ALL_DEFAULTS[key])
 
 
+# ── on_change callbacks for prior-target sliders ──────────────────────────────
+# These clamp halfwidth when the user moves a prior_target slider, preventing
+# the halfwidth slider from getting out of the dynamic valid range.
+# Using callbacks (not script-body writes) is safe: Streamlit runs the callback
+# BEFORE the next render, so no "widget default vs Session State API" warning.
+
+def _clamp_halfwidth_t1() -> None:
+    """Clamp halfwidth_t1 when prior_target_t1 changes."""
+    pt  = float(st.session_state.get("prior_target_t1",
+                                     R_DEFAULTS["prior_target_t1"]))
+    max_hw = round(max(0.01, min(0.30, pt - 0.01, 1.0 - pt - 0.01)), 2)
+    hw = float(st.session_state.get("halfwidth_t1", R_DEFAULTS["halfwidth_t1"]))
+    if hw > max_hw:
+        st.session_state["halfwidth_t1"] = max_hw
+
+
+def _clamp_halfwidth_t2() -> None:
+    """Clamp halfwidth_t2 when prior_target_t2 changes."""
+    pt  = float(st.session_state.get("prior_target_t2",
+                                     R_DEFAULTS["prior_target_t2"]))
+    max_hw = round(max(0.01, min(0.30, pt - 0.01, 1.0 - pt - 0.01)), 2)
+    hw = float(st.session_state.get("halfwidth_t2", R_DEFAULTS["halfwidth_t2"]))
+    if hw > max_hw:
+        st.session_state["halfwidth_t2"] = max_hw
+
+
 def _draw_timeline(incl_to_rt, rt_dur, rt_to_surg, tox2_win):
     """
     Single-row horizontal timeline with labelled coloured bands.
@@ -1129,11 +1164,13 @@ if view == "Essentials":
         st.number_input(
             "Target tox1 (acute) rate",
             min_value=0.05, max_value=0.50, step=0.01, key="target_t1",
+            value=float(st.session_state.get("target_t1", R_DEFAULTS["target_t1"])),
             help=h("target_t1", "Target acute DLT probability for MTD definition.")
         )
         st.number_input(
             "Target tox2 (subacute | surgery) rate",
             min_value=0.05, max_value=0.50, step=0.01, key="target_t2",
+            value=float(st.session_state.get("target_t2", R_DEFAULTS["target_t2"])),
             help=h("target_t2",
                    "Target subacute DLT probability conditional on surgery. "
                    "Only surgery patients contribute to the tox2 model.")
@@ -1141,6 +1178,7 @@ if view == "Essentials":
         st.number_input(
             "Probability of surgery",
             min_value=0.0, max_value=1.0, step=0.01, key="p_surgery",
+            value=float(st.session_state.get("p_surgery", R_DEFAULTS["p_surgery"])),
             help=h("p_surgery",
                    "Global probability that a patient proceeds to surgery. "
                    "Dose-independent. Subacute toxicity only observed in these patients.")
@@ -1148,6 +1186,7 @@ if view == "Essentials":
         st.number_input(
             "Start dose level (1-based)",
             min_value=1, max_value=5, step=1, key="start_level_1b",
+            value=int(st.session_state.get("start_level_1b", R_DEFAULTS["start_level_1b"])),
             help=h("start_level_1b", "Starting dose level (1 = lowest).")
         )
 
@@ -1155,16 +1194,19 @@ if view == "Essentials":
         st.number_input(
             "Number of simulated trials",
             min_value=50, max_value=5000, step=50, key="n_sims",
+            value=int(st.session_state.get("n_sims", R_DEFAULTS["n_sims"])),
             help=h("n_sims", "Replicates for the simulation study.")
         )
         st.number_input(
             "Random seed",
             min_value=1, max_value=10_000_000, step=1, key="seed",
+            value=int(st.session_state.get("seed", R_DEFAULTS["seed"])),
             help=h("seed", "Random seed for reproducibility.")
         )
         st.number_input(
             "Avg patients per month",
             min_value=0.1, max_value=20.0, step=0.1, key="accrual_per_month",
+            value=float(st.session_state.get("accrual_per_month", R_DEFAULTS["accrual_per_month"])),
             help=h("accrual_per_month",
                    "Average accrual rate. Arrivals simulated as a Poisson process "
                    "(exponential inter-arrival times at this rate).")
@@ -1175,6 +1217,7 @@ if view == "Essentials":
         st.number_input(
             "Inclusion to RT start",
             min_value=0, max_value=180, step=1, key="incl_to_rt",
+            value=int(st.session_state.get("incl_to_rt", R_DEFAULTS["incl_to_rt"])),
             help=h("incl_to_rt",
                    "Days from enrolment to start of radiotherapy. "
                    "Tox1 window begins at RT start. Default ≈ 3 weeks.")
@@ -1182,12 +1225,14 @@ if view == "Essentials":
         st.number_input(
             "Radiotherapy duration",
             min_value=1, max_value=60, step=1, key="rt_dur",
+            value=int(st.session_state.get("rt_dur", R_DEFAULTS["rt_dur"])),
             help=h("rt_dur",
                    "Duration of radiotherapy in days. Default ≈ 2 weeks (10 fractions).")
         )
         st.number_input(
             "RT end to surgery",
             min_value=1, max_value=365, step=1, key="rt_to_surg",
+            value=int(st.session_state.get("rt_to_surg", R_DEFAULTS["rt_to_surg"])),
             help=h("rt_to_surg",
                    "Days from end of radiotherapy to surgery. Default 84 days ≈ 12 weeks. "
                    "The tox1 (acute) follow-up window is derived as RT duration + this value, "
@@ -1196,6 +1241,7 @@ if view == "Essentials":
         st.number_input(
             "Tox2 follow-up window (days)",
             min_value=7, max_value=180, step=1, key="tox2_win",
+            value=int(st.session_state.get("tox2_win", R_DEFAULTS["tox2_win"])),
             help=h("tox2_win",
                    "Post-surgery window for subacute toxicity assessment. Default 30 days.")
         )
@@ -1204,6 +1250,7 @@ if view == "Essentials":
         st.number_input(
             "Max sample size (6+3)",
             min_value=6, max_value=200, step=3, key="max_n_63",
+            value=int(st.session_state.get("max_n_63", R_DEFAULTS["max_n_63"])),
             help=h("max_n_63",
                    "Maximum total enrolled patients in the 6+3 arm, including "
                    "bridging patients treated at lower doses while awaiting evaluability.")
@@ -1211,11 +1258,13 @@ if view == "Essentials":
         st.number_input(
             "Max sample size (CRM)",
             min_value=6, max_value=200, step=3, key="max_n_crm",
+            value=int(st.session_state.get("max_n_crm", R_DEFAULTS["max_n_crm"])),
             help=h("max_n_crm", "Maximum total enrolled patients in the TITE-CRM arm.")
         )
         st.number_input(
             "Cohort size (CRM)",
             min_value=1, max_value=12, step=1, key="cohort_size",
+            value=int(st.session_state.get("cohort_size", R_DEFAULTS["cohort_size"])),
             help=h("cohort_size",
                    "Number of patients per CRM cohort. CRM updates after each "
                    "cohort is fully enrolled, using TITE weights at that moment.")
@@ -1223,21 +1272,28 @@ if view == "Essentials":
 
     with _ec3:
         st.markdown("#### CRM integration")
+        _gh_n_opts = [31, 41, 61, 81]
+        _gh_n_cur  = int(st.session_state.get("gh_n", R_DEFAULTS["gh_n"]))
+        _gh_n_idx  = _gh_n_opts.index(_gh_n_cur) if _gh_n_cur in _gh_n_opts else 2
         st.selectbox(
             "Gauss–Hermite points",
-            options=[31, 41, 61, 81], key="gh_n",
+            options=_gh_n_opts, index=_gh_n_idx, key="gh_n",
             help=h("gh_n",
                    "Quadrature points for CRM posterior. Higher = more accurate, slower.")
         )
+        _ms_opts = [1, 2]
+        _ms_cur  = int(st.session_state.get("max_step", R_DEFAULTS["max_step"]))
+        _ms_idx  = _ms_opts.index(_ms_cur) if _ms_cur in _ms_opts else 0
         st.selectbox(
             "Max dose step per update",
-            options=[1, 2], key="max_step",
+            options=_ms_opts, index=_ms_idx, key="max_step",
             help=h("max_step",
                    "Max dose levels the CRM can move per cohort update.")
         )
         st.slider(
             "Prior sigma on theta",
             min_value=0.2, max_value=5.0, step=0.1, key="sigma",
+            value=float(st.session_state.get("sigma", R_DEFAULTS["sigma"])),
             help=h("sigma",
                    "SD of theta in the CRM prior (shared for both endpoints). "
                    "Larger = more diffuse prior.",
@@ -1248,11 +1304,13 @@ if view == "Essentials":
         st.toggle(
             "Guardrail: next dose ≤ highest tried + 1",
             key="enforce_guardrail",
+            value=bool(st.session_state.get("enforce_guardrail", R_DEFAULTS["enforce_guardrail"])),
             help=h("enforce_guardrail", "Prevent skipping untried dose levels.")
         )
         st.toggle(
             "Final MTD must be among tried doses",
             key="restrict_final_mtd",
+            value=bool(st.session_state.get("restrict_final_mtd", R_DEFAULTS["restrict_final_mtd"])),
             help=h("restrict_final_mtd",
                    "Restrict final MTD selection to doses where n > 0.")
         )
@@ -1261,6 +1319,7 @@ if view == "Essentials":
         st.toggle(
             "Burn-in until first tox1 DLT",
             key="burn_in",
+            value=bool(st.session_state.get("burn_in", R_DEFAULTS["burn_in"])),
             help=h("burn_in",
                    "Escalate one level at a time until the first observed acute DLT, "
                    "then switch to CRM updates.")
@@ -1268,12 +1327,14 @@ if view == "Essentials":
         st.toggle(
             "Enable EWOC joint overdose control",
             key="ewoc_on",
+            value=bool(st.session_state.get("ewoc_on", R_DEFAULTS["ewoc_on"])),
             help=h("ewoc_on",
                    "Restrict doses where BOTH P(tox1 OD) and P(tox2 OD) < EWOC alpha.")
         )
         st.number_input(
             "EWOC alpha",
             min_value=0.01, max_value=0.99, step=0.01, key="ewoc_alpha",
+            value=float(st.session_state.get("ewoc_alpha", R_DEFAULTS["ewoc_alpha"])),
             disabled=(not bool(_cfg("ewoc_on"))),
             help=h("ewoc_alpha",
                    "EWOC threshold applied to both endpoints independently.")
@@ -1283,6 +1344,7 @@ if view == "Essentials":
         st.toggle(
             "Explain first CRM trial",
             key="show_crm_trace",
+            value=bool(st.session_state.get("show_crm_trace", R_DEFAULTS["show_crm_trace"])),
             help=h("show_crm_trace",
                    "When ON, shows a detailed walkthrough for the first simulated "
                    "CRM trial only: which dose each patient received, what follow-up "
@@ -1315,14 +1377,17 @@ if view == "Essentials":
     with _ar1:
         st.number_input("≥6 — esc if tox1 ≤", min_value=0, max_value=5,
                         step=1, key="a6_esc_max",
+                        value=int(st.session_state.get("a6_esc_max", R_DEFAULTS["a6_esc_max"])),
                         help=h("a6_esc_max", "Phase 1 acute escalation threshold."))
     with _ar2:
         st.number_input("≥6 — stop if tox1 ≥", min_value=1, max_value=6,
                         step=1, key="a6_stop_min",
+                        value=int(st.session_state.get("a6_stop_min", R_DEFAULTS["a6_stop_min"])),
                         help=h("a6_stop_min", "Phase 1 acute stopping threshold."))
     with _ar3:
         st.number_input("≥9 — esc if tox1 ≤", min_value=0, max_value=8,
                         step=1, key="a9_esc_max",
+                        value=int(st.session_state.get("a9_esc_max", R_DEFAULTS["a9_esc_max"])),
                         help=h("a9_esc_max", "Phase 2 acute escalation threshold."))
 
     st.markdown(
@@ -1334,18 +1399,22 @@ if view == "Essentials":
     with _sr1:
         st.number_input("≥6 surg — esc if tox2 ≤", min_value=0, max_value=6,
                         step=1, key="s6_esc_max",
+                        value=int(st.session_state.get("s6_esc_max", R_DEFAULTS["s6_esc_max"])),
                         help=h("s6_esc_max", "Phase 1 subacute escalation threshold."))
     with _sr2:
         st.number_input("≥6 surg — stop if tox2 ≥", min_value=1, max_value=6,
                         step=1, key="s6_stop_min",
+                        value=int(st.session_state.get("s6_stop_min", R_DEFAULTS["s6_stop_min"])),
                         help=h("s6_stop_min", "Phase 1 subacute stopping threshold."))
     with _sr3:
         st.number_input("≥9 surg — esc if tox2 ≤", min_value=0, max_value=9,
                         step=1, key="s9_esc_max",
+                        value=int(st.session_state.get("s9_esc_max", R_DEFAULTS["s9_esc_max"])),
                         help=h("s9_esc_max", "Phase 2 subacute escalation threshold."))
     with _sr4:
         st.number_input("≥9 surg — stop if tox2 ≥", min_value=1, max_value=9,
                         step=1, key="s9_stop_min",
+                        value=int(st.session_state.get("s9_stop_min", R_DEFAULTS["s9_stop_min"])),
                         help=h("s9_stop_min", "Phase 2 subacute stopping threshold."))
 
     st.write("")
@@ -1442,29 +1511,13 @@ elif view == "Playground":
         prior_model_val = str(_cfg("prior_model"))
         intcpt_val      = float(_cfg("logistic_intcpt"))
 
-        # Clamp halfwidth/prior-nu keys only when their valid range shrinks
-        # (e.g. prior_target moved closer to 0 or 1).
-        # Do NOT write when no change is needed — writing to a widget key
-        # from script-body code on every rerun clears Streamlit's committed-
-        # interaction flag and causes the slider to reset unexpectedly.
+        # Compute dynamic halfwidth upper bounds from current prior_target values.
+        # No script-body writes to widget keys — clamping is handled by the
+        # _clamp_halfwidth_t1/t2 callbacks attached to the prior_target sliders.
         _pt1     = float(_cfg("prior_target_t1"))
         _max_hw1 = round(max(0.01, min(0.30, _pt1 - 0.01, 1.0 - _pt1 - 0.01)), 2)
         _pt2     = float(_cfg("prior_target_t2"))
         _max_hw2 = round(max(0.01, min(0.30, _pt2 - 0.01, 1.0 - _pt2 - 0.01)), 2)
-
-        _prior_init = [
-            ("prior_target_t1", float, 0.05, 0.50,    R_DEFAULTS["prior_target_t1"]),
-            ("halfwidth_t1",    float, 0.01, _max_hw1, R_DEFAULTS["halfwidth_t1"]),
-            ("prior_nu_t1",     int,   1,    5,        R_DEFAULTS["prior_nu_t1"]),
-            ("prior_target_t2", float, 0.05, 0.50,    R_DEFAULTS["prior_target_t2"]),
-            ("halfwidth_t2",    float, 0.01, _max_hw2, R_DEFAULTS["halfwidth_t2"]),
-            ("prior_nu_t2",     int,   1,    5,        R_DEFAULTS["prior_nu_t2"]),
-        ]
-        for _k, _typ, _lo, _hi, _def in _prior_init:
-            _v       = _typ(st.session_state.get(_k, _def))
-            _clipped = _typ(np.clip(_v, _lo, _hi))
-            if _clipped != _v:                    # only write when clipping changes the value
-                st.session_state[_k] = _clipped
 
         ep_tab = st.radio(
             "Endpoint",
@@ -1476,22 +1529,41 @@ elif view == "Playground":
         if ep_tab == "Tox1 (acute)":
             st.slider("Prior target (tox1)", 0.05, 0.50, step=0.01,
                       key="prior_target_t1",
+                      value=float(st.session_state.get("prior_target_t1",
+                                                        R_DEFAULTS["prior_target_t1"])),
+                      on_change=_clamp_halfwidth_t1,
                       help=h("prior_target_t1", "Target probability for the tox1 skeleton."))
+            # Clamp displayed halfwidth to the current valid max before rendering.
+            _hw1_safe = min(
+                float(st.session_state.get("halfwidth_t1", R_DEFAULTS["halfwidth_t1"])),
+                _max_hw1,
+            )
             st.slider("Halfwidth (tox1)", 0.01, float(_max_hw1), step=0.01,
                       key="halfwidth_t1",
+                      value=_hw1_safe,
                       help=h("halfwidth_t1", "Skeleton steepness. target ± halfwidth must stay in (0,1)."))
             st.slider("Prior MTD level (tox1, 1-based)", 1, 5, step=1,
                       key="prior_nu_t1",
+                      value=int(st.session_state.get("prior_nu_t1", R_DEFAULTS["prior_nu_t1"])),
                       help=h("prior_nu_t1", "Dose level a priori closest to the tox1 target."))
         else:
             st.slider("Prior target (tox2)", 0.05, 0.50, step=0.01,
                       key="prior_target_t2",
+                      value=float(st.session_state.get("prior_target_t2",
+                                                        R_DEFAULTS["prior_target_t2"])),
+                      on_change=_clamp_halfwidth_t2,
                       help=h("prior_target_t2", "Target probability for the tox2 skeleton."))
+            _hw2_safe = min(
+                float(st.session_state.get("halfwidth_t2", R_DEFAULTS["halfwidth_t2"])),
+                _max_hw2,
+            )
             st.slider("Halfwidth (tox2)", 0.01, float(_max_hw2), step=0.01,
                       key="halfwidth_t2",
+                      value=_hw2_safe,
                       help=h("halfwidth_t2", "Skeleton steepness. target ± halfwidth must stay in (0,1)."))
             st.slider("Prior MTD level (tox2, 1-based)", 1, 5, step=1,
                       key="prior_nu_t2",
+                      value=int(st.session_state.get("prior_nu_t2", R_DEFAULTS["prior_nu_t2"])),
                       help=h("prior_nu_t2", "Dose level a priori closest to the tox2 conditional target."))
 
         # Compute skeletons for preview and simulation
@@ -2743,10 +2815,10 @@ if view == "Design Exploration":
 # ==============================================================================
 
 with st.expander("🔍 State debug", expanded=False):
-    # _snap is the read-only snapshot dict; note: do NOT shadow the _cfg() function
+    # _snap is the read-only canonical snapshot (session_state + _ALL_DEFAULTS fallback)
     _snap = _get_all_config()
 
-    # ── Automatic consistency check (uses validate_shared_state_consistency) ──
+    # ── Automatic consistency check ───────────────────────────────────────────
     st.markdown("#### Consistency check")
     _problems = validate_shared_state_consistency()
     if _problems:
@@ -2758,53 +2830,81 @@ with st.expander("🔍 State debug", expanded=False):
 
     st.divider()
 
-    # ── Shared config snapshot ────────────────────────────────────────────────
-    st.markdown("#### Full shared config (canonical session_state snapshot)")
-    _study_keys  = ["target_t1", "target_t2", "p_surgery", "start_level_1b",
-                    "n_sims", "seed", "accrual_per_month"]
-    _timing_keys = ["incl_to_rt", "rt_dur", "rt_to_surg", "tox2_win"]
-    _size_keys   = ["max_n_63", "max_n_crm", "cohort_size"]
-    _crm_keys    = ["sigma", "gh_n", "max_step", "burn_in", "ewoc_on",
-                    "ewoc_alpha", "enforce_guardrail", "restrict_final_mtd",
-                    "show_crm_trace"]
-    _prior_keys  = ["prior_model", "prior_target_t1", "halfwidth_t1",
-                    "prior_nu_t1", "prior_target_t2", "halfwidth_t2",
-                    "prior_nu_t2", "prior_ep_tab"]
-
-    _db_c1, _db_c2, _db_c3 = st.columns(3)
-    with _db_c1:
-        st.markdown("**Study / Simulation / Timing / Sizes**")
-        st.json({k: _snap[k] for k in _study_keys + _timing_keys + _size_keys})
-    with _db_c2:
-        st.markdown("**CRM settings / Priors**")
-        st.json({k: _snap[k] for k in _crm_keys + _prior_keys})
-    with _db_c3:
-        st.markdown("**True tox1 by dose (Playground)**")
-        st.json({k: _snap[k] for k in TRUE_T1_KEYS})
-        st.markdown("**True tox2 by dose (Playground)**")
-        st.json({k: _snap[k] for k in TRUE_T2_KEYS})
-        st.markdown("**Targets used in Playground**")
-        st.json({"target_t1": _snap["target_t1"], "target_t2": _snap["target_t2"]})
-
-    st.divider()
-    st.markdown("#### Scenario self-check")
-    st.markdown(
-        "The values above confirm state is canonical.  "
-        "**target_t1 / target_t2** set in Essentials must match the values in "
-        "the *Targets used in Playground* block above — if they do, the dose-risk "
-        "preview and highest-safe-dose display will be correct regardless of which "
-        "view was most recently rendered."
+    # ── Widget-state vs default mismatch table ────────────────────────────────
+    # Show three columns per key: canonical value (session_state or _ALL_DEFAULTS
+    # fallback), raw session_state value ("—" if missing), and the factory default.
+    # Keys where raw session_state is missing are highlighted so the user can see
+    # which widgets have never been rendered in this session.
+    st.markdown("#### Widget state vs canonical defaults")
+    st.caption(
+        "**Canonical** = `session_state[key]` if present, else `_ALL_DEFAULTS[key]`.  "
+        "**Raw SS** = `session_state[key]` directly (— if widget not yet rendered).  "
+        "**Default** = factory value from `_ALL_DEFAULTS`.  "
+        "A ⚠️ in Raw SS means the key is absent from session_state — "
+        "the widget for this key has not been rendered yet this session."
     )
-    # Confirm target sync explicitly
-    _t1_ok = _snap["target_t1"] == get_config_value("target_t1")
-    _t2_ok = _snap["target_t2"] == get_config_value("target_t2")
-    if _t1_ok and _t2_ok:
-        st.success(
-            f"target_t1 = {_snap['target_t1']}  |  "
-            f"target_t2 = {_snap['target_t2']}  — consistent across views."
+    _widget_keys_ordered = (
+        ["target_t1", "target_t2", "p_surgery", "start_level_1b",
+         "n_sims", "seed", "accrual_per_month",
+         "incl_to_rt", "rt_dur", "rt_to_surg", "tox2_win",
+         "max_n_63", "max_n_crm", "cohort_size",
+         "sigma", "gh_n", "max_step",
+         "burn_in", "ewoc_on", "ewoc_alpha",
+         "enforce_guardrail", "restrict_final_mtd", "show_crm_trace",
+         "prior_model", "prior_target_t1", "halfwidth_t1", "prior_nu_t1",
+         "prior_target_t2", "halfwidth_t2", "prior_nu_t2",
+         "a6_esc_max", "a6_stop_min", "a9_esc_max",
+         "s6_esc_max", "s6_stop_min", "s9_esc_max", "s9_stop_min"]
+        + TRUE_T1_KEYS + TRUE_T2_KEYS
+    )
+    _ws_rows = []
+    for _wk in _widget_keys_ordered:
+        _raw_ss = st.session_state.get(_wk)
+        _ws_rows.append({
+            "Key":       _wk,
+            "Canonical": _snap.get(_wk, "—"),
+            "Raw SS":    _raw_ss if _raw_ss is not None else "⚠ absent",
+            "Default":   _ALL_DEFAULTS.get(_wk, "—"),
+        })
+    import pandas as _pd_dbg
+    _ws_df = _pd_dbg.DataFrame(_ws_rows)
+    # Highlight rows where Raw SS is absent
+    _absent_mask = _ws_df["Raw SS"] == "⚠ absent"
+    st.dataframe(
+        _ws_df,
+        use_container_width=True, hide_index=True,
+        column_config={
+            "Key":       st.column_config.TextColumn("Key", width="medium"),
+            "Canonical": st.column_config.TextColumn("Canonical (effective)", width="small"),
+            "Raw SS":    st.column_config.TextColumn("Raw session_state", width="small"),
+            "Default":   st.column_config.TextColumn("Factory default", width="small"),
+        },
+    )
+    _absent_count = int(_absent_mask.sum())
+    if _absent_count:
+        st.caption(
+            f"ℹ️ {_absent_count} key(s) marked ⚠ absent — their widgets have not been "
+            "rendered yet this session. This is normal before visiting Essentials or "
+            "Playground for the first time."
         )
     else:
-        st.error(
-            f"target_t1 snapshot={_snap['target_t1']!r} live={get_config_value('target_t1')!r}  |  "
-            f"target_t2 snapshot={_snap['target_t2']!r} live={get_config_value('target_t2')!r}"
+        st.success("All widget keys are present in session_state.")
+
+    st.divider()
+
+    # ── Simulation result summary ─────────────────────────────────────────────
+    st.markdown("#### Last simulation config snapshot")
+    if "_tite_results" in st.session_state:
+        _res_info = {
+            "ns (replications)": st.session_state["_tite_results"].get("ns"),
+            "seed used":         st.session_state["_tite_results"].get("seed"),
+            "p_surgery used":    st.session_state["_tite_results"].get("p_surgery"),
+        }
+        st.json(_res_info)
+        st.caption(
+            "These are the values that were passed to the last simulation run.  "
+            "If they differ from the current Canonical values above, the displayed "
+            "results are stale — re-run the simulation."
         )
+    else:
+        st.info("No simulation results in session_state yet.")
