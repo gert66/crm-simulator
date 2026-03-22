@@ -886,10 +886,12 @@ R_DEFAULTS = {
     "preview_w_px":       PREVIEW_W_PX,
     "result_w_px":        RESULT_W_PX,
     # Decision trace (first CRM trial only)
-    "show_crm_trace":     False,
+    "show_crm_trace":     True,
     # Playground prior-endpoint tab (must be initialised so the slider
     # conditional never sees an undefined key on first Playground load)
     "prior_ep_tab":       "Tox1 (acute)",
+    # Playground prior scenario selector
+    "prior_scenario":     "Neutral",
 }
 
 TRUE_T1_KEYS  = [f"true_t1_L{i}"  for i in range(5)]
@@ -915,10 +917,74 @@ _TRUE_DEFAULTS: dict = {
 _ALL_CONFIG_KEYS = list(_ALL_DEFAULTS.keys())
 
 # ==============================================================================
+# Prior scenario presets
+# Each entry maps to concrete prior parameter values.  "Custom" has no preset
+# values — it exposes the raw sliders instead.
+# Keys used: prior_target_t1, halfwidth_t1, prior_nu_t1 (and _t2 equivalents).
+# ==============================================================================
+
+_PRIOR_SCENARIOS: dict = {
+    "Neutral": {
+        "description": (
+            "Balanced starting point. No strong prior belief about which dose level "
+            "is the MTD — the skeleton is centred at the middle level (L3) with "
+            "moderate uncertainty about the dose-toxicity curve shape."
+        ),
+        "prior_target_t1": 0.15, "halfwidth_t1": 0.10, "prior_nu_t1": 3,
+        "prior_target_t2": 0.33, "halfwidth_t2": 0.10, "prior_nu_t2": 3,
+    },
+    "Lower-dose prior": {
+        "description": (
+            "Assumes the MTD is more likely to be at a lower dose level (around L2). "
+            "Suitable when prior clinical data suggest toxicity rises early across "
+            "the tested dose range."
+        ),
+        "prior_target_t1": 0.15, "halfwidth_t1": 0.10, "prior_nu_t1": 2,
+        "prior_target_t2": 0.33, "halfwidth_t2": 0.10, "prior_nu_t2": 2,
+    },
+    "Higher-dose prior": {
+        "description": (
+            "Assumes the MTD is more likely to be at a higher dose level (around L4). "
+            "Suitable when existing data suggest the drug is well tolerated at the "
+            "lower levels and toxicity is expected only at the upper end."
+        ),
+        "prior_target_t1": 0.15, "halfwidth_t1": 0.10, "prior_nu_t1": 4,
+        "prior_target_t2": 0.33, "halfwidth_t2": 0.10, "prior_nu_t2": 4,
+    },
+    "Conservative": {
+        "description": (
+            "Cautious prior: assumes the dose-toxicity curve rises steeply and the "
+            "MTD is near lower levels. The skeleton is more concentrated (narrow "
+            "halfwidth), limiting escalation to higher doses unless the data clearly "
+            "support it."
+        ),
+        "prior_target_t1": 0.15, "halfwidth_t1": 0.06, "prior_nu_t1": 2,
+        "prior_target_t2": 0.33, "halfwidth_t2": 0.06, "prior_nu_t2": 2,
+    },
+    "Optimistic": {
+        "description": (
+            "Permissive prior: assumes the dose-toxicity curve is relatively flat and "
+            "the MTD is toward higher levels. The skeleton is wider (larger halfwidth), "
+            "allowing the model to explore upper doses more readily when early outcomes "
+            "are benign."
+        ),
+        "prior_target_t1": 0.15, "halfwidth_t1": 0.13, "prior_nu_t1": 4,
+        "prior_target_t2": 0.33, "halfwidth_t2": 0.13, "prior_nu_t2": 4,
+    },
+    "Custom": {
+        "description": (
+            "Manually configure all prior parameters. Recommended for users familiar "
+            "with the dfcrm skeleton parameterisation (target rate, halfwidth, and "
+            "prior MTD level for each endpoint)."
+        ),
+    },
+}
+
+# ==============================================================================
 # Single-source-of-truth state management
 # ==============================================================================
 
-_STATE_VERSION = "2026-03-21f"
+_STATE_VERSION = "2026-03-22a"
 
 def init_state() -> None:
     """Seed EVERY canonical config key exactly once per session.
@@ -1184,6 +1250,44 @@ _sync_s6_esc_max  = _make_sync("s6_esc_max",  int, "wl_s6_esc_max")
 _sync_s6_stop_min = _make_sync("s6_stop_min", int, "wl_s6_stop_min")
 _sync_s9_esc_max  = _make_sync("s9_esc_max",  int, "wl_s9_esc_max")
 _sync_s9_stop_min = _make_sync("s9_stop_min", int, "wl_s9_stop_min")
+_sync_prior_scenario = _make_sync("prior_scenario", str, "wl_prior_scenario")
+
+
+def _apply_prior_scenario() -> None:
+    """on_change for the Prior scenario selectbox.
+
+    Commits the selected scenario name to the canonical config, then — for
+    every non-Custom scenario — overwrites the underlying prior parameters
+    (prior_target, halfwidth, prior_nu for both endpoints) so that the
+    skeleton computation and any Custom-mode sliders always start from the
+    scenario's preset values.
+
+    Streamlit fires on_change BEFORE the next script run, so the pre-writes
+    that follow will read the already-updated canonical values.
+    """
+    scenario = str(st.session_state.get("wl_prior_scenario", "Neutral"))
+    st.session_state["prior_scenario"] = scenario
+
+    if scenario == "Custom":
+        return  # keep whatever values the user previously set
+
+    preset = _PRIOR_SCENARIOS.get(scenario, {})
+    for key in ("prior_target_t1", "halfwidth_t1", "prior_nu_t1",
+                "prior_target_t2", "halfwidth_t2", "prior_nu_t2"):
+        if key in preset:
+            st.session_state[key] = preset[key]
+    # Mirror into slider widget keys so pre-writes on next render are
+    # consistent (avoids a one-frame lag where sliders show stale values).
+    for sl_key, cfg_key in [
+        ("sl_prior_target_t1", "prior_target_t1"),
+        ("sl_halfwidth_t1",    "halfwidth_t1"),
+        ("sl_prior_nu_t1",     "prior_nu_t1"),
+        ("sl_prior_target_t2", "prior_target_t2"),
+        ("sl_halfwidth_t2",    "halfwidth_t2"),
+        ("sl_prior_nu_t2",     "prior_nu_t2"),
+    ]:
+        if cfg_key in preset:
+            st.session_state[sl_key] = preset[cfg_key]
 
 
 def _draw_timeline(incl_to_rt, rt_dur, rt_to_surg, tox2_win):
@@ -1464,7 +1568,6 @@ if view == "Essentials":
                    r_name="prior.sigma / sigma")
         )
         st.session_state["sigma"] = st.session_state["sl_sigma"]
-        st.caption(f"[dbg sigma] cfg={_cfg('sigma'):.1f}  widget={st.session_state['sl_sigma']:.1f}")
 
         st.markdown("#### CRM safety / selection")
 
@@ -1477,8 +1580,6 @@ if view == "Essentials":
             help=h("enforce_guardrail", "Prevent skipping untried dose levels.")
         )
         st.session_state["enforce_guardrail"] = st.session_state["wl_enforce_guardrail"]
-        st.caption(f"[dbg guardrail] cfg={_cfg('enforce_guardrail')}  "
-                   f"widget={st.session_state['wl_enforce_guardrail']}")
 
         # ── restrict_final_mtd ────────────────────────────────────────────
         st.session_state["wl_restrict_final_mtd"] = bool(_cfg("restrict_final_mtd"))
@@ -1490,8 +1591,6 @@ if view == "Essentials":
                    "Restrict final MTD selection to doses where n > 0.")
         )
         st.session_state["restrict_final_mtd"] = st.session_state["wl_restrict_final_mtd"]
-        st.caption(f"[dbg restrict_mtd] cfg={_cfg('restrict_final_mtd')}  "
-                   f"widget={st.session_state['wl_restrict_final_mtd']}")
 
         st.markdown("#### CRM behaviour")
 
@@ -1506,8 +1605,6 @@ if view == "Essentials":
                    "then switch to CRM updates.")
         )
         st.session_state["burn_in"] = st.session_state["wl_burn_in"]
-        st.caption(f"[dbg burn_in] cfg={_cfg('burn_in')}  "
-                   f"widget={st.session_state['wl_burn_in']}")
 
         # ── ewoc_on ───────────────────────────────────────────────────────
         st.session_state["wl_ewoc_on"] = bool(_cfg("ewoc_on"))
@@ -1532,9 +1629,6 @@ if view == "Essentials":
                    "EWOC threshold applied to both endpoints independently.")
         )
         st.session_state["ewoc_alpha"] = st.session_state["wl_ewoc_alpha"]
-        st.caption(f"[dbg ewoc] on={_cfg('ewoc_on')}  "
-                   f"alpha cfg={_cfg('ewoc_alpha'):.2f}  "
-                   f"widget={st.session_state['wl_ewoc_alpha']:.2f}")
 
         st.markdown("#### CRM decision trace")
 
@@ -1552,8 +1646,6 @@ if view == "Essentials":
                    "Has no effect on the summary results across all simulated trials.")
         )
         st.session_state["show_crm_trace"] = st.session_state["wl_show_crm_trace"]
-        st.caption(f"[dbg crm_trace] cfg={_cfg('show_crm_trace')}  "
-                   f"widget={st.session_state['wl_show_crm_trace']}")
 
     st.markdown("---")
     st.markdown("#### 6+3 stopping rules")
@@ -1706,6 +1798,8 @@ elif view == "Playground":
     # ── Mid: Priors ───────────────────────────────────────────────────────────
     with mid:
         st.markdown("#### Priors")
+
+        # ── Skeleton model ────────────────────────────────────────────────
         st.radio(
             "Skeleton model",
             options=["empiric", "logistic"],
@@ -1715,85 +1809,137 @@ elif view == "Playground":
         prior_model_val = str(_cfg("prior_model"))
         intcpt_val      = float(_cfg("logistic_intcpt"))
 
-        ep_tab = st.radio(
-            "Endpoint",
-            options=["Tox1 (acute)", "Tox2 (subacute | surgery)"],
-            horizontal=True, key="prior_ep_tab",
-            help="Switch between tox1 and tox2 prior parameter sets.",
+        # ── Prior scenario selector ───────────────────────────────────────
+        st.session_state["wl_prior_scenario"] = str(_cfg("prior_scenario"))
+        st.selectbox(
+            "Prior scenario",
+            options=list(_PRIOR_SCENARIOS.keys()),
+            key="wl_prior_scenario",
+            on_change=_apply_prior_scenario,
+            help=(
+                "Choose a pre-configured prior belief about the dose-toxicity "
+                "relationship. Select **Custom** to set parameters manually."
+            ),
         )
+        st.session_state["prior_scenario"] = st.session_state["wl_prior_scenario"]
+        _scen_val = str(_cfg("prior_scenario"))
 
-        if ep_tab == "Tox1 (acute)":
-            # ── Prior target ──────────────────────────────────────────────
-            # Pre-write canonical → widget key so the thumb always reflects
-            # the config value (pending user interactions still win over this).
-            st.session_state["sl_prior_target_t1"] = float(_cfg("prior_target_t1"))
-            st.slider("Prior target (tox1)", 0.05, 0.50, step=0.01,
-                      key="sl_prior_target_t1",
-                      on_change=_clamp_halfwidth_t1,
-                      help=h("prior_target_t1", "Target probability for the tox1 skeleton."))
-            # Post-read widget → canonical config
-            st.session_state["prior_target_t1"] = st.session_state["sl_prior_target_t1"]
-            st.caption(f"[dbg t1 target] cfg={_cfg('prior_target_t1'):.2f}  "
-                       f"widget={st.session_state['sl_prior_target_t1']:.2f}")
+        # Description under the selector
+        _scen_desc = _PRIOR_SCENARIOS.get(_scen_val, {}).get("description", "")
+        if _scen_desc:
+            st.caption(_scen_desc)
 
-            # Recompute halfwidth bound from the now-updated target
-            _pt1     = float(_cfg("prior_target_t1"))
-            _max_hw1 = max(0.01, round(min(_pt1 - 0.01, 1.0 - _pt1 - 0.01), 2))
+        # ── Scenario content ──────────────────────────────────────────────
+        if _scen_val == "Custom":
+            # Show the Endpoint tab and raw editable sliders
+            ep_tab = st.radio(
+                "Endpoint",
+                options=["Tox1 (acute)", "Tox2 (subacute | surgery)"],
+                horizontal=True, key="prior_ep_tab",
+                help="Switch between tox1 and tox2 prior parameter sets.",
+            )
 
-            # ── Halfwidth ─────────────────────────────────────────────────
-            _hw1_clamped = min(float(_cfg("halfwidth_t1")), _max_hw1)
-            st.session_state["sl_halfwidth_t1"] = _hw1_clamped
-            st.slider("Halfwidth (tox1)", 0.01, float(_max_hw1), step=0.01,
-                      key="sl_halfwidth_t1",
-                      on_change=_sync_halfwidth_t1,
-                      help=h("halfwidth_t1", "Skeleton steepness. target ± halfwidth must stay in (0,1)."))
-            st.session_state["halfwidth_t1"] = st.session_state["sl_halfwidth_t1"]
-            st.caption(f"[dbg t1 hw] cfg={_cfg('halfwidth_t1'):.2f}  "
-                       f"widget={st.session_state['sl_halfwidth_t1']:.2f}")
+            if ep_tab == "Tox1 (acute)":
+                # ── Prior target ──────────────────────────────────────────
+                st.session_state["sl_prior_target_t1"] = float(_cfg("prior_target_t1"))
+                st.slider("Prior target (tox1)", 0.05, 0.50, step=0.01,
+                          key="sl_prior_target_t1",
+                          on_change=_clamp_halfwidth_t1,
+                          help=h("prior_target_t1",
+                                 "Reference DLT probability at which the skeleton is "
+                                 "anchored. Usually matches the Essentials target."))
+                st.session_state["prior_target_t1"] = st.session_state["sl_prior_target_t1"]
 
-            # ── Prior MTD level ───────────────────────────────────────────
-            st.session_state["sl_prior_nu_t1"] = int(_cfg("prior_nu_t1"))
-            st.slider("Prior MTD level (tox1, 1-based)", 1, 5, step=1,
-                      key="sl_prior_nu_t1",
-                      on_change=_sync_prior_nu_t1,
-                      help=h("prior_nu_t1", "Dose level a priori closest to the tox1 target."))
-            st.session_state["prior_nu_t1"] = st.session_state["sl_prior_nu_t1"]
-            st.caption(f"[dbg t1 nu] cfg={_cfg('prior_nu_t1')}  "
-                       f"widget={st.session_state['sl_prior_nu_t1']}")
+                _pt1     = float(_cfg("prior_target_t1"))
+                _max_hw1 = max(0.01, round(min(_pt1 - 0.01, 1.0 - _pt1 - 0.01), 2))
+
+                # ── Halfwidth ──────────────────────────────────────────────
+                _hw1_clamped = min(float(_cfg("halfwidth_t1")), _max_hw1)
+                st.session_state["sl_halfwidth_t1"] = _hw1_clamped
+                st.slider("Halfwidth (tox1)", 0.01, float(_max_hw1), step=0.01,
+                          key="sl_halfwidth_t1",
+                          on_change=_sync_halfwidth_t1,
+                          help=h("halfwidth_t1",
+                                 "Controls skeleton steepness. Larger = flatter curve, "
+                                 "smaller = more peaked around the target level. "
+                                 "target ± halfwidth must stay within (0, 1)."))
+                st.session_state["halfwidth_t1"] = st.session_state["sl_halfwidth_t1"]
+
+                # ── Prior MTD level ────────────────────────────────────────
+                st.session_state["sl_prior_nu_t1"] = int(_cfg("prior_nu_t1"))
+                st.slider("Prior MTD level (tox1, 1-based)", 1, 5, step=1,
+                          key="sl_prior_nu_t1",
+                          on_change=_sync_prior_nu_t1,
+                          help=h("prior_nu_t1",
+                                 "Dose level that is a priori closest to the tox1 target. "
+                                 "L1 = most cautious, L5 = most optimistic."))
+                st.session_state["prior_nu_t1"] = st.session_state["sl_prior_nu_t1"]
+
+            else:
+                # ── Prior target (tox2) ────────────────────────────────────
+                st.session_state["sl_prior_target_t2"] = float(_cfg("prior_target_t2"))
+                st.slider("Prior target (tox2)", 0.05, 0.50, step=0.01,
+                          key="sl_prior_target_t2",
+                          on_change=_clamp_halfwidth_t2,
+                          help=h("prior_target_t2",
+                                 "Reference DLT probability for the subacute tox2 skeleton."))
+                st.session_state["prior_target_t2"] = st.session_state["sl_prior_target_t2"]
+
+                _pt2     = float(_cfg("prior_target_t2"))
+                _max_hw2 = max(0.01, round(min(_pt2 - 0.01, 1.0 - _pt2 - 0.01), 2))
+
+                # ── Halfwidth (tox2) ───────────────────────────────────────
+                _hw2_clamped = min(float(_cfg("halfwidth_t2")), _max_hw2)
+                st.session_state["sl_halfwidth_t2"] = _hw2_clamped
+                st.slider("Halfwidth (tox2)", 0.01, float(_max_hw2), step=0.01,
+                          key="sl_halfwidth_t2",
+                          on_change=_sync_halfwidth_t2,
+                          help=h("halfwidth_t2",
+                                 "Controls tox2 skeleton steepness. "
+                                 "target ± halfwidth must stay within (0, 1)."))
+                st.session_state["halfwidth_t2"] = st.session_state["sl_halfwidth_t2"]
+
+                # ── Prior MTD level (tox2) ─────────────────────────────────
+                st.session_state["sl_prior_nu_t2"] = int(_cfg("prior_nu_t2"))
+                st.slider("Prior MTD level (tox2, 1-based)", 1, 5, step=1,
+                          key="sl_prior_nu_t2",
+                          on_change=_sync_prior_nu_t2,
+                          help=h("prior_nu_t2",
+                                 "Dose level a priori closest to the tox2 conditional target."))
+                st.session_state["prior_nu_t2"] = st.session_state["sl_prior_nu_t2"]
+
         else:
-            # ── Prior target (tox2) ───────────────────────────────────────
-            st.session_state["sl_prior_target_t2"] = float(_cfg("prior_target_t2"))
-            st.slider("Prior target (tox2)", 0.05, 0.50, step=0.01,
-                      key="sl_prior_target_t2",
-                      on_change=_clamp_halfwidth_t2,
-                      help=h("prior_target_t2", "Target probability for the tox2 skeleton."))
-            st.session_state["prior_target_t2"] = st.session_state["sl_prior_target_t2"]
-            st.caption(f"[dbg t2 target] cfg={_cfg('prior_target_t2'):.2f}  "
-                       f"widget={st.session_state['sl_prior_target_t2']:.2f}")
-
-            _pt2     = float(_cfg("prior_target_t2"))
-            _max_hw2 = max(0.01, round(min(_pt2 - 0.01, 1.0 - _pt2 - 0.01), 2))
-
-            # ── Halfwidth (tox2) ──────────────────────────────────────────
-            _hw2_clamped = min(float(_cfg("halfwidth_t2")), _max_hw2)
-            st.session_state["sl_halfwidth_t2"] = _hw2_clamped
-            st.slider("Halfwidth (tox2)", 0.01, float(_max_hw2), step=0.01,
-                      key="sl_halfwidth_t2",
-                      on_change=_sync_halfwidth_t2,
-                      help=h("halfwidth_t2", "Skeleton steepness. target ± halfwidth must stay in (0,1)."))
-            st.session_state["halfwidth_t2"] = st.session_state["sl_halfwidth_t2"]
-            st.caption(f"[dbg t2 hw] cfg={_cfg('halfwidth_t2'):.2f}  "
-                       f"widget={st.session_state['sl_halfwidth_t2']:.2f}")
-
-            # ── Prior MTD level (tox2) ────────────────────────────────────
-            st.session_state["sl_prior_nu_t2"] = int(_cfg("prior_nu_t2"))
-            st.slider("Prior MTD level (tox2, 1-based)", 1, 5, step=1,
-                      key="sl_prior_nu_t2",
-                      on_change=_sync_prior_nu_t2,
-                      help=h("prior_nu_t2", "Dose level a priori closest to the tox2 conditional target."))
-            st.session_state["prior_nu_t2"] = st.session_state["sl_prior_nu_t2"]
-            st.caption(f"[dbg t2 nu] cfg={_cfg('prior_nu_t2')}  "
-                       f"widget={st.session_state['sl_prior_nu_t2']}")
+            # ── Non-custom: show compact read-only summary ─────────────────
+            _p = _PRIOR_SCENARIOS[_scen_val]
+            _s1, _s2 = st.columns(2)
+            with _s1:
+                st.markdown(
+                    "<span style='font-size:0.82em; color:#aac8e0; "
+                    "font-weight:600;'>Tox1 (acute)</span>",
+                    unsafe_allow_html=True,
+                )
+                st.markdown(
+                    f"<div style='font-size:0.82em; line-height:1.65;'>"
+                    f"Reference rate: <b>{_p['prior_target_t1']:.2f}</b><br>"
+                    f"Halfwidth: <b>{_p['halfwidth_t1']:.2f}</b><br>"
+                    f"Prior MTD level: <b>L{_p['prior_nu_t1']}</b>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+            with _s2:
+                st.markdown(
+                    "<span style='font-size:0.82em; color:#aac8e0; "
+                    "font-weight:600;'>Tox2 (subacute)</span>",
+                    unsafe_allow_html=True,
+                )
+                st.markdown(
+                    f"<div style='font-size:0.82em; line-height:1.65;'>"
+                    f"Reference rate: <b>{_p['prior_target_t2']:.2f}</b><br>"
+                    f"Halfwidth: <b>{_p['halfwidth_t2']:.2f}</b><br>"
+                    f"Prior MTD level: <b>L{_p['prior_nu_t2']}</b>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
 
         # Refresh _max_hw1/2 for use in skeleton computation below (based on
         # the canonical values that were just updated by post-reads above).
@@ -3228,110 +3374,3 @@ if view == "Design Exploration":
         _disp["Overdose rate (%)"]   = _disp["Overdose rate (%)"].round(1)
         st.dataframe(_disp, use_container_width=True, hide_index=True)
 
-# ==============================================================================
-# State debug expander  (remove once synchronisation is verified)
-# ==============================================================================
-
-with st.expander("🔍 State debug", expanded=False):
-    # _snap is the read-only canonical snapshot (session_state + _ALL_DEFAULTS fallback)
-    _snap = _get_all_config()
-
-    # ── State contract validation ─────────────────────────────────────────────
-    st.markdown("#### State contract validation")
-    _errs, _warns = validate_state_contract()
-    if _errs:
-        st.error(f"CONTRACT VIOLATION — {len(_errs)} error(s):")
-        for _e in _errs:
-            st.markdown(f"- `{_e}`")
-        st.caption(
-            "Contract violations indicate that init_state() failed to seed a required "
-            "key. Any view that reads the missing key via direct session_state access "
-            "would crash with KeyError. Reads through _cfg() / get_config_value() "
-            "are safe because they fall back to _ALL_DEFAULTS."
-        )
-    else:
-        st.success(
-            f"✅ State contract satisfied — all {len(_ALL_CONFIG_KEYS)} canonical "
-            "keys are present in session_state, typed, and in range."
-        )
-
-    st.divider()
-
-    # ── Widget-state vs default mismatch table ────────────────────────────────
-    # Show three columns per key: canonical value (session_state or _ALL_DEFAULTS
-    # fallback), raw session_state value ("—" if missing), and the factory default.
-    # Keys where raw session_state is missing are highlighted so the user can see
-    # which widgets have never been rendered in this session.
-    st.markdown("#### Session state vs defaults")
-    st.caption(
-        "**session_state** = current value in session_state (guaranteed present — "
-        "init_state() seeded all keys).  "
-        "**Default** = factory value from `_ALL_DEFAULTS`.  "
-        "All keys should always be present; if any show ⚠ absent, the contract "
-        "has been violated (see validation above)."
-    )
-    _widget_keys_ordered = (
-        ["target_t1", "target_t2", "p_surgery", "start_level_1b",
-         "n_sims", "seed", "accrual_per_month",
-         "incl_to_rt", "rt_dur", "rt_to_surg", "tox2_win",
-         "max_n_63", "max_n_crm", "cohort_size",
-         "sigma", "gh_n", "max_step",
-         "burn_in", "ewoc_on", "ewoc_alpha",
-         "enforce_guardrail", "restrict_final_mtd", "show_crm_trace",
-         "prior_model", "prior_target_t1", "halfwidth_t1", "prior_nu_t1",
-         "prior_target_t2", "halfwidth_t2", "prior_nu_t2",
-         "a6_esc_max", "a6_stop_min", "a9_esc_max",
-         "s6_esc_max", "s6_stop_min", "s9_esc_max", "s9_stop_min"]
-        + TRUE_T1_KEYS + TRUE_T2_KEYS
-    )
-    _ws_rows = []
-    for _wk in _widget_keys_ordered:
-        _raw_ss = st.session_state.get(_wk)
-        _ws_rows.append({
-            "Key":       _wk,
-            "Canonical": _snap.get(_wk, "—"),
-            "Raw SS":    _raw_ss if _raw_ss is not None else "⚠ absent",
-            "Default":   _ALL_DEFAULTS.get(_wk, "—"),
-        })
-    import pandas as _pd_dbg
-    _ws_df = _pd_dbg.DataFrame(_ws_rows)
-    # Highlight rows where Raw SS is absent
-    _absent_mask = _ws_df["Raw SS"] == "⚠ absent"
-    st.dataframe(
-        _ws_df,
-        use_container_width=True, hide_index=True,
-        column_config={
-            "Key":       st.column_config.TextColumn("Key", width="medium"),
-            "Canonical": st.column_config.TextColumn("Canonical (effective)", width="small"),
-            "Raw SS":    st.column_config.TextColumn("Raw session_state", width="small"),
-            "Default":   st.column_config.TextColumn("Factory default", width="small"),
-        },
-    )
-    _absent_count = int(_absent_mask.sum())
-    if _absent_count:
-        st.caption(
-            f"ℹ️ {_absent_count} key(s) marked ⚠ absent — their widgets have not been "
-            "rendered yet this session. This is normal before visiting Essentials or "
-            "Playground for the first time."
-        )
-    else:
-        st.success("All widget keys are present in session_state.")
-
-    st.divider()
-
-    # ── Simulation result summary ─────────────────────────────────────────────
-    st.markdown("#### Last simulation config snapshot")
-    if "_tite_results" in st.session_state:
-        _res_info = {
-            "ns (replications)": st.session_state["_tite_results"].get("ns"),
-            "seed used":         st.session_state["_tite_results"].get("seed"),
-            "p_surgery used":    st.session_state["_tite_results"].get("p_surgery"),
-        }
-        st.json(_res_info)
-        st.caption(
-            "These are the values that were passed to the last simulation run.  "
-            "If they differ from the current Canonical values above, the displayed "
-            "results are stale — re-run the simulation."
-        )
-    else:
-        st.info("No simulation results in session_state yet.")
