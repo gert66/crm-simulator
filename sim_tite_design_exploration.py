@@ -53,6 +53,7 @@ import os
 import numpy as np
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as _stcv1
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from io import BytesIO
@@ -3836,4 +3837,42 @@ if view == "Design Exploration":
             if _csv_path:
                 _save_msg += f"\n\nCSV saved to:\n`{_csv_path}`"
             st.success(_save_msg)
+
+            # ── Store result in session state for fallback download button ──
+            _ss["_de_batch_html"]     = _batch_html
+            _ss["_de_batch_filename"] = os.path.basename(_out_abs)
+
+            # ── Auto-download via JS: create a hidden <a> and click it ──────
+            # Encodes the report as a base64 data-URI so no server route is
+            # needed.  Works from Streamlit's srcdoc iframe in modern browsers.
+            _dl_b64   = base64.b64encode(_batch_html.encode("utf-8")).decode("ascii")
+            _dl_fname = os.path.basename(_out_abs).replace("'", "\\'")
+            _stcv1.html(
+                f"""<!DOCTYPE html><html><body style="margin:0;padding:0">
+<script>(function(){{
+  var a = document.createElement('a');
+  a.href = 'data:text/html;base64,{_dl_b64}';
+  a.download = '{_dl_fname}';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}})();</script>
+</body></html>""",
+                height=0,
+            )
+
+        # ── Fallback download button (shown after any successful batch run) ──
+        if "_de_batch_html" in _ss:
+            st.download_button(
+                "⬇ Download report",
+                data=_ss["_de_batch_html"].encode("utf-8"),
+                file_name=_ss.get("_de_batch_filename", "design_exploration.html"),
+                mime="text/html",
+                key="de_batch_dl_btn",
+            )
+            st.caption(
+                "Your report was generated.  "
+                "If the download did not start automatically, "
+                "click the button above to download it."
+            )
 
