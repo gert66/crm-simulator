@@ -3064,6 +3064,232 @@ points&nbsp;&nbsp;|&nbsp;&nbsp;{n_sim:,} simulations per point</p>
     return html
 
 
+def _de_pv_for_param(param_name, ss, speed=False):
+    """Return (pv_list, display_label) for *param_name* using session-state values.
+
+    Falls back to safe defaults for any key that has not yet been set by a
+    widget interaction, so the function is safe to call for parameters that
+    the user has never opened in the interactive sweep UI.
+    """
+    if param_name == "sigma":
+        pv = np.linspace(
+            float(ss.get("de_sig_min", 0.3)),
+            float(ss.get("de_sig_max", 2.0)),
+            int(ss.get("de_sig_pts", 8)),
+        ).tolist()
+        if speed:
+            pv = pv[:8]
+        return pv, "σ (prior sigma)"
+
+    if param_name == "ewoc_alpha":
+        inc_off = bool(ss.get("de_inc_off", True))
+        pv_num  = np.linspace(
+            float(ss.get("de_ea_min", 0.05)),
+            float(ss.get("de_ea_max", 0.60)),
+            int(ss.get("de_ea_pts", 8)),
+        ).tolist()
+        if speed:
+            pv_num = pv_num[:8]
+        return ([None] if inc_off else []) + pv_num, "EWOC α"
+
+    if param_name == "max_n":
+        pv = list(ss.get("de_max_n_vals",
+                         [12, 15, 18, 21, 24, 27, 30, 33, 36]))
+        if speed:
+            pv = pv[:3]
+        return pv, "Maximum total patients (max N)"
+
+    if param_name == "cohort_size":
+        pv = list(ss.get("de_cohort_vals", [1, 2, 3, 4]))
+        if speed:
+            pv = pv[:3]
+        return pv, "Cohort size (patients per dose decision)"
+
+    if param_name == "prior_nu_t1":
+        pv = list(ss.get("de_nu1_vals", [1, 2, 3, 4, 5]))
+        if speed:
+            pv = pv[:3]
+        return pv, "Prior MTD level — tox1 (acute)"
+
+    if param_name == "prior_nu_t2":
+        pv = list(ss.get("de_nu2_vals", [1, 2, 3, 4, 5]))
+        if speed:
+            pv = pv[:3]
+        return pv, "Prior MTD level — tox2 (subacute / surgery)"
+
+    raise ValueError(f"Unknown param_name: {param_name!r}")
+
+
+_DE_ALL_PARAMS = [
+    "sigma", "ewoc_alpha", "max_n", "cohort_size", "prior_nu_t1", "prior_nu_t2",
+]
+
+
+def _generate_de_all_html_report(results_list, base_ss, n_sim, seed,
+                                  ts_str, run_label=""):
+    """Build a single self-contained HTML report covering all swept parameters.
+
+    Parameters
+    ----------
+    results_list : list of dicts, each with keys:
+        param_name, param_label, pv_list, result_df, fig_b64
+    base_ss      : the base_ss dict used for the runs
+    n_sim        : simulations per sweep point
+    seed         : base RNG seed
+    ts_str       : human-readable timestamp string
+    run_label    : optional user label
+    """
+    title = "Design Exploration — All Parameters"
+    if run_label:
+        title += f"  ·  {run_label}"
+
+    yn = lambda b: "Yes" if b else "No"
+
+    def _fv(v):
+        if v is None:
+            return "EWOC OFF"
+        if isinstance(v, float):
+            return f"{v:.4g}"
+        return str(v)
+
+    # ── Base configuration table ──────────────────────────────────────────
+    cfg_rows = [
+        ("Target tox1 (acute)",            f"{base_ss['target_tox1']:.3f}"),
+        ("Target tox2 (surgery/subacute)",  f"{base_ss['target_tox2']:.3f}"),
+        ("Prior sigma (σ)",                 f"{base_ss['sigma']:.3g}"),
+        ("EWOC enabled",                    yn(base_ss["ewoc_on"])),
+        ("EWOC α",
+         f"{base_ss['ewoc_alpha']:.3g}" if base_ss["ewoc_on"] else "N/A"),
+        ("Max patients (max N)",            str(base_ss["max_n"])),
+        ("Cohort size",                     str(base_ss["cohort_size"])),
+        ("Start level",                     f"L{base_ss['start_level'] + 1}"),
+        ("Accrual per month",               f"{base_ss['accrual_per_month']:.1f}"),
+        ("RT duration (days)",              str(base_ss["rt_dur"])),
+        ("RT → surgery gap (days)",         str(base_ss["rt_to_surg"])),
+        ("Tox2 window (days)",              str(base_ss["tox2_win"])),
+        ("Burn-in until first DLT",         yn(base_ss["burn_in"])),
+        ("Guardrail (≤ highest tried + 1)", yn(base_ss["enforce_guardrail"])),
+        ("Final MTD restricted to tried",   yn(base_ss["restrict_final_to_tried"])),
+        ("Simulations per point",           str(n_sim)),
+        ("Random seed",                     str(seed)),
+    ]
+    cfg_html = "\n".join(
+        f"<tr><td>{k}</td><td><b>{v}</b></td></tr>" for k, v in cfg_rows
+    )
+
+    # ── Summary table — best point per parameter ──────────────────────────
+    sum_rows = ""
+    for r in results_list:
+        df      = r["result_df"]
+        best    = df.loc[df["quality_score"].idxmax()]
+        note    = (" (EWOC OFF included)"
+                   if r["param_name"] == "ewoc_alpha" and None in r["pv_list"]
+                   else "")
+        sum_rows += (
+            f"<tr>"
+            f"<td>{r['param_label']}{note}</td>"
+            f"<td>{len(r['pv_list'])}</td>"
+            f"<td>{best['param_label']}</td>"
+            f"<td>{best['quality_score']:.4f}</td>"
+            f"<td>{best['pct_correct_selection']:.1f}%</td>"
+            f"<td>{best['overdose_rate']:.1f}%</td>"
+            f"</tr>\n"
+        )
+    summary_html = (
+        "<table><thead><tr>"
+        "<th>Parameter</th><th>Points</th><th>Best value</th>"
+        "<th>Quality score</th><th>% Correct selection</th>"
+        "<th>Overdose rate</th></tr></thead>"
+        f"<tbody>{sum_rows}</tbody></table>"
+    )
+
+    # ── Per-parameter detail sections ─────────────────────────────────────
+    sections = ""
+    for r in results_list:
+        pname  = r["param_name"]
+        plabel = r["param_label"]
+        pv     = r["pv_list"]
+        df     = r["result_df"]
+
+        ewoc_row = ""
+        if pname == "ewoc_alpha":
+            ewoc_row = (
+                f"<tr><td>EWOC OFF included as a point</td>"
+                f"<td><b>{yn(None in pv)}</b></td></tr>"
+            )
+
+        sweep_tbl = (
+            f"<table><tbody>"
+            f"<tr><td>Sweep points</td><td><b>{len(pv)}</b></td></tr>"
+            f"<tr><td>Values</td>"
+            f"<td><b>{', '.join(_fv(v) for v in pv)}</b></td></tr>"
+            f"{ewoc_row}"
+            f"</tbody></table>"
+        )
+
+        df_d = df[["param_label", "n_patients", "quality_score",
+                   "pct_correct_selection", "overdose_rate"]].copy()
+        df_d.columns = [plabel, "N patients", "Quality score",
+                        "% Correct selection", "Overdose rate (%)"]
+        df_d["Quality score"]        = df_d["Quality score"].round(4)
+        df_d["% Correct selection"]  = df_d["% Correct selection"].round(1)
+        df_d["Overdose rate (%)"]    = df_d["Overdose rate (%)"].round(1)
+        res_tbl = df_d.to_html(index=False, border=0,
+                               classes="results-tbl", justify="left")
+
+        sections += (
+            f'<hr class="param-sep">'
+            f"<h2>{plabel}</h2>"
+            f"{sweep_tbl}"
+            f"{res_tbl}"
+            f'<img src="{r["fig_b64"]}" alt="Sweep — {plabel}">'
+        )
+
+    # ── CSS (same as single-param report) ─────────────────────────────────
+    css = """
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+     max-width:1100px;margin:0 auto;padding:28px 44px;color:#2c3e50;background:#fafafa}
+h1{color:#1a237e;border-bottom:3px solid #3949ab;padding-bottom:10px;margin-bottom:4px}
+h2{color:#283593;margin-top:2.2em;border-left:4px solid #7986cb;padding-left:12px}
+.meta{color:#666;font-size:.88em;margin-bottom:2em}
+table{border-collapse:collapse;width:100%;margin:1em 0;background:#fff;
+      box-shadow:0 1px 4px rgba(0,0,0,.08);border-radius:6px;overflow:hidden}
+th{background:#3949ab;color:#fff;padding:9px 14px;text-align:left;
+   font-weight:600;font-size:.91em}
+td{padding:8px 14px;border-bottom:1px solid #e8eaf6;font-size:.92em}
+tr:last-child td{border-bottom:none}
+tr:nth-child(even) td{background:#f5f7ff}
+img{max-width:100%;border:1px solid #ddd;border-radius:6px;
+    box-shadow:0 2px 8px rgba(0,0,0,.10);margin:1em 0;display:block}
+hr.param-sep{border:none;border-top:2px solid #e8eaf6;margin:3em 0 0}
+.footer{color:#aaa;font-size:.78em;margin-top:3em;
+        border-top:1px solid #eee;padding-top:12px}
+"""
+    total_pts = sum(len(r["pv_list"]) for r in results_list)
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>{title}</title>
+<style>{css}</style></head>
+<body>
+<h1>{title}</h1>
+<p class="meta">Generated: {ts_str}&nbsp;&nbsp;|&nbsp;&nbsp;\
+{len(results_list)} parameters&nbsp;&nbsp;|&nbsp;&nbsp;\
+{total_pts} total sweep points&nbsp;&nbsp;|&nbsp;&nbsp;\
+{n_sim:,} simulations per point</p>
+
+<h2>Base Configuration</h2>
+<table><tbody>{cfg_html}</tbody></table>
+
+<h2>Summary — Best Configuration per Parameter</h2>
+{summary_html}
+
+{sections}
+
+<p class="footer">CRM Simulator — Design Exploration batch report (all parameters)</p>
+</body></html>"""
+    return html
+
+
 # ------------------------------------------------------------------------------
 # Sweep results plot helper (from design_exploration.py)
 # Call: fig = _plot_sweep_results(df, param_label)
@@ -3700,9 +3926,11 @@ if view == "Design Exploration":
     st.divider()
     with st.expander("📄 Batch Run — save sweep report to file", expanded=False):
         st.caption(
-            "Runs the configured sweep unattended and writes a self-contained "
-            "HTML report (with embedded graphs) to disk.  "
-            "Configure the output path below, then click **Run Batch Exploration**."
+            "Runs one or all sweep parameters unattended and writes a "
+            "self-contained HTML report (with embedded graphs) to disk.  "
+            "**Run Batch Exploration** runs the currently selected parameter.  "
+            "**Run ALL Parameters** sweeps all six parameters in sequence and "
+            "produces a combined report."
         )
 
         # ── Output path ───────────────────────────────────────────────────
@@ -3739,17 +3967,34 @@ if view == "Design Exploration":
 
         _batch_ready = _de_skel_ok and len(_de_pv_eff) > 0 and bool(_de_batch_out)
         _batch_total = _de_n_eff * len(_de_pv_eff) if _de_pv_eff else 0
-        _de_batch_btn = st.button(
+        _all_ready   = _de_skel_ok and bool(_de_batch_out)
+
+        _btn_col1, _btn_col2 = st.columns(2)
+        _de_batch_btn = _btn_col1.button(
             "▶▶ Run Batch Exploration",
             type="primary",
             key="de_batch_btn",
             disabled=not _batch_ready,
+            use_container_width=True,
             help=(
                 f"Runs {_batch_total:,} total trials "
                 f"({_de_n_eff} sims × {len(_de_pv_eff)} sweep points), "
                 "then saves the HTML report."
                 if _batch_ready else
                 "Configure the sweep parameter, values, and output file first."
+            ),
+        )
+        _de_all_btn = _btn_col2.button(
+            "▶▶ Run ALL Parameters",
+            type="secondary",
+            key="de_batch_all_btn",
+            disabled=not _all_ready,
+            use_container_width=True,
+            help=(
+                "Sweeps all six parameters in sequence using their current "
+                "widget settings (or defaults) and saves a combined report."
+                if _all_ready else
+                "Configure the output file first."
             ),
         )
 
@@ -3846,6 +4091,130 @@ if view == "Design Exploration":
             # Encodes the report as a base64 data-URI so no server route is
             # needed.  Works from Streamlit's srcdoc iframe in modern browsers.
             _dl_b64   = base64.b64encode(_batch_html.encode("utf-8")).decode("ascii")
+            _dl_fname = os.path.basename(_out_abs).replace("'", "\\'")
+            _stcv1.html(
+                f"""<!DOCTYPE html><html><body style="margin:0;padding:0">
+<script>(function(){{
+  var a = document.createElement('a');
+  a.href = 'data:text/html;base64,{_dl_b64}';
+  a.download = '{_dl_fname}';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}})();</script>
+</body></html>""",
+                height=0,
+            )
+
+        # ── Run ALL parameters ────────────────────────────────────────────
+        if _de_all_btn and _all_ready:
+            _bts_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            _out_abs  = os.path.abspath(_de_batch_out)
+            os.makedirs(os.path.dirname(_out_abs), exist_ok=True)
+
+            # Build base_ss (same keys as the single-param run)
+            _all_base_ss = dict(
+                target_tox1             = float(get_config_value("target_t1")),
+                target_tox2             = float(get_config_value("target_t2")),
+                p_surgery               = float(_cfg("p_surgery")),
+                sigma                   = float(_cfg("sigma")),
+                ewoc_on                 = bool(_cfg("ewoc_on")),
+                ewoc_alpha              = float(get_config_value("ewoc_alpha")),
+                max_n                   = int(_cfg("max_n_crm")),
+                cohort_size             = int(_cfg("cohort_size")),
+                start_level             = int(_cfg("start_level_1b")) - 1,
+                accrual_per_month       = float(_cfg("accrual_per_month")),
+                incl_to_rt              = int(_cfg("incl_to_rt")),
+                rt_dur                  = int(_cfg("rt_dur")),
+                rt_to_surg              = int(_cfg("rt_to_surg")),
+                tox2_win                = int(_cfg("tox2_win")),
+                max_step                = int(_cfg("max_step")),
+                gh_n                    = int(_cfg("gh_n")),
+                burn_in                 = bool(_cfg("burn_in")),
+                enforce_guardrail       = bool(_cfg("enforce_guardrail")),
+                restrict_final_to_tried = bool(_cfg("restrict_final_mtd")),
+                prior_pt1               = _de_pt1,
+                prior_hw1               = _de_hw1,
+                prior_pt2               = _de_pt2,
+                prior_hw2               = _de_hw2,
+                prior_model_str         = str(get_config_value("prior_model")),
+                logistic_intcpt         = float(get_config_value("logistic_intcpt")),
+            )
+
+            _all_prog    = st.progress(0, text="Starting…")
+            _n_params    = len(_DE_ALL_PARAMS)
+            _all_results = []
+
+            for _pi, _pname in enumerate(_DE_ALL_PARAMS):
+                _pv, _plabel = _de_pv_for_param(_pname, _ss, speed=_de_speed)
+                if not _pv:
+                    continue
+                _all_prog.progress(
+                    _pi / _n_params,
+                    text=f"Sweeping {_plabel} ({_pi + 1}/{_n_params})…",
+                )
+                with st.spinner(f"Sweeping {_plabel}…"):
+                    _pres_df = run_parameter_sweep(
+                        _pname, _pv, _all_base_ss,
+                        _de_t1, _de_t2, _de_sk1, _de_sk2,
+                        _de_n_eff, int(_de_seed),
+                    )
+                _pinfo   = {"cohort_size": int(get_config_value("cohort_size"))}
+                _pfig    = _plot_sweep_results(_pres_df, _plabel, _pname,
+                                               param_info=_pinfo)
+                _pfig_b64 = _fig_to_b64(_pfig)
+                plt.close(_pfig)
+                _all_results.append(dict(
+                    param_name  = _pname,
+                    param_label = _plabel,
+                    pv_list     = _pv,
+                    result_df   = _pres_df,
+                    fig_b64     = _pfig_b64,
+                ))
+
+            _all_prog.progress(0.90, text="Generating report…")
+            _all_html = _generate_de_all_html_report(
+                results_list = _all_results,
+                base_ss      = _all_base_ss,
+                n_sim        = _de_n_eff,
+                seed         = int(_de_seed),
+                ts_str       = _bts_str,
+                run_label    = _ss.get("de_batch_label", "").strip(),
+            )
+
+            _all_prog.progress(0.95, text="Saving files…")
+            with open(_out_abs, "w", encoding="utf-8") as _f:
+                _f.write(_all_html)
+
+            _all_csv_path = ""
+            if _de_batch_csv:
+                _all_csv_path = _out_abs.replace(".html", ".csv")
+                if _all_csv_path == _out_abs:
+                    _all_csv_path = _out_abs + ".csv"
+                _csv_parts = []
+                for _r in _all_results:
+                    _rdf = _r["result_df"].copy()
+                    _rdf.insert(0, "parameter",    _r["param_name"])
+                    _rdf.insert(1, "param_display", _r["param_label"])
+                    _csv_parts.append(_rdf)
+                pd.concat(_csv_parts, ignore_index=True).to_csv(
+                    _all_csv_path, index=False
+                )
+
+            _all_prog.progress(1.0, text="Done!")
+
+            _all_msg = (
+                f"✅ **All-parameters batch complete.**\n\n"
+                f"Report saved to:\n`{_out_abs}`"
+            )
+            if _all_csv_path:
+                _all_msg += f"\n\nCSV saved to:\n`{_all_csv_path}`"
+            st.success(_all_msg)
+
+            _ss["_de_batch_html"]     = _all_html
+            _ss["_de_batch_filename"] = os.path.basename(_out_abs)
+
+            _dl_b64   = base64.b64encode(_all_html.encode("utf-8")).decode("ascii")
             _dl_fname = os.path.basename(_out_abs).replace("'", "\\'")
             _stcv1.html(
                 f"""<!DOCTYPE html><html><body style="margin:0;padding:0">
