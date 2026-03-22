@@ -3330,11 +3330,10 @@ if view == "Design Exploration":
                 value=int(_ss.get("de_ea_pts", 8)),
                 key="de_ea_pts")
             _de_inc_off = st.checkbox(
-                "Include current EWOC α as a point",
+                "Include EWOC OFF as a point",
                 value=bool(_ss.get("de_inc_off", True)),
                 key="de_inc_off")
-            _de_pv      = (([float(get_config_value("ewoc_alpha"))]
-                            if _de_inc_off else []) +
+            _de_pv      = (([None] if _de_inc_off else []) +
                            np.linspace(_de_ea_min, _de_ea_max,
                                        _de_ea_pts).tolist())
             _de_label   = "EWOC α"
