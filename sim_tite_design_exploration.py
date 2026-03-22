@@ -3269,7 +3269,7 @@ if view == "Design Exploration":
         # Initialise DE widget defaults once (avoids key+value conflict)
         for _dk, _dv in [("de_sig_min", 0.3), ("de_sig_max", 2.0),
                           ("de_sig_pts", 8),  ("de_ea_min",  0.05),
-                          ("de_ea_max",  0.60), ("de_ea_pts", 8),
+                          ("de_ea_max",  0.99), ("de_ea_pts", 8),
                           ("de_inc_off", True), ("de_n_sim",  200),
                           ("de_seed",    42),
                           ("de_nu1_vals", [1, 2, 3, 4, 5]),
