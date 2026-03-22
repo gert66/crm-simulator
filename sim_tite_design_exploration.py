@@ -46,6 +46,10 @@ Max sample size = total enrolled patients (eval + bridging).
 Rate-based acute thresholds (from sim_sur.py) preserved.
 """
 
+import base64
+import datetime
+import os
+
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -2909,6 +2913,157 @@ def run_prior_nu_sweep(nu1_values, nu2_values, base_ss,
 
 
 # ------------------------------------------------------------------------------
+# Batch-report helpers
+# ------------------------------------------------------------------------------
+
+def _fig_to_b64(fig) -> str:
+    """Encode a matplotlib figure as a base64 PNG data-URI for HTML embedding."""
+    buf = BytesIO()
+    fig.savefig(buf, format="png", dpi=150, bbox_inches="tight",
+                facecolor=fig.get_facecolor())
+    buf.seek(0)
+    return "data:image/png;base64," + base64.b64encode(buf.read()).decode()
+
+
+_DE_PARAM_DISPLAY_NAMES = {
+    "sigma":       "Prior sigma (σ)",
+    "ewoc_alpha":  "EWOC α — overdose threshold",
+    "max_n":       "Maximum sample size (max N)",
+    "cohort_size": "Cohort size — patients per dose decision",
+    "prior_nu_t1": "Prior MTD level — tox1 (acute)",
+    "prior_nu_t2": "Prior MTD level — tox2 (subacute / surgery)",
+}
+
+
+def _generate_de_html_report(param_name, param_label, result_df,
+                              base_ss, n_sim, seed, pv_list,
+                              fig_b64, ts_str, run_label=""):
+    """Build a self-contained HTML Design Exploration batch report.
+
+    Parameters
+    ----------
+    param_name  : internal sweep key (e.g. "ewoc_alpha")
+    param_label : display label for x-axis (e.g. "EWOC α")
+    result_df   : DataFrame returned by run_parameter_sweep()
+    base_ss     : the _de_base_ss dict used for the run
+    n_sim       : simulations per sweep point
+    seed        : base RNG seed
+    pv_list     : the actual param_values list passed to run_parameter_sweep()
+    fig_b64     : base64 PNG data-URI from _fig_to_b64()
+    ts_str      : human-readable timestamp string
+    run_label   : optional user-supplied label
+    """
+    param_display = _DE_PARAM_DISPLAY_NAMES.get(param_name, param_name)
+    title = f"Design Exploration — {param_display}"
+    if run_label:
+        title += f"  ·  {run_label}"
+
+    ewoc_off_included = (param_name == "ewoc_alpha" and None in pv_list)
+
+    def _fv(v):
+        if v is None:
+            return "EWOC OFF"
+        if isinstance(v, float):
+            return f"{v:.4g}"
+        return str(v)
+
+    values_str = ", ".join(_fv(v) for v in pv_list)
+    yn = lambda b: "Yes" if b else "No"
+
+    # ── Base configuration table ──────────────────────────────────────────
+    cfg_rows = [
+        ("Target tox1 (acute)",           f"{base_ss['target_tox1']:.3f}"),
+        ("Target tox2 (surgery/subacute)", f"{base_ss['target_tox2']:.3f}"),
+        ("Prior sigma (σ)",                f"{base_ss['sigma']:.3g}"),
+        ("EWOC enabled",                   yn(base_ss["ewoc_on"])),
+        ("EWOC α",  f"{base_ss['ewoc_alpha']:.3g}" if base_ss["ewoc_on"] else "N/A"),
+        ("Max patients (max N)",           str(base_ss["max_n"])),
+        ("Cohort size",                    str(base_ss["cohort_size"])),
+        ("Start level",                    f"L{base_ss['start_level'] + 1}"),
+        ("Accrual per month",              f"{base_ss['accrual_per_month']:.1f}"),
+        ("RT duration (days)",             str(base_ss["rt_dur"])),
+        ("RT → surgery gap (days)",        str(base_ss["rt_to_surg"])),
+        ("Tox2 window (days)",             str(base_ss["tox2_win"])),
+        ("Burn-in until first DLT",        yn(base_ss["burn_in"])),
+        ("Guardrail (≤ highest tried + 1)",yn(base_ss["enforce_guardrail"])),
+        ("Final MTD restricted to tried",  yn(base_ss["restrict_final_to_tried"])),
+        ("Simulations per point",          str(n_sim)),
+        ("Random seed",                    str(seed)),
+    ]
+    cfg_html = "\n".join(
+        f"<tr><td>{k}</td><td><b>{v}</b></td></tr>" for k, v in cfg_rows
+    )
+
+    # ── Sweep definition table ────────────────────────────────────────────
+    sweep_rows = [
+        ("Parameter swept",     param_display),
+        ("Sweep points",        str(len(pv_list))),
+        ("Values",              values_str),
+    ]
+    if param_name == "ewoc_alpha":
+        sweep_rows.append(("EWOC OFF included as a point", yn(ewoc_off_included)))
+    sweep_html = "\n".join(
+        f"<tr><td>{k}</td><td><b>{v}</b></td></tr>" for k, v in sweep_rows
+    )
+
+    # ── Results table ─────────────────────────────────────────────────────
+    df_disp = result_df[["param_label", "n_patients", "quality_score",
+                          "pct_correct_selection", "overdose_rate"]].copy()
+    df_disp.columns = [param_label, "N patients",
+                       "Quality score", "% Correct selection", "Overdose rate (%)"]
+    df_disp["Quality score"]        = df_disp["Quality score"].round(4)
+    df_disp["% Correct selection"]  = df_disp["% Correct selection"].round(1)
+    df_disp["Overdose rate (%)"]    = df_disp["Overdose rate (%)"].round(1)
+    results_html = df_disp.to_html(index=False, border=0,
+                                   classes="results-tbl", justify="left")
+
+    # ── CSS ───────────────────────────────────────────────────────────────
+    css = """
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+     max-width:1100px;margin:0 auto;padding:28px 44px;color:#2c3e50;background:#fafafa}
+h1{color:#1a237e;border-bottom:3px solid #3949ab;padding-bottom:10px;margin-bottom:4px}
+h2{color:#283593;margin-top:2.2em;border-left:4px solid #7986cb;padding-left:12px}
+.meta{color:#666;font-size:.88em;margin-bottom:2em}
+table{border-collapse:collapse;width:100%;margin:1em 0;background:#fff;
+      box-shadow:0 1px 4px rgba(0,0,0,.08);border-radius:6px;overflow:hidden}
+th{background:#3949ab;color:#fff;padding:9px 14px;text-align:left;
+   font-weight:600;font-size:.91em}
+td{padding:8px 14px;border-bottom:1px solid #e8eaf6;font-size:.92em}
+tr:last-child td{border-bottom:none}
+tr:nth-child(even) td{background:#f5f7ff}
+img{max-width:100%;border:1px solid #ddd;border-radius:6px;
+    box-shadow:0 2px 8px rgba(0,0,0,.10);margin:1em 0;display:block}
+.footer{color:#aaa;font-size:.78em;margin-top:3em;
+        border-top:1px solid #eee;padding-top:12px}
+"""
+
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>{title}</title>
+<style>{css}</style></head>
+<body>
+<h1>{title}</h1>
+<p class="meta">Generated: {ts_str}&nbsp;&nbsp;|&nbsp;&nbsp;{len(pv_list)} sweep
+points&nbsp;&nbsp;|&nbsp;&nbsp;{n_sim:,} simulations per point</p>
+
+<h2>Base Configuration</h2>
+<table><tbody>{cfg_html}</tbody></table>
+
+<h2>Sweep Definition</h2>
+<table><tbody>{sweep_html}</tbody></table>
+
+<h2>Results</h2>
+{results_html}
+
+<h2>Figures</h2>
+<img src="{fig_b64}" alt="Sweep results chart">
+
+<p class="footer">CRM Simulator — Design Exploration batch report</p>
+</body></html>"""
+    return html
+
+
+# ------------------------------------------------------------------------------
 # Sweep results plot helper (from design_exploration.py)
 # Call: fig = _plot_sweep_results(df, param_label)
 # Returns a matplotlib Figure; caller is responsible for st.pyplot / plt.close.
@@ -3539,4 +3694,146 @@ if view == "Design Exploration":
         _disp["% Correct selection"] = _disp["% Correct selection"].round(1)
         _disp["Overdose rate (%)"]   = _disp["Overdose rate (%)"].round(1)
         st.dataframe(_disp, use_container_width=True, hide_index=True)
+
+    # ── Batch Run ─────────────────────────────────────────────────────────
+    st.divider()
+    with st.expander("📄 Batch Run — save sweep report to file", expanded=False):
+        st.caption(
+            "Runs the configured sweep unattended and writes a self-contained "
+            "HTML report (with embedded graphs) to disk.  "
+            "Configure the output path below, then click **Run Batch Exploration**."
+        )
+
+        # ── Output path ───────────────────────────────────────────────────
+        if "de_batch_out" not in _ss:
+            _batch_ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            _ss["de_batch_out"] = os.path.join(
+                "outputs", f"design_exploration_{_batch_ts}.html"
+            )
+
+        _de_batch_out = st.text_input(
+            "Output file (HTML report)",
+            key="de_batch_out",
+            help="Full or relative path for the HTML report. "
+                 "The directory is created automatically if it does not exist.",
+        )
+
+        _de_batch_label = st.text_input(
+            "Optional run label (added to report title)",
+            key="de_batch_label",
+            help="Short identifier, e.g. 'Scenario A' or 'conservative EWOC'.",
+        )
+
+        _de_batch_csv = st.checkbox(
+            "Also save CSV of raw results",
+            value=True,
+            key="de_batch_csv",
+        )
+
+        if _de_batch_out:
+            st.caption(
+                f"Report will be saved to: "
+                f"`{os.path.abspath(_de_batch_out)}`"
+            )
+
+        _batch_ready = _de_skel_ok and len(_de_pv_eff) > 0 and bool(_de_batch_out)
+        _batch_total = _de_n_eff * len(_de_pv_eff) if _de_pv_eff else 0
+        _de_batch_btn = st.button(
+            "▶▶ Run Batch Exploration",
+            type="primary",
+            key="de_batch_btn",
+            disabled=not _batch_ready,
+            help=(
+                f"Runs {_batch_total:,} total trials "
+                f"({_de_n_eff} sims × {len(_de_pv_eff)} sweep points), "
+                "then saves the HTML report."
+                if _batch_ready else
+                "Configure the sweep parameter, values, and output file first."
+            ),
+        )
+
+        if _de_batch_btn and _batch_ready:
+            _bts_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            _out_abs  = os.path.abspath(_de_batch_out)
+            _out_dir  = os.path.dirname(_out_abs)
+            os.makedirs(_out_dir, exist_ok=True)
+
+            # Build base_ss — identical construction to the interactive run
+            _batch_base_ss = dict(
+                target_tox1             = float(get_config_value("target_t1")),
+                target_tox2             = float(get_config_value("target_t2")),
+                p_surgery               = float(_cfg("p_surgery")),
+                sigma                   = float(_cfg("sigma")),
+                ewoc_on                 = bool(_cfg("ewoc_on")),
+                ewoc_alpha              = float(get_config_value("ewoc_alpha")),
+                max_n                   = int(_cfg("max_n_crm")),
+                cohort_size             = int(_cfg("cohort_size")),
+                start_level             = int(_cfg("start_level_1b")) - 1,
+                accrual_per_month       = float(_cfg("accrual_per_month")),
+                incl_to_rt              = int(_cfg("incl_to_rt")),
+                rt_dur                  = int(_cfg("rt_dur")),
+                rt_to_surg              = int(_cfg("rt_to_surg")),
+                tox2_win                = int(_cfg("tox2_win")),
+                max_step                = int(_cfg("max_step")),
+                gh_n                    = int(_cfg("gh_n")),
+                burn_in                 = bool(_cfg("burn_in")),
+                enforce_guardrail       = bool(_cfg("enforce_guardrail")),
+                restrict_final_to_tried = bool(_cfg("restrict_final_mtd")),
+                prior_pt1               = _de_pt1,
+                prior_hw1               = _de_hw1,
+                prior_pt2               = _de_pt2,
+                prior_hw2               = _de_hw2,
+                prior_model_str         = str(get_config_value("prior_model")),
+                logistic_intcpt         = float(get_config_value("logistic_intcpt")),
+            )
+
+            _batch_prog = st.progress(0, text="Running simulations…")
+
+            with st.spinner(f"Running {_batch_total:,} trials — please wait…"):
+                _batch_df = run_parameter_sweep(
+                    _de_param, _de_pv_eff, _batch_base_ss,
+                    _de_t1, _de_t2, _de_sk1, _de_sk2,
+                    _de_n_eff, int(_de_seed),
+                )
+
+            _batch_prog.progress(0.75, text="Generating report…")
+
+            _batch_pinfo = {"cohort_size": int(get_config_value("cohort_size"))}
+            _batch_fig   = _plot_sweep_results(
+                _batch_df, _de_label, _de_param, param_info=_batch_pinfo
+            )
+            _batch_b64   = _fig_to_b64(_batch_fig)
+            plt.close(_batch_fig)
+
+            _batch_html = _generate_de_html_report(
+                param_name  = _de_param,
+                param_label = _de_label,
+                result_df   = _batch_df,
+                base_ss     = _batch_base_ss,
+                n_sim       = _de_n_eff,
+                seed        = int(_de_seed),
+                pv_list     = _de_pv_eff,
+                fig_b64     = _batch_b64,
+                ts_str      = _bts_str,
+                run_label   = _ss.get("de_batch_label", "").strip(),
+            )
+
+            _batch_prog.progress(0.90, text="Saving files…")
+
+            with open(_out_abs, "w", encoding="utf-8") as _f:
+                _f.write(_batch_html)
+
+            _csv_path = ""
+            if _de_batch_csv:
+                _csv_path = _out_abs.replace(".html", ".csv")
+                if _csv_path == _out_abs:
+                    _csv_path = _out_abs + ".csv"
+                _batch_df.to_csv(_csv_path, index=False)
+
+            _batch_prog.progress(1.0, text="Done!")
+
+            _save_msg = f"✅ **Batch run complete.**\n\nReport saved to:\n`{_out_abs}`"
+            if _csv_path:
+                _save_msg += f"\n\nCSV saved to:\n`{_csv_path}`"
+            st.success(_save_msg)
 
