@@ -3924,13 +3924,11 @@ if view == "Design Exploration":
 
     # ── Batch Run ─────────────────────────────────────────────────────────
     st.divider()
-    with st.expander("📄 Batch Run — save sweep report to file", expanded=False):
+    with st.expander("📄 Batch Run — sweep all parameters and save report", expanded=False):
         st.caption(
-            "Runs one or all sweep parameters unattended and writes a "
-            "self-contained HTML report (with embedded graphs) to disk.  "
-            "**Run Batch Exploration** runs the currently selected parameter.  "
-            "**Run ALL Parameters** sweeps all six parameters in sequence and "
-            "produces a combined report."
+            "Sweeps all six parameters in sequence using the values configured "
+            "above (or defaults) and writes a single self-contained HTML report "
+            "with embedded graphs to disk.  No interaction is needed after clicking Run."
         )
 
         # ── Output path ───────────────────────────────────────────────────
@@ -3965,31 +3963,12 @@ if view == "Design Exploration":
                 f"`{os.path.abspath(_de_batch_out)}`"
             )
 
-        _batch_ready = _de_skel_ok and len(_de_pv_eff) > 0 and bool(_de_batch_out)
-        _batch_total = _de_n_eff * len(_de_pv_eff) if _de_pv_eff else 0
-        _all_ready   = _de_skel_ok and bool(_de_batch_out)
-
-        _btn_col1, _btn_col2 = st.columns(2)
-        _de_batch_btn = _btn_col1.button(
+        _all_ready = _de_skel_ok and bool(_de_batch_out)
+        _de_all_btn = st.button(
             "▶▶ Run Batch Exploration",
             type="primary",
-            key="de_batch_btn",
-            disabled=not _batch_ready,
-            use_container_width=True,
-            help=(
-                f"Runs {_batch_total:,} total trials "
-                f"({_de_n_eff} sims × {len(_de_pv_eff)} sweep points), "
-                "then saves the HTML report."
-                if _batch_ready else
-                "Configure the sweep parameter, values, and output file first."
-            ),
-        )
-        _de_all_btn = _btn_col2.button(
-            "▶▶ Run ALL Parameters",
-            type="secondary",
             key="de_batch_all_btn",
             disabled=not _all_ready,
-            use_container_width=True,
             help=(
                 "Sweeps all six parameters in sequence using their current "
                 "widget settings (or defaults) and saves a combined report."
@@ -3998,121 +3977,11 @@ if view == "Design Exploration":
             ),
         )
 
-        if _de_batch_btn and _batch_ready:
-            _bts_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            _out_abs  = os.path.abspath(_de_batch_out)
-            _out_dir  = os.path.dirname(_out_abs)
-            os.makedirs(_out_dir, exist_ok=True)
-
-            # Build base_ss — identical construction to the interactive run
-            _batch_base_ss = dict(
-                target_tox1             = float(get_config_value("target_t1")),
-                target_tox2             = float(get_config_value("target_t2")),
-                p_surgery               = float(_cfg("p_surgery")),
-                sigma                   = float(_cfg("sigma")),
-                ewoc_on                 = bool(_cfg("ewoc_on")),
-                ewoc_alpha              = float(get_config_value("ewoc_alpha")),
-                max_n                   = int(_cfg("max_n_crm")),
-                cohort_size             = int(_cfg("cohort_size")),
-                start_level             = int(_cfg("start_level_1b")) - 1,
-                accrual_per_month       = float(_cfg("accrual_per_month")),
-                incl_to_rt              = int(_cfg("incl_to_rt")),
-                rt_dur                  = int(_cfg("rt_dur")),
-                rt_to_surg              = int(_cfg("rt_to_surg")),
-                tox2_win                = int(_cfg("tox2_win")),
-                max_step                = int(_cfg("max_step")),
-                gh_n                    = int(_cfg("gh_n")),
-                burn_in                 = bool(_cfg("burn_in")),
-                enforce_guardrail       = bool(_cfg("enforce_guardrail")),
-                restrict_final_to_tried = bool(_cfg("restrict_final_mtd")),
-                prior_pt1               = _de_pt1,
-                prior_hw1               = _de_hw1,
-                prior_pt2               = _de_pt2,
-                prior_hw2               = _de_hw2,
-                prior_model_str         = str(get_config_value("prior_model")),
-                logistic_intcpt         = float(get_config_value("logistic_intcpt")),
-            )
-
-            _batch_prog = st.progress(0, text="Running simulations…")
-
-            with st.spinner(f"Running {_batch_total:,} trials — please wait…"):
-                _batch_df = run_parameter_sweep(
-                    _de_param, _de_pv_eff, _batch_base_ss,
-                    _de_t1, _de_t2, _de_sk1, _de_sk2,
-                    _de_n_eff, int(_de_seed),
-                )
-
-            _batch_prog.progress(0.75, text="Generating report…")
-
-            _batch_pinfo = {"cohort_size": int(get_config_value("cohort_size"))}
-            _batch_fig   = _plot_sweep_results(
-                _batch_df, _de_label, _de_param, param_info=_batch_pinfo
-            )
-            _batch_b64   = _fig_to_b64(_batch_fig)
-            plt.close(_batch_fig)
-
-            _batch_html = _generate_de_html_report(
-                param_name  = _de_param,
-                param_label = _de_label,
-                result_df   = _batch_df,
-                base_ss     = _batch_base_ss,
-                n_sim       = _de_n_eff,
-                seed        = int(_de_seed),
-                pv_list     = _de_pv_eff,
-                fig_b64     = _batch_b64,
-                ts_str      = _bts_str,
-                run_label   = _ss.get("de_batch_label", "").strip(),
-            )
-
-            _batch_prog.progress(0.90, text="Saving files…")
-
-            with open(_out_abs, "w", encoding="utf-8") as _f:
-                _f.write(_batch_html)
-
-            _csv_path = ""
-            if _de_batch_csv:
-                _csv_path = _out_abs.replace(".html", ".csv")
-                if _csv_path == _out_abs:
-                    _csv_path = _out_abs + ".csv"
-                _batch_df.to_csv(_csv_path, index=False)
-
-            _batch_prog.progress(1.0, text="Done!")
-
-            _save_msg = f"✅ **Batch run complete.**\n\nReport saved to:\n`{_out_abs}`"
-            if _csv_path:
-                _save_msg += f"\n\nCSV saved to:\n`{_csv_path}`"
-            st.success(_save_msg)
-
-            # ── Store result in session state for fallback download button ──
-            _ss["_de_batch_html"]     = _batch_html
-            _ss["_de_batch_filename"] = os.path.basename(_out_abs)
-
-            # ── Auto-download via JS: create a hidden <a> and click it ──────
-            # Encodes the report as a base64 data-URI so no server route is
-            # needed.  Works from Streamlit's srcdoc iframe in modern browsers.
-            _dl_b64   = base64.b64encode(_batch_html.encode("utf-8")).decode("ascii")
-            _dl_fname = os.path.basename(_out_abs).replace("'", "\\'")
-            _stcv1.html(
-                f"""<!DOCTYPE html><html><body style="margin:0;padding:0">
-<script>(function(){{
-  var a = document.createElement('a');
-  a.href = 'data:text/html;base64,{_dl_b64}';
-  a.download = '{_dl_fname}';
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-}})();</script>
-</body></html>""",
-                height=0,
-            )
-
-        # ── Run ALL parameters ────────────────────────────────────────────
         if _de_all_btn and _all_ready:
             _bts_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             _out_abs  = os.path.abspath(_de_batch_out)
             os.makedirs(os.path.dirname(_out_abs), exist_ok=True)
 
-            # Build base_ss (same keys as the single-param run)
             _all_base_ss = dict(
                 target_tox1             = float(get_config_value("target_t1")),
                 target_tox2             = float(get_config_value("target_t2")),
@@ -4159,9 +4028,9 @@ if view == "Design Exploration":
                         _de_t1, _de_t2, _de_sk1, _de_sk2,
                         _de_n_eff, int(_de_seed),
                     )
-                _pinfo   = {"cohort_size": int(get_config_value("cohort_size"))}
-                _pfig    = _plot_sweep_results(_pres_df, _plabel, _pname,
-                                               param_info=_pinfo)
+                _pinfo    = {"cohort_size": int(get_config_value("cohort_size"))}
+                _pfig     = _plot_sweep_results(_pres_df, _plabel, _pname,
+                                                param_info=_pinfo)
                 _pfig_b64 = _fig_to_b64(_pfig)
                 plt.close(_pfig)
                 _all_results.append(dict(
@@ -4194,8 +4063,8 @@ if view == "Design Exploration":
                 _csv_parts = []
                 for _r in _all_results:
                     _rdf = _r["result_df"].copy()
-                    _rdf.insert(0, "parameter",    _r["param_name"])
-                    _rdf.insert(1, "param_display", _r["param_label"])
+                    _rdf.insert(0, "parameter",     _r["param_name"])
+                    _rdf.insert(1, "param_display",  _r["param_label"])
                     _csv_parts.append(_rdf)
                 pd.concat(_csv_parts, ignore_index=True).to_csv(
                     _all_csv_path, index=False
@@ -4204,7 +4073,7 @@ if view == "Design Exploration":
             _all_prog.progress(1.0, text="Done!")
 
             _all_msg = (
-                f"✅ **All-parameters batch complete.**\n\n"
+                f"✅ **Batch run complete.**\n\n"
                 f"Report saved to:\n`{_out_abs}`"
             )
             if _all_csv_path:
