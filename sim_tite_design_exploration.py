@@ -984,7 +984,7 @@ _PRIOR_SCENARIOS: dict = {
 # Single-source-of-truth state management
 # ==============================================================================
 
-_STATE_VERSION = "2026-03-22a"
+_STATE_VERSION = "2026-03-22b"
 
 def init_state() -> None:
     """Seed EVERY canonical config key exactly once per session.
@@ -2788,6 +2788,24 @@ def run_parameter_sweep(param_name, param_values, base_ss,
             # new dose decision.  max_n (total trial size) stays fixed.
             kw["cohort_size"] = int(pv)
             label = str(int(pv))
+        elif param_name == "prior_nu_t1":
+            # Recompute tox1 skeleton for this prior MTD level; tox2 skeleton fixed.
+            kw["skel1"] = dfcrm_getprior(
+                float(base_ss["prior_hw1"]), float(base_ss["prior_pt1"]),
+                int(pv), len(true_t1),
+                model=str(base_ss.get("prior_model_str", "empiric")),
+                intcpt=float(base_ss.get("logistic_intcpt", 3.0)),
+            )
+            label = f"L{int(pv)}"
+        elif param_name == "prior_nu_t2":
+            # Recompute tox2 skeleton for this prior MTD level; tox1 skeleton fixed.
+            kw["skel2"] = dfcrm_getprior(
+                float(base_ss["prior_hw2"]), float(base_ss["prior_pt2"]),
+                int(pv), len(true_t2),
+                model=str(base_ss.get("prior_model_str", "empiric")),
+                intcpt=float(base_ss.get("logistic_intcpt", 3.0)),
+            )
+            label = f"L{int(pv)}"
         else:
             raise ValueError(f"Unknown param_name: {param_name!r}")
 
@@ -3210,18 +3228,33 @@ if view == "Design Exploration":
             "observed before the model makes the next dose-level decision.  "
             "The total max N stays fixed — only the decision frequency changes."
         ),
+        "prior_nu_t1": (
+            "Varying the **prior MTD level for tox1 (acute toxicity)**.  "
+            "This is the dose level the CRM skeleton is centred on before "
+            "any data are observed.  L1 = lowest dose, L5 = highest dose.  "
+            "All other settings stay fixed."
+        ),
+        "prior_nu_t2": (
+            "Varying the **prior MTD level for tox2 (subacute / surgery toxicity)**.  "
+            "This is the dose level the CRM skeleton is centred on before "
+            "any data are observed.  L1 = lowest dose, L5 = highest dose.  "
+            "All other settings stay fixed."
+        ),
     }
 
     _de_ctrl, _ = st.columns([2, 3])
     with _de_ctrl:
         _de_param = st.selectbox(
             "Parameter to sweep",
-            ["sigma", "ewoc_alpha", "max_n", "cohort_size"],
+            ["sigma", "ewoc_alpha", "max_n", "cohort_size",
+             "prior_nu_t1", "prior_nu_t2"],
             format_func={
-                "sigma":       "Prior sigma (σ)",
-                "ewoc_alpha":  "EWOC α — overdose threshold",
-                "max_n":       "Maximum sample size (max N)",
-                "cohort_size": "Cohort size — patients per dose decision",
+                "sigma":        "Prior sigma (σ)",
+                "ewoc_alpha":   "EWOC α — overdose threshold",
+                "max_n":        "Maximum sample size (max N)",
+                "cohort_size":  "Cohort size — patients per dose decision",
+                "prior_nu_t1":  "Prior MTD level — tox1 (acute)",
+                "prior_nu_t2":  "Prior MTD level — tox2 (subacute / surgery)",
             }.get,
             key="de_param_name",
             help=(
@@ -3235,10 +3268,12 @@ if view == "Design Exploration":
 
         # Initialise DE widget defaults once (avoids key+value conflict)
         for _dk, _dv in [("de_sig_min", 0.3), ("de_sig_max", 2.0),
-                          ("de_sig_pts", 8),  ("de_ea_min",  0.15),
-                          ("de_ea_max",  0.45), ("de_ea_pts", 8),
+                          ("de_sig_pts", 8),  ("de_ea_min",  0.05),
+                          ("de_ea_max",  0.60), ("de_ea_pts", 8),
                           ("de_inc_off", True), ("de_n_sim",  200),
-                          ("de_seed",    42)]:
+                          ("de_seed",    42),
+                          ("de_nu1_vals", [1, 2, 3, 4, 5]),
+                          ("de_nu2_vals", [1, 2, 3, 4, 5])]:
             if _dk not in _ss:
                 _ss[_dk] = _dv
 
@@ -3252,7 +3287,7 @@ if view == "Design Exploration":
 
         _ea_min_floor = round(float(_ss["de_ea_min"]) + 0.01, 2)
         if float(_ss["de_ea_max"]) < _ea_min_floor:
-            _ss["de_ea_max"] = min(_ea_min_floor, 0.60)
+            _ss["de_ea_max"] = min(_ea_min_floor, 0.99)
 
         if _de_param == "sigma":
             _c1, _c2, _c3 = st.columns(3)
@@ -3270,11 +3305,11 @@ if view == "Design Exploration":
 
         elif _de_param == "ewoc_alpha":
             _c1, _c2, _c3 = st.columns(3)
-            _de_ea_min  = _c1.number_input("Min α", 0.05, 0.55,
+            _de_ea_min  = _c1.number_input("Min α", 0.05, 0.97,
                                            step=0.01, key="de_ea_min")
             _de_ea_max  = _c2.number_input("Max α",
                                            float(max(_de_ea_min + 0.01, 0.06)),
-                                           0.60,
+                                           0.99,
                                            step=0.01, key="de_ea_max")
             _de_ea_pts  = _c3.slider("Points", 3, 20, key="de_ea_pts")
             _de_inc_off = st.checkbox("Include EWOC OFF as a point",
@@ -3294,10 +3329,38 @@ if view == "Design Exploration":
             _de_pv = st.multiselect(
                 "Total patient counts to sweep",
                 [12, 15, 18, 21, 24, 27, 30, 33, 36],
-                default=[18, 21, 24, 27, 30],
+                default=[12, 15, 18, 21, 24, 27, 30, 33, 36],
                 key="de_max_n_vals",
             )
             _de_label = "Maximum total patients (max N)"
+            _de_ptype = "discrete"
+
+        elif _de_param == "prior_nu_t1":
+            st.caption(
+                f"Current tox1 prior MTD level: **L{_de_nu1}** (from Playground).  "
+                "Select the levels you want to compare."
+            )
+            _de_pv = st.multiselect(
+                "Tox1 prior MTD levels to sweep (L1 = lowest, L5 = highest)",
+                [1, 2, 3, 4, 5],
+                default=_ss["de_nu1_vals"],
+                key="de_nu1_vals",
+            )
+            _de_label = "Prior MTD level — tox1 (acute)"
+            _de_ptype = "discrete"
+
+        elif _de_param == "prior_nu_t2":
+            st.caption(
+                f"Current tox2 prior MTD level: **L{_de_nu2}** (from Playground).  "
+                "Select the levels you want to compare."
+            )
+            _de_pv = st.multiselect(
+                "Tox2 prior MTD levels to sweep (L1 = lowest, L5 = highest)",
+                [1, 2, 3, 4, 5],
+                default=_ss["de_nu2_vals"],
+                key="de_nu2_vals",
+            )
+            _de_label = "Prior MTD level — tox2 (subacute / surgery)"
             _de_ptype = "discrete"
 
         else:  # cohort_size
@@ -3372,6 +3435,13 @@ if view == "Design Exploration":
             burn_in              = bool(_cfg("burn_in")),
             enforce_guardrail    = bool(_cfg("enforce_guardrail")),
             restrict_final_to_tried = bool(_cfg("restrict_final_mtd")),
+            # Prior params (needed when sweeping prior_nu_t1 / prior_nu_t2)
+            prior_pt1            = _de_pt1,
+            prior_hw1            = _de_hw1,
+            prior_pt2            = _de_pt2,
+            prior_hw2            = _de_hw2,
+            prior_model_str      = str(get_config_value("prior_model")),
+            logistic_intcpt      = float(get_config_value("logistic_intcpt")),
         )
         _de_total = _de_n_eff * len(_de_pv_eff)
         with st.spinner(f"Running {_de_total:,} trials…"):
@@ -3450,129 +3520,4 @@ if view == "Design Exploration":
         _disp["% Correct selection"] = _disp["% Correct selection"].round(1)
         _disp["Overdose rate (%)"]   = _disp["Overdose rate (%)"].round(1)
         st.dataframe(_disp, use_container_width=True, hide_index=True)
-
-    # =========================================================================
-    # Prior MTD level sweep
-    # =========================================================================
-    st.divider()
-    st.markdown("#### Prior MTD level sweep")
-    st.caption(
-        "Independently vary the prior belief about where the MTD is located "
-        "(tox1 and tox2 prior MTD levels). "
-        "All other settings are held at their current Essentials / Playground values. "
-        "If both endpoints are swept, all combinations are evaluated."
-    )
-
-    # ── Widget defaults (set once per session) ────────────────────────────
-    for _nk, _nv in [("de_nu_sweep_t1", True), ("de_nu_sweep_t2", True),
-                      ("de_nu1_vals", [1, 2, 3, 4, 5]),
-                      ("de_nu2_vals", [1, 2, 3, 4, 5])]:
-        if _nk not in _ss:
-            _ss[_nk] = _nv
-
-    _nu_c1, _nu_c2 = st.columns(2)
-
-    with _nu_c1:
-        _de_nu_inc_t1 = st.checkbox(
-            "Sweep prior MTD level — tox1 (acute)",
-            key="de_nu_sweep_t1",
-        )
-        _de_nu1_vals = st.multiselect(
-            "Tox1 prior MTD levels to test (1 = lowest dose, 5 = highest)",
-            options=[1, 2, 3, 4, 5],
-            default=_ss["de_nu1_vals"],
-            key="de_nu1_vals",
-            disabled=not _de_nu_inc_t1,
-        )
-
-    with _nu_c2:
-        _de_nu_inc_t2 = st.checkbox(
-            "Sweep prior MTD level — tox2 (subacute | surgery)",
-            key="de_nu_sweep_t2",
-        )
-        _de_nu2_vals = st.multiselect(
-            "Tox2 prior MTD levels to test (1 = lowest dose, 5 = highest)",
-            options=[1, 2, 3, 4, 5],
-            default=_ss["de_nu2_vals"],
-            key="de_nu2_vals",
-            disabled=not _de_nu_inc_t2,
-        )
-
-    # Resolve effective nu value lists:
-    # if an endpoint is not swept, fix it at the current Playground value.
-    _nu1_eff = sorted(set(_de_nu1_vals)) if _de_nu_inc_t1 and _de_nu1_vals \
-               else [_de_nu1]
-    _nu2_eff = sorted(set(_de_nu2_vals)) if _de_nu_inc_t2 and _de_nu2_vals \
-               else [_de_nu2]
-    _nu_n_combos = len(_nu1_eff) * len(_nu2_eff)
-
-    # Reuse sim count and speed mode already set in the main sweep controls.
-    if _de_skel_ok and _nu_n_combos > 0:
-        st.caption(
-            f"{_de_n_eff} sims × {_nu_n_combos} combination(s) = "
-            f"{_de_n_eff * _nu_n_combos:,} total trials  "
-            f"({'speed mode' if _de_speed else 'full precision'})"
-        )
-
-    _de_nu_run_btn = st.button(
-        "▶ Run Prior MTD Sweep",
-        key="de_nu_run_btn",
-        disabled=(not _de_skel_ok or _nu_n_combos == 0),
-    )
-
-    # ── Execute prior MTD sweep ───────────────────────────────────────────
-    if _de_nu_run_btn and _de_skel_ok and _nu_n_combos > 0:
-        _de_nu_base_ss = dict(
-            target_tox1          = float(get_config_value("target_t1")),
-            target_tox2          = float(get_config_value("target_t2")),
-            p_surgery            = float(_cfg("p_surgery")),
-            sigma                = float(_cfg("sigma")),
-            ewoc_on              = bool(_cfg("ewoc_on")),
-            ewoc_alpha           = float(get_config_value("ewoc_alpha")),
-            max_n                = int(_cfg("max_n_crm")),
-            cohort_size          = int(_cfg("cohort_size")),
-            start_level          = int(_cfg("start_level_1b")) - 1,
-            accrual_per_month    = float(_cfg("accrual_per_month")),
-            incl_to_rt           = int(_cfg("incl_to_rt")),
-            rt_dur               = int(_cfg("rt_dur")),
-            rt_to_surg           = int(_cfg("rt_to_surg")),
-            tox2_win             = int(_cfg("tox2_win")),
-            max_step             = int(_cfg("max_step")),
-            gh_n                 = int(_cfg("gh_n")),
-            burn_in              = bool(_cfg("burn_in")),
-            enforce_guardrail    = bool(_cfg("enforce_guardrail")),
-            restrict_final_to_tried = bool(_cfg("restrict_final_mtd")),
-        )
-        _nu_total = _de_n_eff * _nu_n_combos
-        with st.spinner(f"Running {_nu_total:,} trials…"):
-            _de_nu_result_df = run_prior_nu_sweep(
-                _nu1_eff, _nu2_eff, _de_nu_base_ss,
-                prior_pt1 = _de_pt1,  prior_hw1 = _de_hw1,
-                prior_pt2 = _de_pt2,  prior_hw2 = _de_hw2,
-                prior_model_str  = str(get_config_value("prior_model")),
-                logistic_intcpt  = float(get_config_value("logistic_intcpt")),
-                true_t1 = _de_t1, true_t2 = _de_t2,
-                n_sim = _de_n_eff, seed = int(_de_seed),
-            )
-        _ss["_de_nu_df"] = _de_nu_result_df
-
-    # ── Display prior MTD sweep results ───────────────────────────────────
-    if "_de_nu_df" in _ss:
-        _nu_df = _ss["_de_nu_df"]
-        _mc1, _mc2, _mc3 = st.columns(3)
-        _mc1.markdown("**Quality score**",     help=_HELP_QS)
-        _mc2.markdown("**% Correct selection**", help=_HELP_CS)
-        _mc3.markdown("**Overdose rate (%)**",  help=_HELP_OR)
-
-        _nu_disp = _nu_df[["prior_nu_t1", "prior_nu_t2",
-                            "quality_score", "pct_correct_selection",
-                            "overdose_rate"]].copy()
-        _nu_disp.columns = [
-            "Prior MTD level — tox1", "Prior MTD level — tox2",
-            "Quality score", "% Correct selection", "Overdose rate (%)",
-        ]
-        _nu_disp["Quality score"]       = _nu_disp["Quality score"].round(4)
-        _nu_disp["% Correct selection"] = _nu_disp["% Correct selection"].round(1)
-        _nu_disp["Overdose rate (%)"]   = _nu_disp["Overdose rate (%)"].round(1)
-        st.dataframe(_nu_disp, use_container_width=True, hide_index=True)
 
