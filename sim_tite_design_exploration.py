@@ -3266,28 +3266,32 @@ if view == "Design Exploration":
         # Per-parameter explanatory caption
         st.caption(_DE_PARAM_DESCRIPTIONS[_de_param])
 
-        # Initialise DE widget defaults once (avoids key+value conflict)
+        # Initialise DE widget defaults once (avoids key+value conflict).
+        # EWOC alpha keys (de_ea_*) are intentionally excluded here — they
+        # are initialised via explicit value= parameters on their widgets,
+        # which is the only pattern that survives Streamlit's widget-state
+        # cleanup when switching between sweep parameters (≥1.28).
         for _dk, _dv in [("de_sig_min", 0.3), ("de_sig_max", 2.0),
-                          ("de_sig_pts", 8),  ("de_ea_min",  0.05),
-                          ("de_ea_max",  0.60), ("de_ea_pts", 8),
-                          ("de_inc_off", True), ("de_n_sim",  200),
-                          ("de_seed",    42),
+                          ("de_sig_pts", 8),
+                          ("de_n_sim",  200), ("de_seed",    42),
                           ("de_nu1_vals", [1, 2, 3, 4, 5]),
                           ("de_nu2_vals", [1, 2, 3, 4, 5])]:
             if _dk not in _ss:
                 _ss[_dk] = _dv
 
-        # Clamp de_sig_max / de_ea_max so their stored value is always
-        # above their dynamic min_value.  This prevents Streamlit from
-        # raising an exception or silently clipping the widget value when
-        # de_sig_min / de_ea_min is raised above the stored max.
+        # Clamp de_sig_max so its stored value stays above the dynamic
+        # min_value when de_sig_min is raised.
         _sig_min_floor = round(float(_ss["de_sig_min"]) + 0.1, 1)
         if float(_ss["de_sig_max"]) < _sig_min_floor:
             _ss["de_sig_max"] = min(_sig_min_floor, 5.0)
 
-        _ea_min_floor = round(float(_ss["de_ea_min"]) + 0.01, 2)
-        if float(_ss["de_ea_max"]) < _ea_min_floor:
-            _ss["de_ea_max"] = min(_ea_min_floor, 0.99)
+        # Clamp de_ea_max only when the key already exists in session state
+        # (i.e. the EWOC widgets have been rendered at least once).  On the
+        # first render the widget initialises itself via its value= parameter.
+        if "de_ea_min" in _ss and "de_ea_max" in _ss:
+            _ea_min_floor = round(float(_ss["de_ea_min"]) + 0.01, 2)
+            if float(_ss["de_ea_max"]) < _ea_min_floor:
+                _ss["de_ea_max"] = min(_ea_min_floor, 0.99)
 
         if _de_param == "sigma":
             _c1, _c2, _c3 = st.columns(3)
@@ -3305,15 +3309,30 @@ if view == "Design Exploration":
 
         elif _de_param == "ewoc_alpha":
             _c1, _c2, _c3 = st.columns(3)
-            _de_ea_min  = _c1.number_input("Min α", 0.05, 0.97,
-                                           step=0.01, key="de_ea_min")
-            _de_ea_max  = _c2.number_input("Max α",
-                                           float(max(_de_ea_min + 0.01, 0.06)),
-                                           0.99,
-                                           step=0.01, key="de_ea_max")
-            _de_ea_pts  = _c3.slider("Points", 3, 20, key="de_ea_pts")
-            _de_inc_off = st.checkbox("Include current EWOC α as a point",
-                                      key="de_inc_off")
+            # Use explicit value= for all four controls.  This is the only
+            # pattern that reliably survives Streamlit's widget-state cleanup
+            # (≥1.28): when switching away from the EWOC param and back,
+            # Streamlit removes widget-backed keys from session state, so any
+            # init-loop pre-write would be lost before the widget renders.
+            # value=_ss.get(key, default) ensures the correct default on first
+            # render while honouring any user-edited value on subsequent runs.
+            _de_ea_min  = _c1.number_input(
+                "Min α", 0.05, 0.97,
+                value=float(_ss.get("de_ea_min", 0.05)),
+                step=0.01, key="de_ea_min")
+            _ea_max_min = float(max(_de_ea_min + 0.01, 0.06))
+            _de_ea_max  = _c2.number_input(
+                "Max α", _ea_max_min, 0.99,
+                value=float(max(_ss.get("de_ea_max", 0.60), _ea_max_min)),
+                step=0.01, key="de_ea_max")
+            _de_ea_pts  = _c3.slider(
+                "Points", 3, 20,
+                value=int(_ss.get("de_ea_pts", 8)),
+                key="de_ea_pts")
+            _de_inc_off = st.checkbox(
+                "Include current EWOC α as a point",
+                value=bool(_ss.get("de_inc_off", True)),
+                key="de_inc_off")
             _de_pv      = (([float(get_config_value("ewoc_alpha"))]
                             if _de_inc_off else []) +
                            np.linspace(_de_ea_min, _de_ea_max,
