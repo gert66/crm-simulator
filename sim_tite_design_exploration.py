@@ -2761,8 +2761,8 @@ def run_parameter_sweep(param_name, param_values, base_ss,
         burn_in=bool(base_ss["burn_in"]),
         enforce_guardrail=bool(base_ss["enforce_guardrail"]),
         restrict_final_to_tried=bool(base_ss["restrict_final_to_tried"]),
-        ewoc_on=bool(get_config_value("ewoc_on")),
-        ewoc_alpha=float(get_config_value("ewoc_alpha")),
+        ewoc_on=bool(base_ss["ewoc_on"]),
+        ewoc_alpha=float(base_ss["ewoc_alpha"]),
     )
 
     rows = []
@@ -3269,7 +3269,7 @@ if view == "Design Exploration":
         # Initialise DE widget defaults once (avoids key+value conflict)
         for _dk, _dv in [("de_sig_min", 0.3), ("de_sig_max", 2.0),
                           ("de_sig_pts", 8),  ("de_ea_min",  0.05),
-                          ("de_ea_max",  0.99), ("de_ea_pts", 8),
+                          ("de_ea_max",  0.60), ("de_ea_pts", 8),
                           ("de_inc_off", True), ("de_n_sim",  200),
                           ("de_seed",    42),
                           ("de_nu1_vals", [1, 2, 3, 4, 5]),
@@ -3312,9 +3312,10 @@ if view == "Design Exploration":
                                            0.99,
                                            step=0.01, key="de_ea_max")
             _de_ea_pts  = _c3.slider("Points", 3, 20, key="de_ea_pts")
-            _de_inc_off = st.checkbox("Include EWOC OFF as a point",
+            _de_inc_off = st.checkbox("Include current EWOC α as a point",
                                       key="de_inc_off")
-            _de_pv      = (([None] if _de_inc_off else []) +
+            _de_pv      = (([float(get_config_value("ewoc_alpha"))]
+                            if _de_inc_off else []) +
                            np.linspace(_de_ea_min, _de_ea_max,
                                        _de_ea_pts).tolist())
             _de_label   = "EWOC α"
