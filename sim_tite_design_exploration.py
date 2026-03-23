@@ -78,6 +78,9 @@ _DARK_AX  = "#16213e"
 _DARK_FG  = "#e0e0e0"
 _DARK_GRD = "#2a2a4a"
 
+# ColorBrewer Set1 — 5 clearly distinguishable colours for per-level MTD lines
+_MTD_LINE_COLORS = ["#e41a1c", "#ff7f00", "#4daf4a", "#377eb8", "#984ea3"]
+
 def _apply_dark_fig(fig, *axes):
     fig.patch.set_facecolor(_DARK_BG)
     for ax in axes:
@@ -1789,7 +1792,7 @@ if view == "Essentials":
         st.session_state["s9_stop_min"] = st.session_state["wl_s9_stop_min"]
 
     st.write("")
-    st.button("Reset to defaults", on_click=_do_reset)
+    st.button("Reset to defaults", on_click=_do_reset, type="primary")
 
     st.markdown("---")
     st.markdown(
@@ -3302,12 +3305,18 @@ def _generate_de_all_html_report(results_list, base_ss, n_sim, seed,
         res_tbl = df_d.to_html(index=False, border=0,
                                classes="results-tbl", justify="left")
 
+        ctx_img = (
+            f'<img src="{r["context_fig_b64"]}"'
+            f' alt="True toxicity vs prior MTD levels — {plabel}">'
+            if r.get("context_fig_b64") else ""
+        )
         sections += (
             f'<hr class="param-sep">'
             f"<h2>{plabel}</h2>"
             f"{sweep_tbl}"
             f"{res_tbl}"
             f'<img src="{r["fig_b64"]}" alt="Sweep — {plabel}">'
+            f"{ctx_img}"
         )
 
     # ── CSS (same as single-param report) ─────────────────────────────────
@@ -3456,6 +3465,71 @@ def _plot_sweep_results_light(df, param_label, param_name="", param_info=None):
         ax.spines["bottom"].set_edgecolor("#cccccc")
         ax.grid(axis="y", lw=0.5, alpha=0.6, color="#e0e0e0")
         ax.yaxis.label.set_color("#444444")
+    fig.tight_layout(pad=1.5)
+    return fig
+
+
+def _plot_prior_mtd_context(true_tox, pv_list, tox_label, title, light=False):
+    """Bar chart of true toxicity probabilities with one horizontal reference
+    line per prior MTD level choice in *pv_list*.
+
+    Parameters
+    ----------
+    true_tox  : array-like, length 5 — true tox probability at each dose level
+    pv_list   : list[int] — 1-indexed MTD level values included in the sweep
+    tox_label : str — e.g. "tox1 (acute)"
+    title     : str — chart title
+    light     : bool — True → white background (for HTML report);
+                       False → dark background (for in-app display)
+    """
+    true_tox = list(true_tox)
+    n_levels = len(true_tox)
+    x        = np.arange(n_levels)
+    x_labels = [f"L{i + 1}" for i in range(n_levels)]
+
+    fig, ax = plt.subplots(figsize=(7, 3.8))
+
+    if light:
+        fig.patch.set_facecolor("white")
+        ax.set_facecolor("white")
+        bar_color   = "#2563eb"
+        grid_color  = "#e0e0e0"
+        spine_color = "#cccccc"
+        ax.tick_params(colors="#333333", labelsize=9)
+        ax.xaxis.label.set_color("#444444")
+        ax.yaxis.label.set_color("#444444")
+        ax.title.set_color("#111111")
+        for sp in ax.spines.values():
+            sp.set_edgecolor(spine_color)
+        legend_kw = dict(fontsize=8, framealpha=0.90,
+                         facecolor="white", edgecolor="#cccccc")
+    else:
+        _apply_dark_fig(fig, ax)
+        bar_color  = "#4a9eff"
+        grid_color = _DARK_GRD
+        legend_kw  = dict(fontsize=8, framealpha=0.80,
+                          facecolor=_DARK_AX, edgecolor=_DARK_GRD,
+                          labelcolor=_DARK_FG)
+
+    ax.bar(x, true_tox, color=bar_color, alpha=0.70, label="True tox prob")
+
+    for lv in sorted(set(pv_list)):
+        idx = lv - 1
+        if 0 <= idx < n_levels:
+            y_val = float(true_tox[idx])
+            color = _MTD_LINE_COLORS[idx % len(_MTD_LINE_COLORS)]
+            ax.axhline(y=y_val, color=color, linewidth=1.8, linestyle="--",
+                       label=f"L{lv}  ({y_val:.3f})")
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(x_labels, fontsize=9)
+    ax.set_xlabel("Dose level", fontsize=9)
+    ax.set_ylabel(f"True {tox_label} probability", fontsize=9)
+    ax.set_title(title, fontsize=10, fontweight="bold")
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.grid(axis="y", lw=0.5, alpha=0.5, color=grid_color)
+    ax.legend(**legend_kw)
     fig.tight_layout(pad=1.5)
     return fig
 
@@ -3803,13 +3877,17 @@ if view == "Design Exploration":
 
         if _de_param == "sigma":
             _c1, _c2, _c3 = st.columns(3)
-            _de_sig_min = _c1.number_input("Min σ", 0.1, 4.9,
-                                           step=0.1, key="de_sig_min")
-            _de_sig_max = _c2.number_input("Max σ",
-                                           float(max(_de_sig_min + 0.1, 0.2)),
-                                           5.0,
-                                           step=0.1, key="de_sig_max")
-            _de_sig_pts = _c3.slider("Points", 3, 20, key="de_sig_pts")
+            _de_sig_min = _c1.number_input(
+                "Min σ", 0.1, 4.9, step=0.1, key="de_sig_min",
+                help="Lower bound of the σ sweep. σ controls how peaked the "
+                     "CRM prior is — larger σ means a wider, more uncertain prior.")
+            _de_sig_max = _c2.number_input(
+                "Max σ", float(max(_de_sig_min + 0.1, 0.2)), 5.0,
+                step=0.1, key="de_sig_max",
+                help="Upper bound of the σ sweep range.")
+            _de_sig_pts = _c3.slider(
+                "Points", 3, 20, key="de_sig_pts",
+                help="Number of evenly-spaced σ values between Min and Max.")
             _de_pv      = np.linspace(_de_sig_min, _de_sig_max,
                                       _de_sig_pts).tolist()
             _de_label   = "σ (prior sigma)"
@@ -3827,20 +3905,27 @@ if view == "Design Exploration":
             _de_ea_min  = _c1.number_input(
                 "Min α", 0.05, 0.97,
                 value=float(_ss.get("de_ea_min", 0.05)),
-                step=0.01, key="de_ea_min")
+                step=0.01, key="de_ea_min",
+                help="Lower bound of the EWOC overdose-probability threshold "
+                     "sweep. α is the maximum acceptable probability of "
+                     "recommending a dose above the MTD.")
             _ea_max_min = float(max(_de_ea_min + 0.01, 0.06))
             _de_ea_max  = _c2.number_input(
                 "Max α", _ea_max_min, 0.99,
                 value=float(max(_ss.get("de_ea_max", 0.60), _ea_max_min)),
-                step=0.01, key="de_ea_max")
+                step=0.01, key="de_ea_max",
+                help="Upper bound of the EWOC α sweep range.")
             _de_ea_pts  = _c3.slider(
                 "Points", 3, 20,
                 value=int(_ss.get("de_ea_pts", 8)),
-                key="de_ea_pts")
+                key="de_ea_pts",
+                help="Number of evenly-spaced α values between Min and Max.")
             _de_inc_off = st.checkbox(
                 "Include EWOC OFF as a point",
                 value=bool(_ss.get("de_inc_off", True)),
-                key="de_inc_off")
+                key="de_inc_off",
+                help="Also run the design with EWOC disabled. Useful to "
+                     "quantify how much safety benefit EWOC provides.")
             _de_pv      = (([None] if _de_inc_off else []) +
                            np.linspace(_de_ea_min, _de_ea_max,
                                        _de_ea_pts).tolist())
@@ -3858,6 +3943,8 @@ if view == "Design Exploration":
                 [12, 15, 18, 21, 24, 27, 30, 33, 36],
                 default=[12, 15, 18, 21, 24, 27, 30, 33, 36],
                 key="de_max_n_vals",
+                help="Select the maximum total patient counts to compare. "
+                     "Larger N gives the CRM more data but lengthens the trial.",
             )
             _de_label = "Maximum total patients (max N)"
             _de_ptype = "discrete"
@@ -3872,6 +3959,9 @@ if view == "Design Exploration":
                 [1, 2, 3, 4, 5],
                 default=_ss["de_nu1_vals"],
                 key="de_nu1_vals",
+                help="Select which prior MTD level assumptions to compare for "
+                     "acute tox1. The assumed level shifts the CRM skeleton — "
+                     "a lower assumed level makes the model more conservative.",
             )
             _de_label = "Prior MTD level — tox1 (acute)"
             _de_ptype = "discrete"
@@ -3886,6 +3976,9 @@ if view == "Design Exploration":
                 [1, 2, 3, 4, 5],
                 default=_ss["de_nu2_vals"],
                 key="de_nu2_vals",
+                help="Select which prior MTD level assumptions to compare for "
+                     "subacute tox2 (surgery endpoint). The assumed level "
+                     "shapes how the CRM weights subacute toxicity risk.",
             )
             _de_label = "Prior MTD level — tox2 (subacute / surgery)"
             _de_ptype = "discrete"
@@ -3901,15 +3994,22 @@ if view == "Design Exploration":
                 [1, 2, 3, 4, 5, 6],
                 default=[1, 2, 3, 4],
                 key="de_cohort_vals",
+                help="Select the number of patients enrolled per dose "
+                     "decision. Larger cohorts provide more information per "
+                     "step but slow down dose escalation.",
             )
             _de_label = "Cohort size (patients per dose decision)"
             _de_ptype = "discrete"
 
         st.divider()
-        _de_n_sim  = st.slider("Simulations per point", 50, 2000,
-                               step=50, key="de_n_sim")
-        _de_seed   = st.number_input("Seed", 0, 99999,
-                                     step=1, key="de_seed")
+        _de_n_sim  = st.slider(
+            "Simulations per point", 50, 2000, step=50, key="de_n_sim",
+            help="Number of simulated trials run at each parameter value. "
+                 "Higher values give more stable estimates but take longer.")
+        _de_seed   = st.number_input(
+            "Seed", 0, 99999, step=1, key="de_seed",
+            help="Random seed for reproducibility. Changing the seed varies "
+                 "the simulated patient outcomes across runs.")
         _de_speed  = st.checkbox(
             "Speed mode (faster, less precise)",
             key="de_speed_mode",
@@ -4040,6 +4140,22 @@ if view == "Design Exploration":
         st.pyplot(_fig)
         plt.close(_fig)
 
+        # Extra explanatory chart for prior MTD level sweeps
+        if _pkey in ("prior_nu_t1", "prior_nu_t2"):
+            _ctx_swept = sorted(int(v) for v in _df["param_raw"].unique())
+            if _pkey == "prior_nu_t1":
+                _ctx_true  = _de_t1
+                _ctx_label = "tox1 (acute)"
+                _ctx_title = "Tox1 acute: true toxicity vs prior MTD level choices"
+            else:
+                _ctx_true  = _de_t2
+                _ctx_label = "tox2 (subacute)"
+                _ctx_title = "Tox2 subacute: true toxicity vs prior MTD level choices"
+            _ctx_fig = _plot_prior_mtd_context(
+                _ctx_true, _ctx_swept, _ctx_label, _ctx_title, light=False)
+            st.pyplot(_ctx_fig)
+            plt.close(_ctx_fig)
+
         # Metric header row with help tooltips
         _mc1, _mc2, _mc3 = st.columns(3)
         _mc1.markdown("**Quality score**",
@@ -4117,12 +4233,30 @@ if view == "Design Exploration":
                                                   param_info=_pinfo)
             _pfig_b64 = _fig_to_b64(_pfig)
             plt.close(_pfig)
+
+            # Prior-MTD context chart (light theme, for the HTML report)
+            _pctx_b64 = None
+            if _pname in ("prior_nu_t1", "prior_nu_t2"):
+                _ctx_true  = _de_t1 if _pname == "prior_nu_t1" else _de_t2
+                _ctx_lbl   = ("tox1 (acute)"
+                              if _pname == "prior_nu_t1"
+                              else "tox2 (subacute)")
+                _ctx_title = ("Tox1 acute: true toxicity vs prior MTD level choices"
+                              if _pname == "prior_nu_t1"
+                              else "Tox2 subacute: true toxicity vs prior MTD level choices")
+                _ctx_fig   = _plot_prior_mtd_context(
+                    _ctx_true, [int(v) for v in _pv],
+                    _ctx_lbl, _ctx_title, light=True)
+                _pctx_b64  = _fig_to_b64(_ctx_fig)
+                plt.close(_ctx_fig)
+
             _all_results.append(dict(
-                param_name  = _pname,
-                param_label = _plabel,
-                pv_list     = _pv,
-                result_df   = _pres_df,
-                fig_b64     = _pfig_b64,
+                param_name      = _pname,
+                param_label     = _plabel,
+                pv_list         = _pv,
+                result_df       = _pres_df,
+                fig_b64         = _pfig_b64,
+                context_fig_b64 = _pctx_b64,
             ))
 
         _all_prog.progress(0.90, text="Generating report…")
