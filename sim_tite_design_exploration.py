@@ -1091,33 +1091,90 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Fifth CSS block: unify borders across ALL input types.
-# Removes white/light default borders and replaces with a consistent muted-blue.
+# The white border on number inputs wraps the OUTER div ([data-testid="stNumberInput"] > div)
+# which contains both the value field and the +/- steppers.  Targeting only
+# [data-baseweb="input"] (the inner text-only sub-div) missed that outer wrapper entirely.
 st.markdown("""
 <style>
-  /* ── Number input / text input containers (BaseWeb "input") ── */
+  /* ═══════════════════════════════════════════════════════════
+     NUMBER INPUTS — outer container owns the visible border
+     (it wraps the value field AND the +/- stepper buttons)
+     ═══════════════════════════════════════════════════════════ */
+  [data-testid="stNumberInput"] > div {
+    border: 1px solid #2f4f6f !important;
+    border-radius: 4px !important;
+    box-shadow: none !important;
+    outline: none !important;
+  }
+  /* Strip inner borders so they don't double-up with the outer one */
+  [data-testid="stNumberInput"] > div > div,
+  [data-testid="stNumberInput"] [data-baseweb="input"] {
+    border: none !important;
+    box-shadow: none !important;
+    outline: none !important;
+  }
+  /* Stepper buttons: no independent border; divider line from parent background */
+  [data-testid="stNumberInputStepDown"],
+  [data-testid="stNumberInputStepUp"] {
+    border: none !important;
+    box-shadow: none !important;
+    outline: none !important;
+  }
+  /* Focus: brighter blue ring on the outer container, no white glow */
+  [data-testid="stNumberInput"] > div:focus-within {
+    border-color: #3b82f6 !important;
+    box-shadow: none !important;
+  }
+
+  /* ═══════════════════════════════════════════════════════════
+     TEXT INPUTS
+     ═══════════════════════════════════════════════════════════ */
+  [data-testid="stTextInput"] > div,
+  [data-testid="stTextArea"] > div {
+    border: 1px solid #2f4f6f !important;
+    border-radius: 4px !important;
+    box-shadow: none !important;
+  }
+  [data-testid="stTextInput"] [data-baseweb="input"],
+  [data-testid="stTextArea"] textarea {
+    border: none !important;
+    box-shadow: none !important;
+    outline: none !important;
+  }
+  [data-testid="stTextInput"] > div:focus-within,
+  [data-testid="stTextArea"] > div:focus-within {
+    border-color: #3b82f6 !important;
+    box-shadow: none !important;
+  }
+
+  /* ═══════════════════════════════════════════════════════════
+     STANDALONE [data-baseweb="input"] — catches any input not
+     wrapped in a stNumberInput/stTextInput testid
+     ═══════════════════════════════════════════════════════════ */
   [data-baseweb="input"] {
     border: 1px solid #2f4f6f !important;
     box-shadow: none !important;
   }
-  /* ── The raw <input> element itself has no visible border (container owns it) ── */
+  [data-baseweb="input"]:focus-within {
+    border-color: #3b82f6 !important;
+    box-shadow: none !important;
+  }
+  /* Raw <input> and <textarea> elements never own a visible border */
   input, textarea {
     border: none !important;
     box-shadow: none !important;
     outline: none !important;
   }
-  /* ── Selectbox outer wrapper ── */
+
+  /* ═══════════════════════════════════════════════════════════
+     SELECTBOXES
+     ═══════════════════════════════════════════════════════════ */
   [data-baseweb="select"] {
-    border: none !important;   /* wrapper has no border; ControlContainer does */
+    border: none !important;
     box-shadow: none !important;
   }
-  /* ── Selectbox ControlContainer (already has background; ensure border matches) ── */
   [data-baseweb="select"] > div {
     border: 1px solid #2f4f6f !important;
-    box-shadow: none !important;
-  }
-  /* ── Focus states: slightly brighter blue, no white glow ── */
-  [data-baseweb="input"]:focus-within {
-    border-color: #3b82f6 !important;
     box-shadow: none !important;
   }
   [data-baseweb="select"]:focus-within > div {
