@@ -782,7 +782,7 @@ st.markdown("""
   [data-testid="stNumberInput"] input,
   [data-testid="stTextInput"] input,
   [data-testid="stSelectbox"] select,
-  div[data-baseweb="select"] { background-color: #0f3460 !important; color: #e0e0e0 !important; }
+  div[data-baseweb="select"] { background-color: #0f3460 !important; color: #ffffff !important; }
   /* ── Slider dark styling ── */
   [data-testid="stSlider"] { color: #e0e0e0 !important; }
   [data-testid="stSlider"] p { color: #e0e0e0 !important; }
@@ -1002,6 +1002,39 @@ st.markdown("""
     fill: none !important;
     stroke: #ffffff !important;
     color: #ffffff !important;
+  }
+</style>
+""", unsafe_allow_html=True)
+
+# Third CSS block: white text inside all input controls (late injection wins cascade)
+st.markdown("""
+<style>
+  /* Typed text in number/text inputs */
+  input, textarea {
+    color: #ffffff !important;
+  }
+  /* Streamlit-specific input wrappers */
+  [data-testid="stNumberInput"] input,
+  [data-testid="stTextInput"] input,
+  [data-testid="stTextArea"] textarea {
+    color: #ffffff !important;
+  }
+  /* Selectbox / dropdown selected value */
+  [data-baseweb="select"] span,
+  [data-baseweb="select"] div[class*="ValueContainer"] span,
+  [data-baseweb="select"] div[class*="singleValue"],
+  [data-testid="stSelectbox"] span {
+    color: #ffffff !important;
+  }
+  /* Dropdown option list items */
+  [data-baseweb="menu"] [role="option"],
+  [data-baseweb="menu"] li {
+    color: #ffffff !important;
+  }
+  /* Placeholder text — slightly dimmer so it reads as hint */
+  input::placeholder, textarea::placeholder {
+    color: #9ca3af !important;
+    opacity: 1;
   }
 </style>
 """, unsafe_allow_html=True)
