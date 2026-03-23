@@ -865,38 +865,52 @@ st.markdown("""
   [data-testid="stSpinner"] svg { stroke: #4a9eff !important; }
 
   /* ── Help / tooltip icons — WHITE, maximum visibility ── */
+  /* Cover every known Streamlit variant for the icon element */
+  [data-testid="stTooltipIcon"],
+  [data-testid="stTooltipHoverTarget"],
+  .stTooltipIcon,
   button[data-testid="stTooltipHoverTarget"] {
     opacity: 1 !important;
     color: #ffffff !important;
     cursor: pointer !important;
   }
-  /* Target the SVG and every possible child element (path, circle, rect, g) */
+  /* All SVG shapes inside any of the above */
+  [data-testid="stTooltipIcon"] svg,
+  [data-testid="stTooltipIcon"] svg *,
+  [data-testid="stTooltipHoverTarget"] svg,
+  [data-testid="stTooltipHoverTarget"] svg *,
+  .stTooltipIcon svg,
+  .stTooltipIcon svg *,
   button[data-testid="stTooltipHoverTarget"] svg,
-  button[data-testid="stTooltipHoverTarget"] svg path,
-  button[data-testid="stTooltipHoverTarget"] svg circle,
-  button[data-testid="stTooltipHoverTarget"] svg rect,
-  button[data-testid="stTooltipHoverTarget"] svg g,
-  button[data-testid="stTooltipHoverTarget"] svg polyline,
-  button[data-testid="stTooltipHoverTarget"] svg line {
+  button[data-testid="stTooltipHoverTarget"] svg *,
+  svg[aria-label="Help"],
+  svg[aria-label="Help"] *,
+  svg[aria-label="Info"],
+  svg[aria-label="Info"] *,
+  label span svg,
+  label span svg * {
     fill: #ffffff !important;
     stroke: #ffffff !important;
     color: #ffffff !important;
-    width: 1.05rem !important;
-    height: 1.05rem !important;
     opacity: 1 !important;
   }
-  /* Hover: brighten to sky-blue + pointer cursor */
+  /* Hover state: sky-blue highlight */
+  [data-testid="stTooltipIcon"]:hover,
+  [data-testid="stTooltipHoverTarget"]:hover,
+  .stTooltipIcon:hover,
   button[data-testid="stTooltipHoverTarget"]:hover {
     color: #7dd3fc !important;
     cursor: pointer !important;
+    transform: scale(1.1);
   }
+  [data-testid="stTooltipIcon"]:hover svg,
+  [data-testid="stTooltipIcon"]:hover svg *,
+  [data-testid="stTooltipHoverTarget"]:hover svg,
+  [data-testid="stTooltipHoverTarget"]:hover svg *,
+  .stTooltipIcon:hover svg,
+  .stTooltipIcon:hover svg *,
   button[data-testid="stTooltipHoverTarget"]:hover svg,
-  button[data-testid="stTooltipHoverTarget"]:hover svg path,
-  button[data-testid="stTooltipHoverTarget"]:hover svg circle,
-  button[data-testid="stTooltipHoverTarget"]:hover svg rect,
-  button[data-testid="stTooltipHoverTarget"]:hover svg g,
-  button[data-testid="stTooltipHoverTarget"]:hover svg polyline,
-  button[data-testid="stTooltipHoverTarget"]:hover svg line {
+  button[data-testid="stTooltipHoverTarget"]:hover svg * {
     fill: #7dd3fc !important;
     stroke: #7dd3fc !important;
     color: #7dd3fc !important;
@@ -938,6 +952,35 @@ st.markdown("""
   [data-testid="stDownloadButton"] button:hover {
     background-color: #d93a3a !important;
     border-color:     #d93a3a !important;
+  }
+</style>
+""", unsafe_allow_html=True)
+
+# Second CSS block injected last so it wins any cascade tie with Streamlit internals
+st.markdown("""
+<style>
+  [data-testid="stTooltipIcon"],
+  [data-testid="stTooltipIcon"] *,
+  [data-testid="stTooltipHoverTarget"],
+  [data-testid="stTooltipHoverTarget"] *,
+  button[data-testid="stTooltipHoverTarget"],
+  button[data-testid="stTooltipHoverTarget"] * {
+    color: #ffffff !important;
+    fill: #ffffff !important;
+    stroke: #ffffff !important;
+    opacity: 1 !important;
+    cursor: pointer !important;
+  }
+  [data-testid="stTooltipIcon"]:hover,
+  [data-testid="stTooltipIcon"]:hover *,
+  [data-testid="stTooltipHoverTarget"]:hover,
+  [data-testid="stTooltipHoverTarget"]:hover *,
+  button[data-testid="stTooltipHoverTarget"]:hover,
+  button[data-testid="stTooltipHoverTarget"]:hover * {
+    color: #7dd3fc !important;
+    fill: #7dd3fc !important;
+    stroke: #7dd3fc !important;
+    cursor: pointer !important;
   }
 </style>
 """, unsafe_allow_html=True)
