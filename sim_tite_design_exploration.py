@@ -864,25 +864,42 @@ st.markdown("""
   [data-testid="stSpinner"] span { color: #c0c8d8 !important; }
   [data-testid="stSpinner"] svg { stroke: #4a9eff !important; }
 
-  /* ── Help / tooltip icons — same color as label text ── */
-  /* The hover-target button itself */
+  /* ── Help / tooltip icons — WHITE, maximum visibility ── */
   button[data-testid="stTooltipHoverTarget"] {
     opacity: 1 !important;
-    color: #e0e0e0 !important;
-  }
-  button[data-testid="stTooltipHoverTarget"]:hover {
     color: #ffffff !important;
+    cursor: pointer !important;
   }
-  /* The SVG icon inside the button */
-  button[data-testid="stTooltipHoverTarget"] svg {
-    fill: #e0e0e0 !important;
-    color: #e0e0e0 !important;
-    width: 1rem !important;
-    height: 1rem !important;
-  }
-  button[data-testid="stTooltipHoverTarget"]:hover svg {
+  /* Target the SVG and every possible child element (path, circle, rect, g) */
+  button[data-testid="stTooltipHoverTarget"] svg,
+  button[data-testid="stTooltipHoverTarget"] svg path,
+  button[data-testid="stTooltipHoverTarget"] svg circle,
+  button[data-testid="stTooltipHoverTarget"] svg rect,
+  button[data-testid="stTooltipHoverTarget"] svg g,
+  button[data-testid="stTooltipHoverTarget"] svg polyline,
+  button[data-testid="stTooltipHoverTarget"] svg line {
     fill: #ffffff !important;
+    stroke: #ffffff !important;
     color: #ffffff !important;
+    width: 1.05rem !important;
+    height: 1.05rem !important;
+    opacity: 1 !important;
+  }
+  /* Hover: brighten to sky-blue + pointer cursor */
+  button[data-testid="stTooltipHoverTarget"]:hover {
+    color: #7dd3fc !important;
+    cursor: pointer !important;
+  }
+  button[data-testid="stTooltipHoverTarget"]:hover svg,
+  button[data-testid="stTooltipHoverTarget"]:hover svg path,
+  button[data-testid="stTooltipHoverTarget"]:hover svg circle,
+  button[data-testid="stTooltipHoverTarget"]:hover svg rect,
+  button[data-testid="stTooltipHoverTarget"]:hover svg g,
+  button[data-testid="stTooltipHoverTarget"]:hover svg polyline,
+  button[data-testid="stTooltipHoverTarget"]:hover svg line {
+    fill: #7dd3fc !important;
+    stroke: #7dd3fc !important;
+    color: #7dd3fc !important;
   }
   /* Tooltip popup box */
   [data-baseweb="tooltip"] {
