@@ -48,6 +48,7 @@ Rate-based acute thresholds (from sim_sur.py) preserved.
 
 import base64
 import datetime
+import json
 import os
 
 import numpy as np
@@ -1721,6 +1722,231 @@ def _draw_timeline(incl_to_rt, rt_dur, rt_to_surg, tox2_win):
     return fig
 
 # ==============================================================================
+# Configuration import / export
+# ==============================================================================
+
+# (key, type-coerce-fn) for every section.
+# These are the *canonical* session-state keys that _cfg() / get_config_value()
+# reads from.  The wl_* / sl_* widget aliases are pre-written from canonical on
+# every render, so importing into canonical keys is all that is needed.
+
+_CFG_ESSENTIALS_KEYS: list[tuple[str, type]] = [
+    # Study endpoints
+    ("target_t1",           float),
+    ("target_t2",           float),
+    ("p_surgery",           float),
+    ("start_level_1b",      int),
+    # Simulation
+    ("n_sims",              int),
+    ("seed",                int),
+    ("accrual_per_month",   float),
+    # Timing (days)
+    ("incl_to_rt",          int),
+    ("rt_dur",              int),
+    ("rt_to_surg",          int),
+    ("tox2_win",            int),
+    # Sample sizes
+    ("max_n_63",            int),
+    ("max_n_crm",           int),
+    ("cohort_size",         int),
+    # CRM integration
+    ("gh_n",                int),
+    ("max_step",            int),
+    ("sigma",               float),
+    # CRM safety / selection
+    ("enforce_guardrail",   bool),
+    ("restrict_final_mtd",  bool),
+    # CRM behaviour
+    ("burn_in",             bool),
+    ("ewoc_on",             bool),
+    ("ewoc_alpha",          float),
+    # CRM decision trace
+    ("show_crm_trace",      bool),
+    # 6+3 stopping rules
+    ("a6_esc_max",          int),
+    ("a6_stop_min",         int),
+    ("a9_esc_max",          int),
+    ("s6_esc_max",          int),
+    ("s6_stop_min",         int),
+    ("s9_esc_max",          int),
+    ("s9_stop_min",         int),
+]
+
+_CFG_PLAYGROUND_PRIOR_KEYS: list[tuple[str, type]] = [
+    ("prior_model",         str),
+    ("prior_scenario",      str),
+    ("prior_target_t1",     float),
+    ("halfwidth_t1",        float),
+    ("prior_nu_t1",         int),
+    ("prior_target_t2",     float),
+    ("halfwidth_t2",        float),
+    ("prior_nu_t2",         int),
+    ("logistic_intcpt",     float),
+]
+
+_CFG_DE_KEYS: list[tuple[str, type]] = [
+    ("de_param_name",   str),
+    ("de_sig_min",      float),
+    ("de_sig_max",      float),
+    ("de_sig_pts",      int),
+    ("de_ea_min",       float),
+    ("de_ea_max",       float),
+    ("de_ea_pts",       int),
+    ("de_inc_off",      bool),
+    ("de_max_n_vals",   list),
+    ("de_nu1_vals",     list),
+    ("de_nu2_vals",     list),
+    ("de_cohort_vals",  list),
+    ("de_n_sim",        int),
+    ("de_seed",         int),
+    ("de_speed_mode",   bool),
+]
+
+# Default values used when a DE key is absent from session state at export time.
+_CFG_DE_DEFAULTS: dict = {
+    "de_param_name":  "sigma",
+    "de_sig_min":     0.3,
+    "de_sig_max":     2.0,
+    "de_sig_pts":     8,
+    "de_ea_min":      0.05,
+    "de_ea_max":      0.60,
+    "de_ea_pts":      8,
+    "de_inc_off":     True,
+    "de_max_n_vals":  [12, 15, 18, 21, 24, 27, 30, 33, 36],
+    "de_nu1_vals":    [1, 2, 3, 4, 5],
+    "de_nu2_vals":    [1, 2, 3, 4, 5],
+    "de_cohort_vals": [1, 2, 3, 4],
+    "de_n_sim":       200,
+    "de_seed":        42,
+    "de_speed_mode":  False,
+}
+
+_CFG_SCHEMA_VERSION = 1
+
+
+def _build_config_dict() -> dict:
+    """Return a JSON-serialisable dict of every user-configurable parameter.
+
+    Structure::
+
+        {
+          "_meta":              { app, schema_version, state_version, exported_at },
+          "essentials":         { ... canonical Essentials keys ... },
+          "playground": {
+              "true_t1":        [float × 5],
+              "true_t2":        [float × 5],
+              ... canonical prior keys ...
+          },
+          "design_exploration": { ... de_* keys ... },
+        }
+    """
+    ss = st.session_state
+
+    essentials = {k: get_config_value(k) for k, _ in _CFG_ESSENTIALS_KEYS}
+
+    playground: dict = {
+        "true_t1": [float(get_config_value(f"true_t1_L{i}")) for i in range(5)],
+        "true_t2": [float(get_config_value(f"true_t2_L{i}")) for i in range(5)],
+    }
+    for k, _ in _CFG_PLAYGROUND_PRIOR_KEYS:
+        playground[k] = get_config_value(k)
+
+    design_exploration = {
+        k: ss.get(k, _CFG_DE_DEFAULTS[k])
+        for k, _ in _CFG_DE_KEYS
+    }
+
+    return {
+        "_meta": {
+            "app": "CRM Simulator",
+            "schema_version": _CFG_SCHEMA_VERSION,
+            "state_version": _STATE_VERSION,
+            "exported_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        },
+        "essentials": essentials,
+        "playground": playground,
+        "design_exploration": design_exploration,
+    }
+
+
+def _apply_imported_config(cfg: dict) -> list[str]:
+    """Write values from *cfg* into session state.  Returns a list of warning strings.
+
+    Only writes keys that are present in the imported file; missing keys keep
+    their current / default values.  Type errors are caught and reported as
+    warnings rather than crashing.
+
+    Because every Essentials and Playground widget uses the pre-write pattern::
+
+        st.session_state["wl_KEY"] = _cfg("canonical_key")   # runs each render
+        st.widget(..., key="wl_KEY", ...)
+        st.session_state["canonical_key"] = st.session_state["wl_KEY"]
+
+    writing to the canonical key is sufficient; the wl_/sl_ aliases are updated
+    automatically on the next Streamlit re-render.
+    """
+    ss = st.session_state
+    warns: list[str] = []
+
+    # ── Schema version check ──────────────────────────────────────────────────
+    meta = cfg.get("_meta", {})
+    imported_sv = meta.get("schema_version", 1)
+    if not isinstance(imported_sv, int) or imported_sv > _CFG_SCHEMA_VERSION:
+        warns.append(
+            f"Config schema version {imported_sv} is newer than this app "
+            f"(expected ≤{_CFG_SCHEMA_VERSION}). Some values may not import correctly."
+        )
+
+    # ── Helper ────────────────────────────────────────────────────────────────
+    def _set(key: str, raw_val, coerce: type) -> None:
+        try:
+            if coerce is bool:
+                # json.loads already yields bool; also handle "true"/"false" strings
+                if isinstance(raw_val, str):
+                    ss[key] = raw_val.lower() == "true"
+                else:
+                    ss[key] = bool(raw_val)
+            elif coerce is list:
+                ss[key] = list(raw_val)
+            else:
+                ss[key] = coerce(raw_val)
+        except (ValueError, TypeError) as exc:
+            warns.append(f"Could not import '{key}': {exc} — keeping current value.")
+
+    # ── Essentials ────────────────────────────────────────────────────────────
+    ess = cfg.get("essentials", {})
+    for key, coerce in _CFG_ESSENTIALS_KEYS:
+        if key in ess:
+            _set(key, ess[key], coerce)
+
+    # ── Playground — true tox arrays ─────────────────────────────────────────
+    pg = cfg.get("playground", {})
+    for tox_key, arr_name in (("true_t1_L", "true_t1"), ("true_t2_L", "true_t2")):
+        if arr_name in pg:
+            arr = pg[arr_name]
+            if isinstance(arr, list) and len(arr) == 5:
+                for i, v in enumerate(arr):
+                    _set(f"{tox_key}{i}", v, float)
+            else:
+                warns.append(
+                    f"playground.{arr_name} must be a list of 5 numbers — skipped."
+                )
+
+    # ── Playground — prior settings ───────────────────────────────────────────
+    for key, coerce in _CFG_PLAYGROUND_PRIOR_KEYS:
+        if key in pg:
+            _set(key, pg[key], coerce)
+
+    # ── Design Exploration ────────────────────────────────────────────────────
+    de = cfg.get("design_exploration", {})
+    for key, coerce in _CFG_DE_KEYS:
+        if key in de:
+            _set(key, de[key], coerce)
+
+    return warns
+
+
+# ==============================================================================
 # Navigation (sidebar)
 # ==============================================================================
 
@@ -1730,6 +1956,69 @@ view = st.sidebar.radio(
     key="nav_view",
     label_visibility="collapsed",
 )
+
+# ── Import / Export configuration ─────────────────────────────────────────────
+_ss = st.session_state   # convenience alias used below (re-used by view sections)
+
+with st.sidebar.expander("⚙ Configuration", expanded=False):
+    # ── Export ────────────────────────────────────────────────────────────────
+    _cfg_json_str = json.dumps(_build_config_dict(), indent=2)
+    _cfg_fname    = (
+        "crm_config_"
+        + datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        + ".json"
+    )
+    st.download_button(
+        "⬇ Export config",
+        data=_cfg_json_str.encode("utf-8"),
+        file_name=_cfg_fname,
+        mime="application/json",
+        key="cfg_export_btn",
+        use_container_width=True,
+        help="Download all current settings (Essentials, Playground, Design Exploration) as a JSON file.",
+    )
+
+    st.divider()
+
+    # ── Import ────────────────────────────────────────────────────────────────
+    _uploaded = st.file_uploader(
+        "Import config",
+        type=["json"],
+        key="cfg_import_uploader",
+        help="Upload a previously exported CRM Simulator config (.json) to restore all settings.",
+    )
+    if _uploaded is not None:
+        # Track by (name, size) so the same file isn't re-applied on every rerun.
+        _file_id = (_uploaded.name, _uploaded.size)
+        if _ss.get("_cfg_last_import_id") != _file_id:
+            # New upload — parse and apply
+            try:
+                _raw = _uploaded.read().decode("utf-8")
+                _cfg_data = json.loads(_raw)
+                if not isinstance(_cfg_data, dict):
+                    raise ValueError("Config file must be a JSON object.")
+                _import_warns = _apply_imported_config(_cfg_data)
+                _ss["_cfg_last_import_id"]   = _file_id
+                _ss["_cfg_import_ok"]        = True
+                _ss["_cfg_import_warnings"]  = _import_warns
+            except json.JSONDecodeError as _je:
+                _ss["_cfg_last_import_id"]   = _file_id
+                _ss["_cfg_import_ok"]        = False
+                _ss["_cfg_import_warnings"]  = [f"Invalid JSON: {_je}"]
+            except Exception as _ie:
+                _ss["_cfg_last_import_id"]   = _file_id
+                _ss["_cfg_import_ok"]        = False
+                _ss["_cfg_import_warnings"]  = [f"Import failed: {_ie}"]
+            st.rerun()
+        else:
+            # Same file already applied — show persisted result
+            if _ss.get("_cfg_import_ok"):
+                st.success("✅ Config loaded.")
+                for _w in _ss.get("_cfg_import_warnings", []):
+                    st.warning(_w)
+            else:
+                for _msg in _ss.get("_cfg_import_warnings", ["Import failed."]):
+                    st.error(_msg)
 
 # ==============================================================================
 # ESSENTIALS VIEW
