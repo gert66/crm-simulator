@@ -1090,6 +1090,43 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# Fifth CSS block: unify borders across ALL input types.
+# Removes white/light default borders and replaces with a consistent muted-blue.
+st.markdown("""
+<style>
+  /* ── Number input / text input containers (BaseWeb "input") ── */
+  [data-baseweb="input"] {
+    border: 1px solid #2f4f6f !important;
+    box-shadow: none !important;
+  }
+  /* ── The raw <input> element itself has no visible border (container owns it) ── */
+  input, textarea {
+    border: none !important;
+    box-shadow: none !important;
+    outline: none !important;
+  }
+  /* ── Selectbox outer wrapper ── */
+  [data-baseweb="select"] {
+    border: none !important;   /* wrapper has no border; ControlContainer does */
+    box-shadow: none !important;
+  }
+  /* ── Selectbox ControlContainer (already has background; ensure border matches) ── */
+  [data-baseweb="select"] > div {
+    border: 1px solid #2f4f6f !important;
+    box-shadow: none !important;
+  }
+  /* ── Focus states: slightly brighter blue, no white glow ── */
+  [data-baseweb="input"]:focus-within {
+    border-color: #3b82f6 !important;
+    box-shadow: none !important;
+  }
+  [data-baseweb="select"]:focus-within > div {
+    border-color: #3b82f6 !important;
+    box-shadow: none !important;
+  }
+</style>
+""", unsafe_allow_html=True)
+
 # ==============================================================================
 # Defaults
 # ==============================================================================
