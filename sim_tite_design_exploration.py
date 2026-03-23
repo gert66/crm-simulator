@@ -3452,15 +3452,19 @@ def _de_pv_for_param(param_name, ss, speed=False):
         return pv, "σ (prior sigma)"
 
     if param_name == "ewoc_alpha":
-        inc_off = bool(ss.get("de_inc_off", True))
-        pv_num  = np.linspace(
+        inc_off  = bool(ss.get("de_inc_off", True))
+        pv_num   = np.linspace(
             float(ss.get("de_ea_min", 0.05)),
             float(ss.get("de_ea_max", 0.60)),
             int(ss.get("de_ea_pts", 8)),
         ).tolist()
+        # Build the combined list FIRST (matching single-sweep: _de_pv[:8]),
+        # then apply the speed cap on the combined list so the count is
+        # identical whether Run Sweep or Run Batch is used.
+        combined = ([None] if inc_off else []) + pv_num
         if speed:
-            pv_num = pv_num[:8]
-        return ([None] if inc_off else []) + pv_num, "EWOC α"
+            combined = combined[:8]
+        return combined, "EWOC α"
 
     if param_name == "max_n":
         pv = list(ss.get("de_max_n_vals",
@@ -4524,12 +4528,29 @@ if view == "Design Exploration":
             logistic_intcpt         = float(get_config_value("logistic_intcpt")),
         )
 
+        # ── Debug: show exactly which sweep values will be used ──────────
+        # Pre-compute all grids so the user can verify before simulations run.
+        _batch_plan = {
+            _pn: _de_pv_for_param(_pn, _ss, speed=_de_speed)
+            for _pn in _DE_ALL_PARAMS
+        }
+        with st.expander("🔍 Batch sweep plan (click to verify values)", expanded=False):
+            for _pn, (_ppv, _ppl) in _batch_plan.items():
+                if _ppv:
+                    _ppv_str = ", ".join(
+                        "OFF" if v is None else f"{v:.4g}" for v in _ppv
+                    )
+                    st.caption(f"**{_ppl}** ({len(_ppv)} pts): {_ppv_str}")
+                else:
+                    st.caption(f"**{_ppl}**: *(empty — skipped)*")
+        # ─────────────────────────────────────────────────────────────────
+
         _all_prog    = st.progress(0, text="Starting…")
         _n_params    = len(_DE_ALL_PARAMS)
         _all_results = []
 
         for _pi, _pname in enumerate(_DE_ALL_PARAMS):
-            _pv, _plabel = _de_pv_for_param(_pname, _ss, speed=_de_speed)
+            _pv, _plabel = _batch_plan[_pname]   # already computed above
             if not _pv:
                 continue
             _all_prog.progress(
