@@ -1039,6 +1039,57 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# Fourth CSS block: force dark-theme on BaseWeb select inner control + open menu.
+# The outer [data-baseweb="select"] wrapper was already dark, but BaseWeb sets its own
+# background on the inner ControlContainer child divs — those must also be overridden.
+st.markdown("""
+<style>
+  /* ── Closed selectbox control: inner ControlContainer ── */
+  [data-baseweb="select"] > div,
+  [data-baseweb="select"] > div > div {
+    background-color: #0f3460 !important;
+    color: #ffffff !important;
+    border-color: #2d5986 !important;
+  }
+  /* Selected value text and placeholder inside the control */
+  [data-baseweb="select"] > div span,
+  [data-baseweb="select"] > div div[class*="placeholder"],
+  [data-baseweb="select"] > div div[class*="singleValue"],
+  [data-baseweb="select"] > div div[class*="value"] {
+    color: #ffffff !important;
+  }
+  /* Dropdown arrow / chevron SVG */
+  [data-baseweb="select"] svg {
+    fill: #e5e7eb !important;
+    stroke: none !important;
+  }
+  /* ── Open dropdown menu (popover) ── */
+  [data-baseweb="popover"] [data-baseweb="menu"],
+  [data-baseweb="popover"] ul,
+  [data-baseweb="popover"] [role="listbox"] {
+    background-color: #0f3460 !important;
+    border: 1px solid #2d5986 !important;
+  }
+  /* Menu option items */
+  [data-baseweb="popover"] [role="option"],
+  [data-baseweb="popover"] li {
+    background-color: #0f3460 !important;
+    color: #ffffff !important;
+  }
+  /* Hovered option */
+  [data-baseweb="popover"] [role="option"]:hover {
+    background-color: #1a4a7a !important;
+    color: #ffffff !important;
+  }
+  /* Currently selected option */
+  [data-baseweb="popover"] [aria-selected="true"],
+  [data-baseweb="popover"] [role="option"][aria-selected="true"] {
+    background-color: #1e3a5f !important;
+    color: #4a9eff !important;
+  }
+</style>
+""", unsafe_allow_html=True)
+
 # ==============================================================================
 # Defaults
 # ==============================================================================
