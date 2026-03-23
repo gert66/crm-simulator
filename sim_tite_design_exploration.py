@@ -864,18 +864,25 @@ st.markdown("""
   [data-testid="stSpinner"] span { color: #c0c8d8 !important; }
   [data-testid="stSpinner"] svg { stroke: #4a9eff !important; }
 
-  /* ── Help / tooltip icons — clearly visible in dark mode ── */
+  /* ── Help / tooltip icons — same color as label text ── */
   /* The hover-target button itself */
   button[data-testid="stTooltipHoverTarget"] {
     opacity: 1 !important;
-    color: #4a9eff !important;
+    color: #e0e0e0 !important;
+  }
+  button[data-testid="stTooltipHoverTarget"]:hover {
+    color: #ffffff !important;
   }
   /* The SVG icon inside the button */
   button[data-testid="stTooltipHoverTarget"] svg {
-    fill: #4a9eff !important;
-    color: #4a9eff !important;
+    fill: #e0e0e0 !important;
+    color: #e0e0e0 !important;
     width: 1rem !important;
     height: 1rem !important;
+  }
+  button[data-testid="stTooltipHoverTarget"]:hover svg {
+    fill: #ffffff !important;
+    color: #ffffff !important;
   }
   /* Tooltip popup box */
   [data-baseweb="tooltip"] {
@@ -4221,15 +4228,6 @@ if view == "Design Exploration":
                       help=_HELP_CS)
         _mc3.markdown("**Overdose rate (%)**",
                       help=_HELP_OR)
-
-        _disp = _df[["param_label", "n_patients", "quality_score",
-                     "pct_correct_selection", "overdose_rate"]].copy()
-        _disp.columns = [_lbl, "N patients", "Quality score",
-                         "% Correct selection", "Overdose rate (%)"]
-        _disp["Quality score"]       = _disp["Quality score"].round(4)
-        _disp["% Correct selection"] = _disp["% Correct selection"].round(1)
-        _disp["Overdose rate (%)"]   = _disp["Overdose rate (%)"].round(1)
-        st.dataframe(_disp, use_container_width=True, hide_index=True)
 
     # ── Batch execution ────────────────────────────────────────────────────
     if _de_batch_btn and _de_skel_ok:
