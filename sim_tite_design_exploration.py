@@ -840,6 +840,26 @@ st.markdown("""
     border-color:     #6b1f1f !important;
     opacity: 0.55 !important;
   }
+
+  /* ── Radio button labels ── */
+  [data-testid="stRadio"] label,
+  [data-testid="stRadio"] label span,
+  [data-testid="stRadio"] div[data-baseweb="radio"] ~ div,
+  [data-testid="stRadio"] [class*="st-"] { color: #e0e0e0 !important; }
+
+  /* ── Streamlit toolbar / header visibility ── */
+  [data-testid="stToolbar"] button,
+  [data-testid="stToolbar"] button svg { color: #b0bcd0 !important; fill: #b0bcd0 !important; }
+  [data-testid="stToolbar"] button:hover,
+  [data-testid="stToolbar"] button:hover svg { color: #e0e8f8 !important; fill: #e0e8f8 !important; }
+  [data-testid="stStatusWidget"],
+  [data-testid="stStatusWidget"] * { color: #b0bcd0 !important; }
+  [data-testid="stStatusWidget"] svg { fill: #4a9eff !important; }
+
+  /* ── Spinner visibility ── */
+  [data-testid="stSpinner"] p,
+  [data-testid="stSpinner"] span { color: #c0c8d8 !important; }
+  [data-testid="stSpinner"] svg { stroke: #4a9eff !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -1670,18 +1690,31 @@ if view == "Essentials":
 
     st.markdown("---")
     st.markdown("#### 6+3 stopping rules")
-    st.info(
-        "**Modified 6+3 (TITE version) — full evaluability required.**\n\n"
-        "Decisions are only made once ALL enrolled patients in the evaluation "
-        "cohort have completed their relevant follow-up windows.\n\n"
-        "**Bridging rule:** while waiting for evaluability at the current "
-        "dose, new arrivals are assigned to the next lower dose (*safe dose*). "
-        "These bridging patients count toward the trial total but not toward "
-        "the formal evaluation cohort.\n\n"
-        "**Rate-based acute thresholds:** if the HOLD rule causes more than 6 "
-        "(or 9) patients to be enrolled at eval dose, the acute threshold "
-        "is scaled proportionally to preserve the original protocol ratio.",
-        icon="ℹ️",
+    st.markdown(
+        '<div style="background:#1e3a5f;border-left:4px solid #4a9eff;'
+        'padding:12px 16px;border-radius:0 4px 4px 0;margin:8px 0;">'
+        '<span style="color:#d0e8ff;font-size:0.95em;">'
+        'ℹ️ <strong>Modified 6+3 (TITE version) — full evaluability required.</strong>'
+        '</span><br><br>'
+        '<span style="color:#c0d8f0;font-size:0.91em;">'
+        'Decisions are only made once ALL enrolled patients in the evaluation '
+        'cohort have completed their relevant follow-up windows.'
+        '</span><br><br>'
+        '<span style="color:#c0d8f0;font-size:0.91em;">'
+        '<strong style="color:#d0e8ff;">Bridging rule:</strong> '
+        'while waiting for evaluability at the current dose, new arrivals are '
+        'assigned to the next lower dose (<em>safe dose</em>). '
+        'These bridging patients count toward the trial total but not toward '
+        'the formal evaluation cohort.'
+        '</span><br><br>'
+        '<span style="color:#c0d8f0;font-size:0.91em;">'
+        '<strong style="color:#d0e8ff;">Rate-based acute thresholds:</strong> '
+        'if the HOLD rule causes more than 6 (or 9) patients to be enrolled at '
+        'eval dose, the acute threshold is scaled proportionally to preserve '
+        'the original protocol ratio.'
+        '</span></div>',
+        unsafe_allow_html=True,
+        # replaced st.info() — icon parameter removed
     )
     st.markdown(
         "<div style='font-size:0.79rem;font-weight:600;color:#a0a0c0;'>"
@@ -3841,7 +3874,8 @@ if view == "Design Exploration":
             disabled=(not _de_skel_ok or len(_de_pv_eff) == 0),
         )
         _de_batch_btn = st.button(
-            "📄 Run Batch Exploration",
+            "▶▶ Run Batch Exploration",
+            type="primary",
             key="de_batch_all_btn",
             disabled=not _de_skel_ok,
             help=(
