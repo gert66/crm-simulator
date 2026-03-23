@@ -864,42 +864,48 @@ st.markdown("""
   [data-testid="stSpinner"] span { color: #c0c8d8 !important; }
   [data-testid="stSpinner"] svg { stroke: #4a9eff !important; }
 
-  /* ── Help / tooltip icons — WHITE, maximum visibility ── */
-  /* Cover every known Streamlit variant for the icon element */
+  /* ── Help / tooltip icons — outlined style, no fill ── */
+  /* Button wrapper */
   [data-testid="stTooltipIcon"],
   [data-testid="stTooltipHoverTarget"],
   .stTooltipIcon,
   button[data-testid="stTooltipHoverTarget"] {
     opacity: 1 !important;
-    color: #ffffff !important;
+    color: #e5e7eb !important;
+    background: transparent !important;
     cursor: pointer !important;
   }
-  /* All SVG shapes inside any of the above */
+  /* SVG container: no fill, let stroke do the drawing */
   [data-testid="stTooltipIcon"] svg,
-  [data-testid="stTooltipIcon"] svg *,
   [data-testid="stTooltipHoverTarget"] svg,
-  [data-testid="stTooltipHoverTarget"] svg *,
   .stTooltipIcon svg,
-  .stTooltipIcon svg *,
   button[data-testid="stTooltipHoverTarget"] svg,
-  button[data-testid="stTooltipHoverTarget"] svg *,
   svg[aria-label="Help"],
-  svg[aria-label="Help"] *,
   svg[aria-label="Info"],
-  svg[aria-label="Info"] *,
-  label span svg,
-  label span svg * {
-    fill: #ffffff !important;
-    stroke: #ffffff !important;
-    color: #ffffff !important;
+  label span svg {
+    fill: none !important;
+    stroke: #e5e7eb !important;
+    color: #e5e7eb !important;
     opacity: 1 !important;
   }
-  /* Hover state: sky-blue highlight */
+  /* All SVG child shapes: outlined, not filled */
+  [data-testid="stTooltipIcon"] svg *,
+  [data-testid="stTooltipHoverTarget"] svg *,
+  .stTooltipIcon svg *,
+  button[data-testid="stTooltipHoverTarget"] svg *,
+  svg[aria-label="Help"] *,
+  svg[aria-label="Info"] *,
+  label span svg * {
+    fill: none !important;
+    stroke: #e5e7eb !important;
+    color: #e5e7eb !important;
+  }
+  /* Hover: brighter white, slight scale */
   [data-testid="stTooltipIcon"]:hover,
   [data-testid="stTooltipHoverTarget"]:hover,
   .stTooltipIcon:hover,
   button[data-testid="stTooltipHoverTarget"]:hover {
-    color: #7dd3fc !important;
+    color: #ffffff !important;
     cursor: pointer !important;
     transform: scale(1.1);
   }
@@ -911,9 +917,9 @@ st.markdown("""
   .stTooltipIcon:hover svg *,
   button[data-testid="stTooltipHoverTarget"]:hover svg,
   button[data-testid="stTooltipHoverTarget"]:hover svg * {
-    fill: #7dd3fc !important;
-    stroke: #7dd3fc !important;
-    color: #7dd3fc !important;
+    fill: none !important;
+    stroke: #ffffff !important;
+    color: #ffffff !important;
   }
   /* Tooltip popup box */
   [data-baseweb="tooltip"] {
@@ -960,27 +966,42 @@ st.markdown("""
 st.markdown("""
 <style>
   [data-testid="stTooltipIcon"],
-  [data-testid="stTooltipIcon"] *,
   [data-testid="stTooltipHoverTarget"],
-  [data-testid="stTooltipHoverTarget"] *,
-  button[data-testid="stTooltipHoverTarget"],
-  button[data-testid="stTooltipHoverTarget"] * {
-    color: #ffffff !important;
-    fill: #ffffff !important;
-    stroke: #ffffff !important;
+  button[data-testid="stTooltipHoverTarget"] {
+    color: #e5e7eb !important;
+    background: transparent !important;
     opacity: 1 !important;
     cursor: pointer !important;
   }
+  [data-testid="stTooltipIcon"] svg,
+  [data-testid="stTooltipHoverTarget"] svg,
+  button[data-testid="stTooltipHoverTarget"] svg {
+    fill: none !important;
+    stroke: #e5e7eb !important;
+    color: #e5e7eb !important;
+    opacity: 1 !important;
+  }
+  [data-testid="stTooltipIcon"] svg *,
+  [data-testid="stTooltipHoverTarget"] svg *,
+  button[data-testid="stTooltipHoverTarget"] svg * {
+    fill: none !important;
+    stroke: #e5e7eb !important;
+  }
   [data-testid="stTooltipIcon"]:hover,
-  [data-testid="stTooltipIcon"]:hover *,
   [data-testid="stTooltipHoverTarget"]:hover,
-  [data-testid="stTooltipHoverTarget"]:hover *,
-  button[data-testid="stTooltipHoverTarget"]:hover,
-  button[data-testid="stTooltipHoverTarget"]:hover * {
-    color: #7dd3fc !important;
-    fill: #7dd3fc !important;
-    stroke: #7dd3fc !important;
+  button[data-testid="stTooltipHoverTarget"]:hover {
+    color: #ffffff !important;
     cursor: pointer !important;
+  }
+  [data-testid="stTooltipIcon"]:hover svg,
+  [data-testid="stTooltipIcon"]:hover svg *,
+  [data-testid="stTooltipHoverTarget"]:hover svg,
+  [data-testid="stTooltipHoverTarget"]:hover svg *,
+  button[data-testid="stTooltipHoverTarget"]:hover svg,
+  button[data-testid="stTooltipHoverTarget"]:hover svg * {
+    fill: none !important;
+    stroke: #ffffff !important;
+    color: #ffffff !important;
   }
 </style>
 """, unsafe_allow_html=True)
