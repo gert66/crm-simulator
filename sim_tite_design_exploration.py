@@ -860,6 +860,22 @@ st.markdown("""
   [data-testid="stSpinner"] p,
   [data-testid="stSpinner"] span { color: #c0c8d8 !important; }
   [data-testid="stSpinner"] svg { stroke: #4a9eff !important; }
+
+  /* ── Download report button — prominent red ── */
+  [data-testid="stDownloadButton"] button {
+    background-color: #b02a2a !important;
+    border-color:     #b02a2a !important;
+    color: #ffffff !important;
+    font-weight: 700 !important;
+    font-size: 1.05rem !important;
+    padding: 0.65rem 2rem !important;
+    width: 100% !important;
+    margin-top: 0.5rem !important;
+  }
+  [data-testid="stDownloadButton"] button:hover {
+    background-color: #d93a3a !important;
+    border-color:     #d93a3a !important;
+  }
 </style>
 """, unsafe_allow_html=True)
 
@@ -3394,6 +3410,56 @@ def _plot_sweep_results(df, param_label, param_name="", param_info=None):
     return fig
 
 
+def _plot_sweep_results_light(df, param_label, param_name="", param_info=None):
+    """Light-themed version of _plot_sweep_results for embedded HTML reports.
+
+    Identical logic to _plot_sweep_results but uses a white background and
+    dark text so the chart reads cleanly in a printed / exported document.
+    The app UI still uses the dark version via _plot_sweep_results.
+    """
+    param_info = param_info or {}
+    df = df.sort_values("param_raw", ascending=True).reset_index(drop=True)
+    fig, axes = plt.subplots(1, 3, figsize=(13, 3.6))
+    x = np.arange(len(df))
+
+    if param_name == "max_n":
+        xtick_labels = [str(v) for v in df["n_patients"].tolist()]
+        xlabel = "Maximum total patients in trial (max N)"
+    elif param_name == "cohort_size":
+        n_fixed = int(df["n_patients"].iloc[0])
+        xtick_labels = df["param_label"].tolist()
+        xlabel = f"Cohort size — patients per dose decision  (max N = {n_fixed})"
+    else:
+        n_fixed = int(df["n_patients"].iloc[0])
+        xtick_labels = df["param_label"].tolist()
+        xlabel = f"{param_label}  (N = {n_fixed} pts)"
+
+    fig.patch.set_facecolor("white")
+    specs = [
+        ("quality_score",         "Quality score",       "#2563eb"),
+        ("pct_correct_selection", "% Correct selection", "#16a34a"),
+        ("overdose_rate",         "Overdose rate (%)",   "#dc2626"),
+    ]
+    for ax, (col, ylabel, color) in zip(axes, specs):
+        ax.set_facecolor("white")
+        ax.bar(x, df[col].values, color=color, alpha=0.82)
+        ax.set_xticks(x)
+        ax.set_xticklabels(xtick_labels,
+                           rotation=35 if len(x) > 6 else 0,
+                           ha="right", fontsize=8, color="#333333")
+        ax.set_xlabel(xlabel, fontsize=9, color="#444444")
+        ax.set_title(ylabel, fontsize=10, fontweight="bold", color="#111111")
+        ax.tick_params(colors="#333333", labelsize=8)
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+        ax.spines["left"].set_edgecolor("#cccccc")
+        ax.spines["bottom"].set_edgecolor("#cccccc")
+        ax.grid(axis="y", lw=0.5, alpha=0.6, color="#e0e0e0")
+        ax.yaxis.label.set_color("#444444")
+    fig.tight_layout(pad=1.5)
+    return fig
+
+
 # ------------------------------------------------------------------------------
 # Design Exploration view — placeholder (not yet wired into navigation)
 # ------------------------------------------------------------------------------
@@ -4047,8 +4113,8 @@ if view == "Design Exploration":
                     _de_n_eff, int(_de_seed),
                 )
             _pinfo    = {"cohort_size": int(get_config_value("cohort_size"))}
-            _pfig     = _plot_sweep_results(_pres_df, _plabel, _pname,
-                                            param_info=_pinfo)
+            _pfig     = _plot_sweep_results_light(_pres_df, _plabel, _pname,
+                                                  param_info=_pinfo)
             _pfig_b64 = _fig_to_b64(_pfig)
             plt.close(_pfig)
             _all_results.append(dict(
