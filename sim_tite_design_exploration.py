@@ -864,6 +864,42 @@ st.markdown("""
   [data-testid="stSpinner"] span { color: #c0c8d8 !important; }
   [data-testid="stSpinner"] svg { stroke: #4a9eff !important; }
 
+  /* ── Help / tooltip icons — clearly visible in dark mode ── */
+  /* The hover-target button itself */
+  button[data-testid="stTooltipHoverTarget"] {
+    opacity: 1 !important;
+    color: #4a9eff !important;
+  }
+  /* The SVG icon inside the button */
+  button[data-testid="stTooltipHoverTarget"] svg {
+    fill: #4a9eff !important;
+    color: #4a9eff !important;
+    width: 1rem !important;
+    height: 1rem !important;
+  }
+  /* Tooltip popup box */
+  [data-baseweb="tooltip"] {
+    background-color: #1e3a5f !important;
+    border: 1px solid #4a9eff !important;
+    border-radius: 6px !important;
+    max-width: 320px !important;
+  }
+  [data-baseweb="tooltip"] p,
+  [data-baseweb="tooltip"] span,
+  [data-baseweb="tooltip"] div,
+  [data-baseweb="tooltip"] li {
+    color: #d0e8ff !important;
+    font-size: 0.87rem !important;
+    line-height: 1.5 !important;
+  }
+  /* Also target any Streamlit-internal tooltip wrapper */
+  [data-testid="stTooltipContent"] {
+    background-color: #1e3a5f !important;
+    color: #d0e8ff !important;
+    border: 1px solid #4a9eff !important;
+    border-radius: 6px !important;
+  }
+
   /* ── Download report button — prominent red ── */
   [data-testid="stDownloadButton"] button {
     background-color: #b02a2a !important;
@@ -3306,7 +3342,7 @@ def _generate_de_all_html_report(results_list, base_ss, n_sim, seed,
                                classes="results-tbl", justify="left")
 
         ctx_img = (
-            f'<img src="{r["context_fig_b64"]}"'
+            f'<img src="{r["context_fig_b64"]}" style="max-width:520px"'
             f' alt="True toxicity vs prior MTD levels — {plabel}">'
             if r.get("context_fig_b64") else ""
         )
@@ -3469,25 +3505,32 @@ def _plot_sweep_results_light(df, param_label, param_name="", param_info=None):
     return fig
 
 
-def _plot_prior_mtd_context(true_tox, pv_list, tox_label, title, light=False):
-    """Bar chart of true toxicity probabilities with one horizontal reference
-    line per prior MTD level choice in *pv_list*.
+def _plot_prior_mtd_context(true_tox, pv_list, tox_label, title,
+                            prior_target, prior_halfwidth,
+                            model="empiric", intcpt=3.0, light=False):
+    """Compact chart: true toxicity bars + one CRM skeleton line per prior MTD
+    level choice in *pv_list*.  Skeletons are computed with dfcrm_getprior()
+    exactly as the simulation engine uses them.
 
     Parameters
     ----------
-    true_tox  : array-like, length 5 — true tox probability at each dose level
-    pv_list   : list[int] — 1-indexed MTD level values included in the sweep
-    tox_label : str — e.g. "tox1 (acute)"
-    title     : str — chart title
-    light     : bool — True → white background (for HTML report);
-                       False → dark background (for in-app display)
+    true_tox       : array-like, length 5 — true tox probability per dose level
+    pv_list        : list[int] — 1-indexed MTD level values in the sweep
+    tox_label      : str — e.g. "tox1 (acute)"
+    title          : str — chart title
+    prior_target   : float — prior target tox rate (pt)
+    prior_halfwidth: float — prior halfwidth (hw)
+    model          : str — "empiric" or "logistic"
+    intcpt         : float — logistic intercept (used only when model="logistic")
+    light          : bool — True → white bg (HTML report); False → dark bg (app)
     """
     true_tox = list(true_tox)
     n_levels = len(true_tox)
     x        = np.arange(n_levels)
     x_labels = [f"L{i + 1}" for i in range(n_levels)]
 
-    fig, ax = plt.subplots(figsize=(7, 3.8))
+    # Compact size — similar to the Dose-risk preview panel
+    fig, ax = plt.subplots(figsize=(5.5, 3.2), dpi=130)
 
     if light:
         fig.patch.set_facecolor("white")
@@ -3511,26 +3554,32 @@ def _plot_prior_mtd_context(true_tox, pv_list, tox_label, title, light=False):
                           facecolor=_DARK_AX, edgecolor=_DARK_GRD,
                           labelcolor=_DARK_FG)
 
-    ax.bar(x, true_tox, color=bar_color, alpha=0.70, label="True tox prob")
+    ax.bar(x, true_tox, color=bar_color, alpha=0.55, label="True toxicity",
+           zorder=2)
 
     for lv in sorted(set(pv_list)):
         idx = lv - 1
         if 0 <= idx < n_levels:
-            y_val = float(true_tox[idx])
-            color = _MTD_LINE_COLORS[idx % len(_MTD_LINE_COLORS)]
-            ax.axhline(y=y_val, color=color, linewidth=1.8, linestyle="--",
-                       label=f"L{lv}  ({y_val:.3f})")
+            try:
+                sk = dfcrm_getprior(prior_halfwidth, prior_target, lv,
+                                    n_levels, model=model, intcpt=intcpt)
+                color = _MTD_LINE_COLORS[idx % len(_MTD_LINE_COLORS)]
+                ax.plot(x, sk, color=color, linewidth=1.8,
+                        marker="o", markersize=3.5,
+                        label=f"Skeleton L{lv}", zorder=3)
+            except Exception:
+                pass  # skip invalid skeleton silently
 
     ax.set_xticks(x)
     ax.set_xticklabels(x_labels, fontsize=9)
     ax.set_xlabel("Dose level", fontsize=9)
-    ax.set_ylabel(f"True {tox_label} probability", fontsize=9)
+    ax.set_ylabel(f"True {tox_label} prob", fontsize=9)
     ax.set_title(title, fontsize=10, fontweight="bold")
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
     ax.grid(axis="y", lw=0.5, alpha=0.5, color=grid_color)
     ax.legend(**legend_kw)
-    fig.tight_layout(pad=1.5)
+    fig.tight_layout(pad=1.2)
     return fig
 
 
@@ -4142,19 +4191,27 @@ if view == "Design Exploration":
 
         # Extra explanatory chart for prior MTD level sweeps
         if _pkey in ("prior_nu_t1", "prior_nu_t2"):
-            _ctx_swept = sorted(int(v) for v in _df["param_raw"].unique())
+            _ctx_swept  = sorted(int(v) for v in _df["param_raw"].unique())
+            _ctx_model  = str(get_config_value("prior_model"))
+            _ctx_intcpt = float(get_config_value("logistic_intcpt"))
             if _pkey == "prior_nu_t1":
                 _ctx_true  = _de_t1
+                _ctx_pt    = _de_pt1
+                _ctx_hw    = _de_hw1
                 _ctx_label = "tox1 (acute)"
                 _ctx_title = "Tox1 acute: true toxicity vs prior MTD level choices"
             else:
                 _ctx_true  = _de_t2
+                _ctx_pt    = _de_pt2
+                _ctx_hw    = _de_hw2
                 _ctx_label = "tox2 (subacute)"
                 _ctx_title = "Tox2 subacute: true toxicity vs prior MTD level choices"
             _ctx_fig = _plot_prior_mtd_context(
-                _ctx_true, _ctx_swept, _ctx_label, _ctx_title, light=False)
-            st.pyplot(_ctx_fig)
-            plt.close(_ctx_fig)
+                _ctx_true, _ctx_swept, _ctx_label, _ctx_title,
+                _ctx_pt, _ctx_hw,
+                model=_ctx_model, intcpt=_ctx_intcpt, light=False)
+            # Render at a fixed compact width (similar to dose-risk preview)
+            st.image(fig_to_png_bytes(_ctx_fig), width=480)
 
         # Metric header row with help tooltips
         _mc1, _mc2, _mc3 = st.columns(3)
@@ -4238,6 +4295,10 @@ if view == "Design Exploration":
             _pctx_b64 = None
             if _pname in ("prior_nu_t1", "prior_nu_t2"):
                 _ctx_true  = _de_t1 if _pname == "prior_nu_t1" else _de_t2
+                _ctx_pt    = (_all_base_ss["prior_pt1"] if _pname == "prior_nu_t1"
+                              else _all_base_ss["prior_pt2"])
+                _ctx_hw    = (_all_base_ss["prior_hw1"] if _pname == "prior_nu_t1"
+                              else _all_base_ss["prior_hw2"])
                 _ctx_lbl   = ("tox1 (acute)"
                               if _pname == "prior_nu_t1"
                               else "tox2 (subacute)")
@@ -4246,7 +4307,11 @@ if view == "Design Exploration":
                               else "Tox2 subacute: true toxicity vs prior MTD level choices")
                 _ctx_fig   = _plot_prior_mtd_context(
                     _ctx_true, [int(v) for v in _pv],
-                    _ctx_lbl, _ctx_title, light=True)
+                    _ctx_lbl, _ctx_title,
+                    _ctx_pt, _ctx_hw,
+                    model=_all_base_ss["prior_model_str"],
+                    intcpt=float(_all_base_ss["logistic_intcpt"]),
+                    light=True)
                 _pctx_b64  = _fig_to_b64(_ctx_fig)
                 plt.close(_ctx_fig)
 
