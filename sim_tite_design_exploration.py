@@ -1655,16 +1655,16 @@ def _apply_prior_scenario() -> None:
 
 def _draw_timeline(incl_to_rt, rt_dur, rt_to_surg, tox2_win):
     """
-    Single-row horizontal timeline with labelled coloured bands.
-    Returns a matplotlib Figure.
+    Two-row timeline: solid phase bars on the bottom row, toxicity-window
+    arrows on the top row.  No overlapping fills.
 
-    Tox1 window is derived as rt_dur + rt_to_surg, so it ends exactly at
-    surgery — the same derivation used in the simulation.
+    Tox1 window: RT start → Surgery (ends exactly at surgery).
+    Tox2 window: Surgery  → Surgery + tox2_win.
     """
     _BG = _DARK_BG
     _FG = _DARK_FG
 
-    fig, ax = plt.subplots(figsize=(9.0, 0.9), dpi=120)
+    fig, ax = plt.subplots(figsize=(9.0, 1.6), dpi=120)
     fig.patch.set_facecolor(_BG)
     ax.set_xlim(0, 1)
     ax.set_ylim(0, 1)
@@ -1680,45 +1680,69 @@ def _draw_timeline(incl_to_rt, rt_dur, rt_to_surg, tox2_win):
 
     def x(d): return float(d) / total
 
-    y0, h_bar = 0.25, 0.50
-    # Each entry: (x_start, x_end, facecolor, alpha, legend_label)
-    # Saturated palette chosen to contrast well on the light background.
-    segments = [
-        (0,        rt_start, "#64b5f6", 0.85, "Incl → RT start"),   # medium blue
-        (rt_start, rt_end,   "#1565c0", 0.90, "RT"),                 # dark blue
-        (rt_start, t1_end,   "#ff8f00", 0.55, "Tox1 window"),        # amber overlay
-        (rt_end,   surg,     "#78909c", 0.80, "RT end → Surgery"),   # blue-grey
-        (surg,     t2_end,   "#c62828", 0.85, "Tox2 window"),        # dark red
+    # ── Bottom row: solid phase bars (no tox overlays) ─────────────────────
+    y0, h_bar = 0.14, 0.32
+    phases = [
+        (0,        rt_start, "#64b5f6", 0.90, "Incl → RT start"),
+        (rt_start, rt_end,   "#1976d2", 0.95, "RT"),
+        (rt_end,   surg,     "#78909c", 0.85, "RT end → Surgery"),
+        (surg,     t2_end,   "#4a4a6a", 0.70, "Post-surgery"),
     ]
-    plotted_labels = set()
-    handles = []
-    for x0, x1, col, alpha, lbl in segments:
+    for x0_, x1_, col, alpha, _lbl in phases:
         bar = mpatches.FancyBboxPatch(
-            (x(x0), y0), x(x1) - x(x0), h_bar,
+            (x(x0_), y0), x(x1_) - x(x0_), h_bar,
             boxstyle="square,pad=0",
             facecolor=col, alpha=alpha,
             edgecolor="#bdbdbd", linewidth=0.5,
         )
         ax.add_patch(bar)
-        if lbl not in plotted_labels:
-            handles.append(mpatches.Patch(facecolor=col, alpha=alpha, label=lbl))
-            plotted_labels.add(lbl)
 
-    markers = [(0, "Incl"), (rt_start, "RT\nstart"), (rt_end, "RT\nend"),
-               (surg, "Surgery"), (t2_end, "Done")]
+    # ── Top row: toxicity-window double-headed arrows ───────────────────────
+    # Tox1 spans RT start → Surgery, Tox2 spans Surgery → Done.
+    # They are adjacent (non-overlapping) so they share the same y row.
+    y_arr     = 0.74   # arrow shaft y
+    y_arr_lbl = 0.88   # label above shaft
+
+    tox_spans = [
+        (rt_start, t1_end, "#ffb300", "Tox1 window"),   # amber
+        (surg,     t2_end, "#ef5350", "Tox2 window"),   # red
+    ]
+    for xa0, xa1, col, lbl in tox_spans:
+        xp0, xp1 = x(xa0), x(xa1)
+        # Double-headed arrow
+        ax.annotate(
+            "", xy=(xp1, y_arr), xytext=(xp0, y_arr),
+            arrowprops=dict(
+                arrowstyle="<->", color=col,
+                lw=1.8, mutation_scale=11,
+            ),
+        )
+        # Faint shading behind arrow to make span clearer
+        ax.axvspan(xp0, xp1, ymin=0.64, ymax=0.80,
+                   color=col, alpha=0.08)
+        # Label centred above arrow
+        ax.text(
+            (xp0 + xp1) / 2, y_arr_lbl, lbl,
+            ha="center", va="bottom",
+            fontsize=7.5, color=col, fontweight="bold",
+        )
+
+    # ── Milestone tick-marks and labels ────────────────────────────────────
+    markers = [
+        (0,        "Incl"),
+        (rt_start, "RT\nstart"),
+        (rt_end,   "RT\nend"),
+        (surg,     "Surgery"),
+        (t2_end,   "Done"),
+    ]
     for d, lbl in markers:
         xp = x(d)
-        ax.axvline(xp, ymin=0.15, ymax=0.85,
-                   color=_FG, lw=0.8, alpha=0.6)
-        ax.text(xp, 0.04, lbl, ha="center", va="bottom",
+        ax.axvline(xp, ymin=0.10, ymax=0.60,
+                   color=_FG, lw=0.8, alpha=0.55)
+        ax.text(xp, 0.01, lbl, ha="center", va="bottom",
                 fontsize=7.0, color=_FG, fontweight="bold")
 
-    legend = ax.legend(handles=handles, loc="upper right", fontsize=7,
-                       frameon=False, ncol=len(handles),
-                       bbox_to_anchor=(1, 1.15))
-    plt.setp(legend.get_texts(), color=_FG)
-
-    fig.tight_layout(pad=0.15)
+    fig.tight_layout(pad=0.10)
     return fig
 
 # ==============================================================================
