@@ -1254,7 +1254,7 @@ R_DEFAULTS = {
     # conditional never sees an undefined key on first Playground load)
     "prior_ep_tab":       "Tox1 (acute)",
     # Playground prior scenario selector
-    "prior_scenario":     "Neutral",
+    "prior_scenario":     "Custom",
 }
 
 TRUE_T1_KEYS  = [f"true_t1_L{i}"  for i in range(5)]
@@ -1347,7 +1347,7 @@ _PRIOR_SCENARIOS: dict = {
 # Single-source-of-truth state management
 # ==============================================================================
 
-_STATE_VERSION = "2026-03-22b"
+_STATE_VERSION = "2026-03-26a"
 
 def init_state() -> None:
     """Seed EVERY canonical config key exactly once per session.
@@ -1628,7 +1628,7 @@ def _apply_prior_scenario() -> None:
     Streamlit fires on_change BEFORE the next script run, so the pre-writes
     that follow will read the already-updated canonical values.
     """
-    scenario = str(st.session_state.get("wl_prior_scenario", "Neutral"))
+    scenario = str(st.session_state.get("wl_prior_scenario", "Custom"))
     st.session_state["prior_scenario"] = scenario
 
     if scenario == "Custom":
