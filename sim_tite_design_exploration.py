@@ -3494,6 +3494,18 @@ def run_parameter_sweep(param_name, param_values, base_ss,
                 intcpt=float(base_ss.get("logistic_intcpt", 3.0)),
             )
             label = f"L{int(pv)}"
+        elif param_name == "enforce_guardrail":
+            kw["enforce_guardrail"] = bool(pv)
+            label = "ON" if bool(pv) else "OFF"
+        elif param_name == "restrict_final_mtd":
+            kw["restrict_final_to_tried"] = bool(pv)
+            label = "ON" if bool(pv) else "OFF"
+        elif param_name == "burn_in":
+            kw["burn_in"] = bool(pv)
+            label = "ON" if bool(pv) else "OFF"
+        elif param_name == "ewoc_on":
+            kw["ewoc_on"] = bool(pv)
+            label = "ON" if bool(pv) else "OFF"
         else:
             raise ValueError(f"Unknown param_name: {param_name!r}")
 
@@ -3804,11 +3816,21 @@ def _de_pv_for_param(param_name, ss, speed=False):
             pv = pv[:3]
         return pv, "Prior MTD level — tox2 (subacute / surgery)"
 
+    _bool_param_labels = {
+        "enforce_guardrail":  "Guardrail (next dose ≤ highest tried + 1)",
+        "restrict_final_mtd": "Final MTD restricted to tried doses",
+        "burn_in":            "Burn-in until first tox1 DLT",
+        "ewoc_on":            "EWOC joint overdose control",
+    }
+    if param_name in _bool_param_labels:
+        return [False, True], _bool_param_labels[param_name]
+
     raise ValueError(f"Unknown param_name: {param_name!r}")
 
 
 _DE_ALL_PARAMS = [
     "sigma", "ewoc_alpha", "max_n", "cohort_size", "prior_nu_t1", "prior_nu_t2",
+    "enforce_guardrail", "restrict_final_mtd", "burn_in", "ewoc_on",
 ]
 
 
@@ -4454,6 +4476,31 @@ if view == "Design Exploration":
             "any data are observed.  L1 = lowest dose, L5 = highest dose.  "
             "All other settings stay fixed."
         ),
+        "enforce_guardrail": (
+            "Comparing **guardrail OFF vs ON**.  "
+            "When ON, the next recommended dose cannot skip untried levels "
+            "(next dose ≤ highest tried + 1).  "
+            "Turning OFF allows the CRM to escalate more aggressively.  "
+            "All other settings stay fixed."
+        ),
+        "restrict_final_mtd": (
+            "Comparing **final MTD restriction OFF vs ON**.  "
+            "When ON, the trial's final MTD recommendation is constrained to "
+            "dose levels that were actually tested on at least one patient.  "
+            "All other settings stay fixed."
+        ),
+        "burn_in": (
+            "Comparing **burn-in OFF vs ON**.  "
+            "When ON, the CRM holds at the starting dose until the first "
+            "tox1 DLT is observed before switching to model-guided escalation.  "
+            "All other settings stay fixed."
+        ),
+        "ewoc_on": (
+            "Comparing **EWOC joint overdose control OFF vs ON**.  "
+            "When ON, a dose is only eligible if its posterior probability of "
+            "exceeding both toxicity targets simultaneously is below α.  "
+            "All other settings stay fixed."
+        ),
     }
 
     _de_ctrl, _ = st.columns([2, 3])
@@ -4461,14 +4508,20 @@ if view == "Design Exploration":
         _de_param = st.selectbox(
             "Parameter to sweep",
             ["sigma", "ewoc_alpha", "max_n", "cohort_size",
-             "prior_nu_t1", "prior_nu_t2"],
+             "prior_nu_t1", "prior_nu_t2",
+             "enforce_guardrail", "restrict_final_mtd",
+             "burn_in", "ewoc_on"],
             format_func={
-                "sigma":        "Prior sigma (σ)",
-                "ewoc_alpha":   "EWOC α — overdose threshold",
-                "max_n":        "Maximum sample size (max N)",
-                "cohort_size":  "Cohort size — patients per dose decision",
-                "prior_nu_t1":  "Prior MTD level — tox1 (acute)",
-                "prior_nu_t2":  "Prior MTD level — tox2 (subacute / surgery)",
+                "sigma":              "Prior sigma (σ)",
+                "ewoc_alpha":         "EWOC α — overdose threshold",
+                "max_n":              "Maximum sample size (max N)",
+                "cohort_size":        "Cohort size — patients per dose decision",
+                "prior_nu_t1":        "Prior MTD level — tox1 (acute)",
+                "prior_nu_t2":        "Prior MTD level — tox2 (subacute / surgery)",
+                "enforce_guardrail":  "Safety: guardrail (≤ highest tried + 1)",
+                "restrict_final_mtd": "Safety: final MTD restricted to tried doses",
+                "burn_in":            "Behaviour: burn-in until first tox1 DLT",
+                "ewoc_on":            "Behaviour: EWOC joint overdose control",
             }.get,
             key="de_param_name",
             help=(
@@ -4614,6 +4667,19 @@ if view == "Design Exploration":
             )
             _de_label = "Prior MTD level — tox2 (subacute / surgery)"
             _de_ptype = "discrete"
+
+        elif _de_param in ("enforce_guardrail", "restrict_final_mtd",
+                           "burn_in", "ewoc_on"):
+            _bool_labels = {
+                "enforce_guardrail":  "Guardrail (next dose ≤ highest tried + 1)",
+                "restrict_final_mtd": "Final MTD restricted to tried doses",
+                "burn_in":            "Burn-in until first tox1 DLT",
+                "ewoc_on":            "EWOC joint overdose control",
+            }
+            _de_label = _bool_labels[_de_param]
+            _de_pv    = [False, True]
+            _de_ptype = "discrete"
+            st.caption("Sweeps both **OFF** and **ON** (2 sweep points).")
 
         else:  # cohort_size
             _de_mn_baseline = int(get_config_value("max_n_crm"))
@@ -4851,7 +4917,10 @@ if view == "Design Exploration":
             for _pn, (_ppv, _ppl) in _batch_plan.items():
                 if _ppv:
                     _ppv_str = ", ".join(
-                        "OFF" if v is None else f"{v:.4g}" for v in _ppv
+                        "OFF" if v is None
+                        else ("ON" if v is True else ("OFF" if v is False
+                              else f"{v:.4g}"))
+                        for v in _ppv
                     )
                     st.caption(f"**{_ppl}** ({len(_ppv)} pts): {_ppv_str}")
                 else:
