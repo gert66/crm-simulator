@@ -1254,7 +1254,7 @@ R_DEFAULTS = {
     # conditional never sees an undefined key on first Playground load)
     "prior_ep_tab":       "Tox1 (acute)",
     # Playground prior scenario selector
-    "prior_scenario":     "Neutral",
+    "prior_scenario":     "Custom",
 }
 
 TRUE_T1_KEYS  = [f"true_t1_L{i}"  for i in range(5)]
@@ -1347,7 +1347,7 @@ _PRIOR_SCENARIOS: dict = {
 # Single-source-of-truth state management
 # ==============================================================================
 
-_STATE_VERSION = "2026-03-22b"
+_STATE_VERSION = "2026-03-26a"
 
 def init_state() -> None:
     """Seed EVERY canonical config key exactly once per session.
@@ -1628,7 +1628,7 @@ def _apply_prior_scenario() -> None:
     Streamlit fires on_change BEFORE the next script run, so the pre-writes
     that follow will read the already-updated canonical values.
     """
-    scenario = str(st.session_state.get("wl_prior_scenario", "Neutral"))
+    scenario = str(st.session_state.get("wl_prior_scenario", "Custom"))
     st.session_state["prior_scenario"] = scenario
 
     if scenario == "Custom":
@@ -1655,16 +1655,16 @@ def _apply_prior_scenario() -> None:
 
 def _draw_timeline(incl_to_rt, rt_dur, rt_to_surg, tox2_win):
     """
-    Single-row horizontal timeline with labelled coloured bands.
-    Returns a matplotlib Figure.
+    Two-row timeline: solid phase bars on the bottom row, toxicity-window
+    arrows on the top row.  No overlapping fills.
 
-    Tox1 window is derived as rt_dur + rt_to_surg, so it ends exactly at
-    surgery — the same derivation used in the simulation.
+    Tox1 window: RT start → Surgery (ends exactly at surgery).
+    Tox2 window: Surgery  → Surgery + tox2_win.
     """
     _BG = _DARK_BG
     _FG = _DARK_FG
 
-    fig, ax = plt.subplots(figsize=(9.0, 0.9), dpi=120)
+    fig, ax = plt.subplots(figsize=(9.0, 1.6), dpi=120)
     fig.patch.set_facecolor(_BG)
     ax.set_xlim(0, 1)
     ax.set_ylim(0, 1)
@@ -1680,45 +1680,69 @@ def _draw_timeline(incl_to_rt, rt_dur, rt_to_surg, tox2_win):
 
     def x(d): return float(d) / total
 
-    y0, h_bar = 0.25, 0.50
-    # Each entry: (x_start, x_end, facecolor, alpha, legend_label)
-    # Saturated palette chosen to contrast well on the light background.
-    segments = [
-        (0,        rt_start, "#64b5f6", 0.85, "Incl → RT start"),   # medium blue
-        (rt_start, rt_end,   "#1565c0", 0.90, "RT"),                 # dark blue
-        (rt_start, t1_end,   "#ff8f00", 0.55, "Tox1 window"),        # amber overlay
-        (rt_end,   surg,     "#78909c", 0.80, "RT end → Surgery"),   # blue-grey
-        (surg,     t2_end,   "#c62828", 0.85, "Tox2 window"),        # dark red
+    # ── Bottom row: solid phase bars (no tox overlays) ─────────────────────
+    y0, h_bar = 0.14, 0.32
+    phases = [
+        (0,        rt_start, "#64b5f6", 0.90, "Incl → RT start"),
+        (rt_start, rt_end,   "#1976d2", 0.95, "RT"),
+        (rt_end,   surg,     "#78909c", 0.85, "RT end → Surgery"),
+        (surg,     t2_end,   "#4a4a6a", 0.70, "Post-surgery"),
     ]
-    plotted_labels = set()
-    handles = []
-    for x0, x1, col, alpha, lbl in segments:
+    for x0_, x1_, col, alpha, _lbl in phases:
         bar = mpatches.FancyBboxPatch(
-            (x(x0), y0), x(x1) - x(x0), h_bar,
+            (x(x0_), y0), x(x1_) - x(x0_), h_bar,
             boxstyle="square,pad=0",
             facecolor=col, alpha=alpha,
             edgecolor="#bdbdbd", linewidth=0.5,
         )
         ax.add_patch(bar)
-        if lbl not in plotted_labels:
-            handles.append(mpatches.Patch(facecolor=col, alpha=alpha, label=lbl))
-            plotted_labels.add(lbl)
 
-    markers = [(0, "Incl"), (rt_start, "RT\nstart"), (rt_end, "RT\nend"),
-               (surg, "Surgery"), (t2_end, "Done")]
+    # ── Top row: toxicity-window double-headed arrows ───────────────────────
+    # Tox1 spans RT start → Surgery, Tox2 spans Surgery → Done.
+    # They are adjacent (non-overlapping) so they share the same y row.
+    y_arr     = 0.74   # arrow shaft y
+    y_arr_lbl = 0.88   # label above shaft
+
+    tox_spans = [
+        (rt_start, t1_end, "#ffb300", "Tox1 window"),   # amber
+        (surg,     t2_end, "#ef5350", "Tox2 window"),   # red
+    ]
+    for xa0, xa1, col, lbl in tox_spans:
+        xp0, xp1 = x(xa0), x(xa1)
+        # Double-headed arrow
+        ax.annotate(
+            "", xy=(xp1, y_arr), xytext=(xp0, y_arr),
+            arrowprops=dict(
+                arrowstyle="<->", color=col,
+                lw=1.8, mutation_scale=11,
+            ),
+        )
+        # Faint shading behind arrow to make span clearer
+        ax.axvspan(xp0, xp1, ymin=0.64, ymax=0.80,
+                   color=col, alpha=0.08)
+        # Label centred above arrow
+        ax.text(
+            (xp0 + xp1) / 2, y_arr_lbl, lbl,
+            ha="center", va="bottom",
+            fontsize=7.5, color=col, fontweight="bold",
+        )
+
+    # ── Milestone tick-marks and labels ────────────────────────────────────
+    markers = [
+        (0,        "Incl"),
+        (rt_start, "RT\nstart"),
+        (rt_end,   "RT\nend"),
+        (surg,     "Surgery"),
+        (t2_end,   "Done"),
+    ]
     for d, lbl in markers:
         xp = x(d)
-        ax.axvline(xp, ymin=0.15, ymax=0.85,
-                   color=_FG, lw=0.8, alpha=0.6)
-        ax.text(xp, 0.04, lbl, ha="center", va="bottom",
+        ax.axvline(xp, ymin=0.10, ymax=0.60,
+                   color=_FG, lw=0.8, alpha=0.55)
+        ax.text(xp, 0.01, lbl, ha="center", va="bottom",
                 fontsize=7.0, color=_FG, fontweight="bold")
 
-    legend = ax.legend(handles=handles, loc="upper right", fontsize=7,
-                       frameon=False, ncol=len(handles),
-                       bbox_to_anchor=(1, 1.15))
-    plt.setp(legend.get_texts(), color=_FG)
-
-    fig.tight_layout(pad=0.15)
+    fig.tight_layout(pad=0.10)
     return fig
 
 # ==============================================================================
@@ -3470,6 +3494,15 @@ def run_parameter_sweep(param_name, param_values, base_ss,
                 intcpt=float(base_ss.get("logistic_intcpt", 3.0)),
             )
             label = f"L{int(pv)}"
+        elif param_name == "enforce_guardrail":
+            kw["enforce_guardrail"] = bool(pv)
+            label = "ON" if bool(pv) else "OFF"
+        elif param_name == "restrict_final_mtd":
+            kw["restrict_final_to_tried"] = bool(pv)
+            label = "ON" if bool(pv) else "OFF"
+        elif param_name == "burn_in":
+            kw["burn_in"] = bool(pv)
+            label = "ON" if bool(pv) else "OFF"
         else:
             raise ValueError(f"Unknown param_name: {param_name!r}")
 
@@ -3780,11 +3813,20 @@ def _de_pv_for_param(param_name, ss, speed=False):
             pv = pv[:3]
         return pv, "Prior MTD level — tox2 (subacute / surgery)"
 
+    _bool_param_labels = {
+        "enforce_guardrail":  "Guardrail (next dose ≤ highest tried + 1)",
+        "restrict_final_mtd": "Final MTD restricted to tried doses",
+        "burn_in":            "Burn-in until first tox1 DLT",
+    }
+    if param_name in _bool_param_labels:
+        return [False, True], _bool_param_labels[param_name]
+
     raise ValueError(f"Unknown param_name: {param_name!r}")
 
 
 _DE_ALL_PARAMS = [
     "sigma", "ewoc_alpha", "max_n", "cohort_size", "prior_nu_t1", "prior_nu_t2",
+    "enforce_guardrail", "restrict_final_mtd", "burn_in",
 ]
 
 
@@ -4430,6 +4472,25 @@ if view == "Design Exploration":
             "any data are observed.  L1 = lowest dose, L5 = highest dose.  "
             "All other settings stay fixed."
         ),
+        "enforce_guardrail": (
+            "Comparing **guardrail OFF vs ON**.  "
+            "When ON, the next recommended dose cannot skip untried levels "
+            "(next dose ≤ highest tried + 1).  "
+            "Turning OFF allows the CRM to escalate more aggressively.  "
+            "All other settings stay fixed."
+        ),
+        "restrict_final_mtd": (
+            "Comparing **final MTD restriction OFF vs ON**.  "
+            "When ON, the trial's final MTD recommendation is constrained to "
+            "dose levels that were actually tested on at least one patient.  "
+            "All other settings stay fixed."
+        ),
+        "burn_in": (
+            "Comparing **burn-in OFF vs ON**.  "
+            "When ON, the CRM holds at the starting dose until the first "
+            "tox1 DLT is observed before switching to model-guided escalation.  "
+            "All other settings stay fixed."
+        ),
     }
 
     _de_ctrl, _ = st.columns([2, 3])
@@ -4437,14 +4498,18 @@ if view == "Design Exploration":
         _de_param = st.selectbox(
             "Parameter to sweep",
             ["sigma", "ewoc_alpha", "max_n", "cohort_size",
-             "prior_nu_t1", "prior_nu_t2"],
+             "prior_nu_t1", "prior_nu_t2",
+             "enforce_guardrail", "restrict_final_mtd", "burn_in"],
             format_func={
-                "sigma":        "Prior sigma (σ)",
-                "ewoc_alpha":   "EWOC α — overdose threshold",
-                "max_n":        "Maximum sample size (max N)",
-                "cohort_size":  "Cohort size — patients per dose decision",
-                "prior_nu_t1":  "Prior MTD level — tox1 (acute)",
-                "prior_nu_t2":  "Prior MTD level — tox2 (subacute / surgery)",
+                "sigma":              "Prior sigma (σ)",
+                "ewoc_alpha":         "EWOC α — overdose threshold",
+                "max_n":              "Maximum sample size (max N)",
+                "cohort_size":        "Cohort size — patients per dose decision",
+                "prior_nu_t1":        "Prior MTD level — tox1 (acute)",
+                "prior_nu_t2":        "Prior MTD level — tox2 (subacute / surgery)",
+                "enforce_guardrail":  "Safety: guardrail (≤ highest tried + 1)",
+                "restrict_final_mtd": "Safety: final MTD restricted to tried doses",
+                "burn_in":            "Behaviour: burn-in until first tox1 DLT",
             }.get,
             key="de_param_name",
             help=(
@@ -4590,6 +4655,17 @@ if view == "Design Exploration":
             )
             _de_label = "Prior MTD level — tox2 (subacute / surgery)"
             _de_ptype = "discrete"
+
+        elif _de_param in ("enforce_guardrail", "restrict_final_mtd", "burn_in"):
+            _bool_labels = {
+                "enforce_guardrail":  "Guardrail (next dose ≤ highest tried + 1)",
+                "restrict_final_mtd": "Final MTD restricted to tried doses",
+                "burn_in":            "Burn-in until first tox1 DLT",
+            }
+            _de_label = _bool_labels[_de_param]
+            _de_pv    = [False, True]
+            _de_ptype = "discrete"
+            st.caption("Sweeps both **OFF** and **ON** (2 sweep points).")
 
         else:  # cohort_size
             _de_mn_baseline = int(get_config_value("max_n_crm"))
@@ -4827,7 +4903,10 @@ if view == "Design Exploration":
             for _pn, (_ppv, _ppl) in _batch_plan.items():
                 if _ppv:
                     _ppv_str = ", ".join(
-                        "OFF" if v is None else f"{v:.4g}" for v in _ppv
+                        "OFF" if v is None
+                        else ("ON" if v is True else ("OFF" if v is False
+                              else f"{v:.4g}"))
+                        for v in _ppv
                     )
                     st.caption(f"**{_ppl}** ({len(_ppv)} pts): {_ppv_str}")
                 else:
