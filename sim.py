@@ -1,5 +1,5 @@
 """
-sim_tite.py — TITE dual-endpoint dose-escalation simulator
+sim.py — TITE dual-endpoint dose-escalation simulator
 ===========================================================
 Tox1 = acute toxicity   (window starts at RT start; all treated patients)
 Tox2 = subacute toxicity (window starts at surgery; surgery patients only)
