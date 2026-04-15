@@ -3179,6 +3179,99 @@ if view == "Playground" and "_tite_results" in st.session_state:
             "Orange dashed line = EWOC α overdose-exclusion boundary."
         )
 
+        # ── Dose eligibility trajectory ────────────────────────────────────────
+        st.subheader("Dose eligibility trajectory across trial")
+
+        _n_steps_el  = len(_post_decs)
+        _final_mtd_v = _post_tr.get("final_mtd")
+        _elig_border = _ewoc_alpha_pt - 0.05    # lower bound of borderline zone
+
+        fig3, ax3 = plt.subplots(
+            figsize=(max(8.0, _n_steps_el * 0.90 + 1.5), 4.2), dpi=150)
+        _apply_dark_fig(fig3, ax3)
+        ax3.set_facecolor(_DARK_BG)   # darker canvas; cell colours carry meaning
+        ax3.spines["top"].set_visible(False)
+        ax3.spines["right"].set_visible(False)
+
+        for _si, _step_d in enumerate(_post_decs):
+            _od1_row = _step_d["od1"]
+            _od2_row = _step_d["od2"]
+            _curr    = _step_d["current_dose"]
+
+            for _lvl in range(_n_lvls):
+                _o1 = float(_od1_row[_lvl])
+                _o2 = float(_od2_row[_lvl])
+
+                # Priority: red > amber > green
+                if _o1 > _ewoc_alpha_pt or _o2 > _ewoc_alpha_pt:
+                    _fc = "#7b241c"   # dark red   — excluded
+                elif _o1 >= _elig_border or _o2 >= _elig_border:
+                    _fc = "#7e5109"   # dark amber — borderline
+                else:
+                    _fc = "#1a6835"   # dark green — allowed
+
+                ax3.add_patch(mpatches.Rectangle(
+                    (_si, _lvl), 1, 1,
+                    facecolor=_fc, edgecolor="#2c2c4c", linewidth=0.8, zorder=1))
+
+                # Tox1 OD (white, top half) and Tox2 OD (light grey, bottom half)
+                ax3.text(_si + 0.5, _lvl + 0.64, f"{_o1:.2f}",
+                         color="white",   fontsize=6.5, ha="center", va="center",
+                         fontweight="bold", zorder=3)
+                ax3.text(_si + 0.5, _lvl + 0.34, f"{_o2:.2f}",
+                         color="#cccccc", fontsize=6.5, ha="center", va="center",
+                         fontweight="bold", zorder=3)
+
+            # Silver outline: dose being treated this cohort
+            ax3.add_patch(mpatches.Rectangle(
+                (_si, _curr), 1, 1,
+                fill=False, edgecolor="#b8b8b8", linewidth=2.0, zorder=4))
+
+        # Gold outline: final MTD at the last decision step
+        if _final_mtd_v is not None:
+            ax3.add_patch(mpatches.Rectangle(
+                (_n_steps_el - 1, _final_mtd_v), 1, 1,
+                fill=False, edgecolor="#ffd700", linewidth=3.5, zorder=5))
+
+        ax3.set_xlim(0, _n_steps_el)
+        ax3.set_ylim(0, _n_lvls)
+        ax3.set_xticks([_s + 0.5 for _s in range(_n_steps_el)])
+        ax3.set_xticklabels([str(_sd["step"]) for _sd in _post_decs], fontsize=8)
+        ax3.set_yticks([_i + 0.5 for _i in range(_n_lvls)])
+        ax3.set_yticklabels([f"L{_i}" for _i in range(_n_lvls)], fontsize=9)
+        ax3.set_xlabel("Cohort decision step", fontsize=9)
+        ax3.set_ylabel("Dose level", fontsize=9)
+        ax3.set_title("Dose eligibility trajectory across trial", fontsize=10)
+        ax3.tick_params(length=0)
+
+        _elig_handles = [
+            mpatches.Patch(facecolor="#1a6835", edgecolor="#555", linewidth=0.8,
+                           label="Allowed — both OD < α"),
+            mpatches.Patch(facecolor="#7e5109", edgecolor="#555", linewidth=0.8,
+                           label=f"Borderline — either OD ∈ [{_elig_border:.2f}, α]"),
+            mpatches.Patch(facecolor="#7b241c", edgecolor="#555", linewidth=0.8,
+                           label=f"Excluded — either OD > α ({_ewoc_alpha_pt:.2f})"),
+            mpatches.Patch(fill=False, edgecolor="#b8b8b8", linewidth=2.0,
+                           label="Active dose this cohort"),
+            mpatches.Patch(fill=False, edgecolor="#ffd700", linewidth=3.0,
+                           label="Final MTD selected"),
+        ]
+        ax3.legend(handles=_elig_handles, fontsize=7, frameon=True, ncol=3,
+                   loc="upper left", bbox_to_anchor=(0.0, -0.20),
+                   labelcolor=_DARK_FG, facecolor=_DARK_AX, edgecolor=_DARK_GRD)
+
+        fig3.tight_layout(rect=[0, 0.17, 1, 1], pad=0.4)
+        st.image(fig_to_png_bytes(fig3), use_container_width=True)
+        st.caption(
+            "Each cell shows posterior overdose probabilities at that dose and step: "
+            "tox1 OD prob (white, top) and tox2 OD prob (grey, bottom). "
+            "Green = both below EWOC α (dose is admissible); "
+            f"amber = borderline (either OD ∈ [{_elig_border:.2f}, {_ewoc_alpha_pt:.2f}]); "
+            f"red = excluded (either OD > α = {_ewoc_alpha_pt:.2f}). "
+            "Silver border = dose being given to that cohort; "
+            "gold border = final MTD selected after full follow-up."
+        )
+
 # ==============================================================================
 # CRM Decision Trace — first simulated trial walkthrough
 # Shown only when "Explain first CRM trial" toggle is ON.
