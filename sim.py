@@ -2970,7 +2970,8 @@ if view == "Playground" and "_tite_results" in st.session_state:
         st.caption(
             "How the TITE-CRM posterior mean toxicity estimates evolved across "
             "cohort decisions in the first simulated trial. "
-            "Each line represents one dose level; the dashed green line marks the target."
+            "Each line represents one dose level with a shaded 90% credible band; "
+            "the dashed green line marks the target toxicity rate."
         )
 
         _pt_steps = [d["step"]  for d in _post_decs]
@@ -2978,9 +2979,48 @@ if view == "Playground" and "_tite_results" in st.session_state:
         _pt_pm2   = np.array([d["pm2"] for d in _post_decs])   # (n_steps, n_levels)
         _n_lvls   = _pt_pm1.shape[1]
 
+        # ── Re-compute 5th/95th weighted percentiles of the marginal posterior ──
+        _sigma_pt   = float(_post_tr.get("sigma",   _cfg("sigma")))
+        _skel_t1_pt = np.asarray(_post_tr.get("skel_t1"), dtype=float)
+        _skel_t2_pt = np.asarray(_post_tr.get("skel_t2"), dtype=float)
+        _gh_n_pt    = int(_post_tr.get("gh_n", _cfg("gh_n")))
+
+        _n_steps = len(_post_decs)
+        _lo1 = np.zeros((_n_steps, _n_lvls))
+        _hi1 = np.zeros((_n_steps, _n_lvls))
+        _lo2 = np.zeros((_n_steps, _n_lvls))
+        _hi2 = np.zeros((_n_steps, _n_lvls))
+
+        def _weighted_pct(vals, weights, pcts):
+            """Weighted percentile via sorted cumulative-weight interpolation."""
+            idx = np.argsort(vals)
+            sv  = vals[idx]
+            sw  = weights[idx]
+            cum = np.cumsum(sw)
+            cum = cum / cum[-1]
+            return np.interp(pcts, cum, sv)
+
+        for _si, _d in enumerate(_post_decs):
+            _n1a = np.asarray(_d["n1"], dtype=float)
+            _y1a = np.asarray(_d["y1"], dtype=float)
+            _n2a = np.asarray(_d["n2"], dtype=float)
+            _y2a = np.asarray(_d["y2"], dtype=float)
+
+            _pw1, _P1 = posterior_via_gh(
+                _sigma_pt, _skel_t1_pt, _n1a, _y1a, gh_n=_gh_n_pt)
+            _pw2, _P2 = posterior_via_gh(
+                _sigma_pt, _skel_t2_pt, _n2a, _y2a, gh_n=_gh_n_pt)
+
+            for _lvl in range(_n_lvls):
+                _lo1[_si, _lvl], _hi1[_si, _lvl] = _weighted_pct(
+                    _P1[:, _lvl], _pw1, [0.05, 0.95])
+                _lo2[_si, _lvl], _hi2[_si, _lvl] = _weighted_pct(
+                    _P2[:, _lvl], _pw2, [0.05, 0.95])
+
         _dose_colors = ["#4a9eff", "#ffaa44", "#ff6677", "#55dd99", "#cc88ff"]
         _tgt1 = _post_tr.get("target_t1", float(_cfg("target_t1")))
         _tgt2 = _post_tr.get("target_t2", float(_cfg("target_t2")))
+        _ewoc_alpha_pt = float(_post_tr.get("ewoc_alpha", float(_cfg("ewoc_alpha"))))
 
         fig, (ax_p1, ax_p2) = plt.subplots(1, 2, figsize=(11.0, 3.8), dpi=150)
         _apply_dark_fig(fig, ax_p1, ax_p2)
@@ -2988,25 +3028,33 @@ if view == "Playground" and "_tite_results" in st.session_state:
         for _lvl in range(_n_lvls):
             ax_p1.plot(_pt_steps, _pt_pm1[:, _lvl], "o-",
                        color=_dose_colors[_lvl], lw=1.8, ms=4, label=f"L{_lvl}")
+            ax_p1.fill_between(_pt_steps, _lo1[:, _lvl], _hi1[:, _lvl],
+                               alpha=0.15, color=_dose_colors[_lvl], linewidth=0)
             ax_p2.plot(_pt_steps, _pt_pm2[:, _lvl], "o-",
                        color=_dose_colors[_lvl], lw=1.8, ms=4, label=f"L{_lvl}")
+            ax_p2.fill_between(_pt_steps, _lo2[:, _lvl], _hi2[:, _lvl],
+                               alpha=0.15, color=_dose_colors[_lvl], linewidth=0)
 
         ax_p1.axhline(_tgt1, lw=1.5, ls="--", color="#80ff80",
                       alpha=0.8, label=f"Target ({_tgt1:.2f})")
+        ax_p1.axhline(_ewoc_alpha_pt, lw=1.5, ls="--", color="#ff9944",
+                      alpha=0.8, label=f"EWOC α={_ewoc_alpha_pt:.2f}")
         ax_p2.axhline(_tgt2, lw=1.5, ls="--", color="#80ff80",
                       alpha=0.8, label=f"Target ({_tgt2:.2f})")
+        ax_p2.axhline(_ewoc_alpha_pt, lw=1.5, ls="--", color="#ff9944",
+                      alpha=0.8, label=f"EWOC α={_ewoc_alpha_pt:.2f}")
 
         ax_p1.set_title("Tox1 posterior mean per dose level", fontsize=10)
         ax_p1.set_xlabel("Cohort decision step", fontsize=9)
         ax_p1.set_ylabel("Posterior mean P(tox1)", fontsize=9)
-        ax_p1.set_ylim(0, min(1.0, max(float(_pt_pm1.max()), _tgt1) * 1.25 + 0.05))
+        ax_p1.set_ylim(0, min(1.0, max(float(_hi1.max()), _tgt1, _ewoc_alpha_pt) * 1.18 + 0.05))
         ax_p1.legend(fontsize=8, frameon=False, labelcolor=_DARK_FG, ncol=2)
         compact_style(ax_p1)
 
         ax_p2.set_title("Tox2 posterior mean per dose level", fontsize=10)
         ax_p2.set_xlabel("Cohort decision step", fontsize=9)
         ax_p2.set_ylabel("Posterior mean P(tox2)", fontsize=9)
-        ax_p2.set_ylim(0, min(1.0, max(float(_pt_pm2.max()), _tgt2) * 1.25 + 0.05))
+        ax_p2.set_ylim(0, min(1.0, max(float(_hi2.max()), _tgt2, _ewoc_alpha_pt) * 1.18 + 0.05))
         ax_p2.legend(fontsize=8, frameon=False, labelcolor=_DARK_FG, ncol=2)
         compact_style(ax_p2)
 
@@ -3014,8 +3062,10 @@ if view == "Playground" and "_tite_results" in st.session_state:
         st.image(fig_to_png_bytes(fig), use_container_width=True)
         st.caption(
             "Posterior means are computed at each cohort decision using TITE fractional "
-            "weights. Each line tracks one dose level (L0 – L4) over the trial. "
-            "Dashed green line = target toxicity rate. Based on the first simulated trial only."
+            "weights. Shaded bands = 90% credible intervals (5th–95th weighted percentiles "
+            "of the marginal posterior over P(tox) at each dose). "
+            "Dashed green line = target toxicity rate; dashed orange line = EWOC α "
+            "overdose-exclusion threshold. Based on the first simulated trial only."
         )
 
 # ==============================================================================
