@@ -3087,18 +3087,24 @@ if view == "Playground" and "_tite_results" in st.session_state:
         _pw2f, _P2f = posterior_via_gh(
             _sigma_pt, _skel_t2_pt, _n2_end, _y2_end, gh_n=_gh_n_pt)
 
-        # Overdose probability per dose: sum of post_w where P[:,d] > ewoc_alpha
+        # Overdose probability per dose: P(P[:,d] > target_tox).
+        # This matches crm_posterior_summaries / crm_select_mtd exactly:
+        #   OD_prob = sum(post_w where P[:,d] > target_tox)
+        #   EWOC exclusion rule: OD_prob > ewoc_alpha.
+        # Using ewoc_alpha as the threshold here would give P(P[:,d] > 0.25)
+        # which is a different quantity and does NOT match the decision logic.
         _od1_final = np.array([
-            float(np.sum(_pw1f[_P1f[:, _d] > _ewoc_alpha_pt]))
+            float(np.sum(_pw1f[_P1f[:, _d] > _tgt1]))
             for _d in range(_n_lvls)
         ])
         _od2_final = np.array([
-            float(np.sum(_pw2f[_P2f[:, _d] > _ewoc_alpha_pt]))
+            float(np.sum(_pw2f[_P2f[:, _d] > _tgt2]))
             for _d in range(_n_lvls)
         ])
 
-        _xgrid  = np.linspace(0.0, 1.0, 400)
-        _od_mask = _xgrid >= _ewoc_alpha_pt
+        _xgrid    = np.linspace(0.0, 1.0, 400)
+        _od_mask1 = _xgrid >= _tgt1   # region that integrates to tox1 OD probability
+        _od_mask2 = _xgrid >= _tgt2   # region that integrates to tox2 OD probability
 
         def _weighted_kde(p_col, weights, xgrid):
             """Weighted Gaussian KDE; bandwidth via Scott's rule on weighted std."""
@@ -3114,7 +3120,9 @@ if view == "Playground" and "_tite_results" in st.session_state:
         fig2, (ax_d1, ax_d2) = plt.subplots(1, 2, figsize=(11.0, 4.2), dpi=150)
         _apply_dark_fig(fig2, ax_d1, ax_d2)
 
-        _x_ann = min(0.94, _ewoc_alpha_pt + 0.05)   # x anchor for OD labels
+        # x anchor for OD labels: just right of each panel's toxicity target
+        _x_ann1 = min(0.94, _tgt1 + 0.05)
+        _x_ann2 = min(0.94, _tgt2 + 0.05)
 
         for _lvl in range(_n_lvls):
             _kde1 = _weighted_kde(_P1f[:, _lvl], _pw1f, _xgrid)
@@ -3136,20 +3144,20 @@ if view == "Playground" and "_tite_results" in st.session_state:
                                color=_dose_colors[_lvl], alpha=0.38, linewidth=0)
             ax_d2.plot(_xgrid, _y2c, color=_dose_colors[_lvl], lw=1.3)
 
-            # Red overdose shading: portion of curve to the right of EWOC alpha
+            # Red shading: x >= target_tox — this region integrates to the OD probability
             ax_d1.fill_between(_xgrid, _lvl, _y1c,
-                               where=_od_mask, color=(1.0, 0.39, 0.39),
+                               where=_od_mask1, color=(1.0, 0.39, 0.39),
                                alpha=0.45, linewidth=0)
             ax_d2.fill_between(_xgrid, _lvl, _y2c,
-                               where=_od_mask, color=(1.0, 0.39, 0.39),
+                               where=_od_mask2, color=(1.0, 0.39, 0.39),
                                alpha=0.45, linewidth=0)
 
             # OD probability label inside the red region
-            ax_d1.text(_x_ann, _lvl + 0.08,
+            ax_d1.text(_x_ann1, _lvl + 0.08,
                        f"OD: {_od1_final[_lvl] * 100:.1f}%",
                        color="#e0e0e0", fontsize=7, ha="left", va="bottom",
                        fontweight="bold")
-            ax_d2.text(_x_ann, _lvl + 0.08,
+            ax_d2.text(_x_ann2, _lvl + 0.08,
                        f"OD: {_od2_final[_lvl] * 100:.1f}%",
                        color="#e0e0e0", fontsize=7, ha="left", va="bottom",
                        fontweight="bold")
@@ -3173,17 +3181,15 @@ if view == "Playground" and "_tite_results" in st.session_state:
         fig2.tight_layout(pad=0.5)
         st.image(fig_to_png_bytes(fig2), use_container_width=True)
         st.caption(
-            "Posteriors are computed using complete follow-up TITE weights "
-            "(all observation windows closed at study end), matching the weights "
-            "used by the final MTD selection call — so the OD probabilities here "
-            "align exactly with the dose eligibility heatmap. "
-            "Each filled curve shows the marginal posterior distribution of P(tox) "
-            "at that dose level, derived via a weighted Gaussian KDE over the "
-            "Gauss-Hermite quadrature grid, stacked vertically by dose level. "
-            "Red shading = posterior mass exceeding EWOC α (overdose region); "
-            "'OD: X.X%' = P(tox > EWOC α), the exclusion criterion. "
-            "Green dashed line = target toxicity rate; "
-            "orange dashed line = EWOC α boundary."
+            "Posteriors are computed using complete TITE weights at study end "
+            "(all follow-up windows closed), matching the inputs to crm_select_mtd. "
+            "Red shading marks the region x ≥ target toxicity rate; its area equals "
+            "the OD probability P(tox > target) — the same quantity the EWOC filter "
+            "compares against α to admit or exclude each dose. "
+            "'OD: X.X%' labels match the decision walkthrough table exactly. "
+            "Green dashed line = target toxicity rate (shading boundary). "
+            "Orange dashed line = EWOC α — OD probabilities above this value "
+            "cause dose exclusion."
         )
 
         # ── Dose eligibility trajectory ────────────────────────────────────────
