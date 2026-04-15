@@ -3165,8 +3165,6 @@ if view == "Playground" and "_tite_results" in st.session_state:
         for _ax, _tgt in ((ax_d1, _tgt1), (ax_d2, _tgt2)):
             _ax.axvline(_tgt, lw=1.5, ls="--", color="#80ff80",
                         alpha=0.85, label=f"Target ({_tgt:.2f})")
-            _ax.axvline(_ewoc_alpha_pt, lw=1.5, ls="--", color="#ff9944",
-                        alpha=0.85, label=f"EWOC α={_ewoc_alpha_pt:.2f}")
             _ax.set_xlim(0.0, 1.0)
             _ax.set_ylim(-0.2, _n_lvls - 0.1)
             _ax.set_yticks(range(_n_lvls))
