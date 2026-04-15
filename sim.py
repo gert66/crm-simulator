@@ -3068,19 +3068,24 @@ if view == "Playground" and "_tite_results" in st.session_state:
             "overdose-exclusion threshold. Based on the first simulated trial only."
         )
 
-        # ── Final-step posterior distribution (ridge plot) ─────────────────────
-        st.subheader("Final-step posterior distributions — first CRM trial")
+        # ── Study-end posterior distribution (ridge plot) ──────────────────────
+        st.subheader("Study-end posterior distributions — first CRM trial")
 
-        _last_d  = _post_decs[-1]
-        _n1_last = np.asarray(_last_d["n1"], dtype=float)
-        _y1_last = np.asarray(_last_d["y1"], dtype=float)
-        _n2_last = np.asarray(_last_d["n2"], dtype=float)
-        _y2_last = np.asarray(_last_d["y2"], dtype=float)
+        # Recompute TITE weights at study end (all follow-up windows closed).
+        # This matches the weights used by crm_select_mtd for the final MTD
+        # decision, so OD probabilities here agree with the eligibility heatmap.
+        _n1_end, _y1_end, _n2_end, _y2_end = tite_weights(
+            _post_tr["patients"],
+            float(_post_tr["study_days"]),
+            int(_post_tr["tox1_win"]),
+            int(_post_tr["tox2_win"]),
+            _n_lvls,
+        )
 
         _pw1f, _P1f = posterior_via_gh(
-            _sigma_pt, _skel_t1_pt, _n1_last, _y1_last, gh_n=_gh_n_pt)
+            _sigma_pt, _skel_t1_pt, _n1_end, _y1_end, gh_n=_gh_n_pt)
         _pw2f, _P2f = posterior_via_gh(
-            _sigma_pt, _skel_t2_pt, _n2_last, _y2_last, gh_n=_gh_n_pt)
+            _sigma_pt, _skel_t2_pt, _n2_end, _y2_end, gh_n=_gh_n_pt)
 
         # Overdose probability per dose: sum of post_w where P[:,d] > ewoc_alpha
         _od1_final = np.array([
@@ -3163,20 +3168,22 @@ if view == "Playground" and "_tite_results" in st.session_state:
             _ax.legend(fontsize=8, frameon=False, labelcolor=_DARK_FG)
             compact_style(_ax)
 
-        ax_d1.set_title("Tox1 — final posterior per dose level", fontsize=10)
-        ax_d2.set_title("Tox2 — final posterior per dose level", fontsize=10)
+        ax_d1.set_title("Tox1 — study-end posterior per dose level", fontsize=10)
+        ax_d2.set_title("Tox2 — study-end posterior per dose level", fontsize=10)
         fig2.tight_layout(pad=0.5)
         st.image(fig_to_png_bytes(fig2), use_container_width=True)
         st.caption(
-            "Each filled curve shows the posterior distribution of P(tox) at one dose "
-            "level after the last cohort decision of the first simulated trial. "
-            "Distributions are derived from Gauss-Hermite quadrature weights via a "
-            "weighted Gaussian KDE, stacked vertically by dose level. "
-            "Red shading = posterior mass exceeding the EWOC α threshold (overdose region); "
-            "the 'OD: X.X%' label is the exact posterior probability P(tox > EWOC α), "
-            "which is the quantity used to exclude unsafe doses from selection. "
-            "Green dashed line = target toxicity rate. "
-            "Orange dashed line = EWOC α overdose-exclusion boundary."
+            "Posteriors are computed using complete follow-up TITE weights "
+            "(all observation windows closed at study end), matching the weights "
+            "used by the final MTD selection call — so the OD probabilities here "
+            "align exactly with the dose eligibility heatmap. "
+            "Each filled curve shows the marginal posterior distribution of P(tox) "
+            "at that dose level, derived via a weighted Gaussian KDE over the "
+            "Gauss-Hermite quadrature grid, stacked vertically by dose level. "
+            "Red shading = posterior mass exceeding EWOC α (overdose region); "
+            "'OD: X.X%' = P(tox > EWOC α), the exclusion criterion. "
+            "Green dashed line = target toxicity rate; "
+            "orange dashed line = EWOC α boundary."
         )
 
         # ── Dose eligibility trajectory ────────────────────────────────────────
