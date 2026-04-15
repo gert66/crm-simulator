@@ -3068,6 +3068,84 @@ if view == "Playground" and "_tite_results" in st.session_state:
             "overdose-exclusion threshold. Based on the first simulated trial only."
         )
 
+        # ── Final-step posterior distribution (ridge plot) ─────────────────────
+        st.subheader("Final-step posterior distributions — first CRM trial")
+
+        _last_d  = _post_decs[-1]
+        _n1_last = np.asarray(_last_d["n1"], dtype=float)
+        _y1_last = np.asarray(_last_d["y1"], dtype=float)
+        _n2_last = np.asarray(_last_d["n2"], dtype=float)
+        _y2_last = np.asarray(_last_d["y2"], dtype=float)
+
+        _pw1f, _P1f = posterior_via_gh(
+            _sigma_pt, _skel_t1_pt, _n1_last, _y1_last, gh_n=_gh_n_pt)
+        _pw2f, _P2f = posterior_via_gh(
+            _sigma_pt, _skel_t2_pt, _n2_last, _y2_last, gh_n=_gh_n_pt)
+
+        _xgrid = np.linspace(0.0, 1.0, 400)
+
+        def _weighted_kde(p_col, weights, xgrid):
+            """Weighted Gaussian KDE; bandwidth via Scott's rule on weighted std."""
+            mu    = np.sum(weights * p_col)
+            var   = np.sum(weights * (p_col - mu) ** 2)
+            std   = np.sqrt(var) if var > 1e-12 else 0.01
+            eff_n = 1.0 / max(np.sum(weights ** 2), 1e-30)
+            bw    = max(1.06 * std * eff_n ** (-0.2), 0.005)
+            diff  = xgrid[:, None] - p_col[None, :]       # (nx, gh_n)
+            kde   = (weights[None, :] * np.exp(-0.5 * (diff / bw) ** 2)).sum(axis=1)
+            return kde
+
+        fig2, (ax_d1, ax_d2) = plt.subplots(1, 2, figsize=(11.0, 4.2), dpi=150)
+        _apply_dark_fig(fig2, ax_d1, ax_d2)
+
+        for _lvl in range(_n_lvls):
+            _kde1 = _weighted_kde(_P1f[:, _lvl], _pw1f, _xgrid)
+            _kde2 = _weighted_kde(_P2f[:, _lvl], _pw2f, _xgrid)
+
+            # Normalise each KDE so its peak reaches 0.85 within its slot
+            _k1 = 0.85 / max(float(_kde1.max()), 1e-12)
+            _k2 = 0.85 / max(float(_kde2.max()), 1e-12)
+
+            _y1c = _lvl + _kde1 * _k1
+            _y2c = _lvl + _kde2 * _k2
+
+            ax_d1.fill_between(_xgrid, _lvl, _y1c,
+                               color=_dose_colors[_lvl], alpha=0.38, linewidth=0)
+            ax_d1.plot(_xgrid, _y1c, color=_dose_colors[_lvl], lw=1.3)
+
+            ax_d2.fill_between(_xgrid, _lvl, _y2c,
+                               color=_dose_colors[_lvl], alpha=0.38, linewidth=0)
+            ax_d2.plot(_xgrid, _y2c, color=_dose_colors[_lvl], lw=1.3)
+
+        for _ax, _tgt in ((ax_d1, _tgt1), (ax_d2, _tgt2)):
+            _ax.axvline(_tgt, lw=1.5, ls="--", color="#80ff80",
+                        alpha=0.85, label=f"Target ({_tgt:.2f})")
+            _ax.axvline(_ewoc_alpha_pt, lw=1.5, ls="--", color="#ff9944",
+                        alpha=0.85, label=f"EWOC α={_ewoc_alpha_pt:.2f}")
+            _ax.set_xlim(0.0, 1.0)
+            _ax.set_ylim(-0.2, _n_lvls - 0.1)
+            _ax.set_yticks(range(_n_lvls))
+            _ax.set_yticklabels([f"L{i}" for i in range(_n_lvls)], fontsize=8)
+            _ax.set_xlabel("P(tox)", fontsize=9)
+            _ax.set_ylabel("Dose level", fontsize=9)
+            _ax.legend(fontsize=8, frameon=False, labelcolor=_DARK_FG)
+            compact_style(_ax)
+
+        ax_d1.set_title("Tox1 — final posterior per dose level", fontsize=10)
+        ax_d2.set_title("Tox2 — final posterior per dose level", fontsize=10)
+        fig2.tight_layout(pad=0.5)
+        st.image(fig_to_png_bytes(fig2), use_container_width=True)
+        st.caption(
+            "Each filled curve shows the posterior distribution of P(tox) at one dose "
+            "level after the last cohort decision of the first simulated trial. "
+            "Distributions are derived from Gauss-Hermite quadrature weights via a "
+            "weighted Gaussian KDE, stacked vertically by dose level. "
+            "Green dashed line = target toxicity rate. "
+            "Orange dashed line = EWOC α overdose-exclusion boundary: doses whose "
+            "posterior mass extends substantially beyond this line have high overdose "
+            "probability and are excluded from dose selection."
+        )
+
 # ==============================================================================
 # CRM Decision Trace — first simulated trial walkthrough
 # Shown only when "Explain first CRM trial" toggle is ON.
