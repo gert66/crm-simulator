@@ -3082,7 +3082,18 @@ if view == "Playground" and "_tite_results" in st.session_state:
         _pw2f, _P2f = posterior_via_gh(
             _sigma_pt, _skel_t2_pt, _n2_last, _y2_last, gh_n=_gh_n_pt)
 
-        _xgrid = np.linspace(0.0, 1.0, 400)
+        # Overdose probability per dose: sum of post_w where P[:,d] > ewoc_alpha
+        _od1_final = np.array([
+            float(np.sum(_pw1f[_P1f[:, _d] > _ewoc_alpha_pt]))
+            for _d in range(_n_lvls)
+        ])
+        _od2_final = np.array([
+            float(np.sum(_pw2f[_P2f[:, _d] > _ewoc_alpha_pt]))
+            for _d in range(_n_lvls)
+        ])
+
+        _xgrid  = np.linspace(0.0, 1.0, 400)
+        _od_mask = _xgrid >= _ewoc_alpha_pt
 
         def _weighted_kde(p_col, weights, xgrid):
             """Weighted Gaussian KDE; bandwidth via Scott's rule on weighted std."""
@@ -3098,6 +3109,8 @@ if view == "Playground" and "_tite_results" in st.session_state:
         fig2, (ax_d1, ax_d2) = plt.subplots(1, 2, figsize=(11.0, 4.2), dpi=150)
         _apply_dark_fig(fig2, ax_d1, ax_d2)
 
+        _x_ann = min(0.94, _ewoc_alpha_pt + 0.05)   # x anchor for OD labels
+
         for _lvl in range(_n_lvls):
             _kde1 = _weighted_kde(_P1f[:, _lvl], _pw1f, _xgrid)
             _kde2 = _weighted_kde(_P2f[:, _lvl], _pw2f, _xgrid)
@@ -3109,6 +3122,7 @@ if view == "Playground" and "_tite_results" in st.session_state:
             _y1c = _lvl + _kde1 * _k1
             _y2c = _lvl + _kde2 * _k2
 
+            # Main dose-coloured fill and outline
             ax_d1.fill_between(_xgrid, _lvl, _y1c,
                                color=_dose_colors[_lvl], alpha=0.38, linewidth=0)
             ax_d1.plot(_xgrid, _y1c, color=_dose_colors[_lvl], lw=1.3)
@@ -3116,6 +3130,24 @@ if view == "Playground" and "_tite_results" in st.session_state:
             ax_d2.fill_between(_xgrid, _lvl, _y2c,
                                color=_dose_colors[_lvl], alpha=0.38, linewidth=0)
             ax_d2.plot(_xgrid, _y2c, color=_dose_colors[_lvl], lw=1.3)
+
+            # Red overdose shading: portion of curve to the right of EWOC alpha
+            ax_d1.fill_between(_xgrid, _lvl, _y1c,
+                               where=_od_mask, color=(1.0, 0.39, 0.39),
+                               alpha=0.45, linewidth=0)
+            ax_d2.fill_between(_xgrid, _lvl, _y2c,
+                               where=_od_mask, color=(1.0, 0.39, 0.39),
+                               alpha=0.45, linewidth=0)
+
+            # OD probability label inside the red region
+            ax_d1.text(_x_ann, _lvl + 0.08,
+                       f"OD: {_od1_final[_lvl] * 100:.1f}%",
+                       color="#e0e0e0", fontsize=7, ha="left", va="bottom",
+                       fontweight="bold")
+            ax_d2.text(_x_ann, _lvl + 0.08,
+                       f"OD: {_od2_final[_lvl] * 100:.1f}%",
+                       color="#e0e0e0", fontsize=7, ha="left", va="bottom",
+                       fontweight="bold")
 
         for _ax, _tgt in ((ax_d1, _tgt1), (ax_d2, _tgt2)):
             _ax.axvline(_tgt, lw=1.5, ls="--", color="#80ff80",
@@ -3140,10 +3172,11 @@ if view == "Playground" and "_tite_results" in st.session_state:
             "level after the last cohort decision of the first simulated trial. "
             "Distributions are derived from Gauss-Hermite quadrature weights via a "
             "weighted Gaussian KDE, stacked vertically by dose level. "
+            "Red shading = posterior mass exceeding the EWOC α threshold (overdose region); "
+            "the 'OD: X.X%' label is the exact posterior probability P(tox > EWOC α), "
+            "which is the quantity used to exclude unsafe doses from selection. "
             "Green dashed line = target toxicity rate. "
-            "Orange dashed line = EWOC α overdose-exclusion boundary: doses whose "
-            "posterior mass extends substantially beyond this line have high overdose "
-            "probability and are excluded from dose selection."
+            "Orange dashed line = EWOC α overdose-exclusion boundary."
         )
 
 # ==============================================================================
