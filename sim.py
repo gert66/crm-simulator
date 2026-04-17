@@ -960,6 +960,24 @@ st.markdown("""
     background-color: #d93a3a !important;
     border-color:     #d93a3a !important;
   }
+
+  /* ── Sidebar collapse/expand chevron arrows ── */
+  [data-testid="collapsedControl"] {
+    color: #c0d0e0 !important;
+  }
+  [data-testid="collapsedControl"] svg,
+  [data-testid="collapsedControl"] svg * {
+    color: #c0d0e0 !important;
+    fill:  #c0d0e0 !important;
+  }
+  [data-testid="collapsedControl"]:hover {
+    color: #ffffff !important;
+  }
+  [data-testid="collapsedControl"]:hover svg,
+  [data-testid="collapsedControl"]:hover svg * {
+    color: #ffffff !important;
+    fill:  #ffffff !important;
+  }
 </style>
 """, unsafe_allow_html=True)
 
