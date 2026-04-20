@@ -1651,3 +1651,370 @@ def _plot_prior_mtd_context(true_tox, pv_list, tox_label, title,
     ax.legend(**legend_kw)
     fig.tight_layout(pad=1.2)
     return fig
+
+
+# ==============================================================================
+# Chart generators — return base64 data-URI strings for embedding in HTML
+# ==============================================================================
+
+def generate_preview_chart(true_t1, skel_t1, target_t1,
+                           true_t2, skel_t2, target_t2):
+    """Dose-risk preview: two stacked bar charts (tox1 / tox2) with skeleton overlay."""
+    true_t1 = list(true_t1); skel_t1 = list(skel_t1)
+    true_t2 = list(true_t2); skel_t2 = list(skel_t2)
+    fig, (ax1, ax2) = plt.subplots(2, 1,
+                                   figsize=(PREVIEW_W_IN, PREVIEW_H_IN),
+                                   dpi=PREVIEW_DPI)
+    _apply_dark_fig(fig, ax1, ax2)
+    x = np.arange(5); bw = 0.38
+
+    ax1.bar(x - bw/2, true_t1, bw, color="#4a9eff", label="True tox1")
+    ax1.bar(x + bw/2, skel_t1, bw, color="#4a9eff", alpha=0.5,
+            label="Skel tox1", hatch="//")
+    ax1.axhline(target_t1, lw=1.2, alpha=0.85, color="#80c0ff", ls="--")
+    ax1.set_ylabel("P(tox1)", fontsize=10, color=_DARK_FG)
+    ax1.set_xticks(x)
+    ax1.set_xticklabels([f"L{i}" for i in range(5)], fontsize=10)
+    _y1 = max(max(true_t1), max(skel_t1), target_t1)
+    ax1.set_ylim(0, min(1.0, _y1 * 1.3 + 0.02))
+    ax1.legend(fontsize=10, frameon=True, loc="upper left",
+               labelcolor=_DARK_FG, facecolor=_DARK_AX, edgecolor=_DARK_GRD)
+    compact_style(ax1)
+
+    ax2.bar(x - bw/2, true_t2, bw, color="#ffaa44", label="True tox2")
+    ax2.bar(x + bw/2, skel_t2, bw, color="#ffaa44", alpha=0.5,
+            label="Skel tox2", hatch="//")
+    ax2.axhline(target_t2, lw=1.2, alpha=0.85, color="#ffd080", ls="--")
+    ax2.set_ylabel("P(tox2)", fontsize=10, color=_DARK_FG)
+    ax2.set_xticks(x)
+    ax2.set_xticklabels([f"L{i}" for i in range(5)], fontsize=10)
+    _y2 = max(max(true_t2), max(skel_t2), target_t2)
+    ax2.set_ylim(0, min(1.0, _y2 * 1.25 + 0.02))
+    ax2.legend(fontsize=10, frameon=True, loc="upper left",
+               labelcolor=_DARK_FG, facecolor=_DARK_AX, edgecolor=_DARK_GRD)
+    compact_style(ax2)
+
+    fig.tight_layout(pad=0.5)
+    b64 = fig_to_b64(fig)
+    plt.close(fig)
+    return b64
+
+
+def generate_mtd_chart(p63, pcrm, true_safe):
+    """Bar chart: P(select dose as MTD) for 6+3 vs CRM side by side."""
+    p63  = np.asarray(p63,  dtype=float)
+    pcrm = np.asarray(pcrm, dtype=float)
+    fig, ax = plt.subplots(figsize=(RESULT_W_IN, RESULT_H_IN), dpi=RESULT_DPI)
+    _apply_dark_fig(fig, ax)
+    xx = np.arange(5); w = 0.38
+    ax.bar(xx - w/2, p63,  w, color="#4a9eff", label="TITE 6+3")
+    ax.bar(xx + w/2, pcrm, w, color="#ffaa44", label="TITE-CRM")
+    ax.set_title("P(select dose as MTD)", fontsize=10)
+    ax.set_xticks(xx)
+    ax.set_xticklabels([f"L{i}" for i in range(5)], fontsize=9)
+    ax.set_ylabel("Probability", fontsize=9)
+    ax.set_ylim(0, max(p63.max(), pcrm.max()) * 1.15 + 1e-6)
+    if true_safe is not None:
+        ax.axvline(true_safe, lw=1, alpha=0.6, color="#80ff80",
+                   label=f"True safe=L{true_safe}")
+    compact_style(ax)
+    ax.legend(fontsize=8, frameon=False, labelcolor=_DARK_FG)
+    fig.tight_layout(pad=0.4)
+    b64 = fig_to_b64(fig)
+    plt.close(fig)
+    return b64
+
+
+def generate_patients_chart(res):
+    """Two-panel bar chart: avg patients treated and avg surgery patients per dose."""
+    fig, (ax_n, ax_s) = plt.subplots(2, 1,
+                                      figsize=(RESULT_W_IN, RESULT_H_IN),
+                                      dpi=RESULT_DPI)
+    _apply_dark_fig(fig, ax_n, ax_s)
+    xx = np.arange(5); w = 0.38
+    ax_n.bar(xx - w/2, res["avg_n63"],   w, color="#4a9eff", label="6+3")
+    ax_n.bar(xx + w/2, res["avg_ncrm"],  w, color="#ffaa44", label="CRM")
+    ax_n.set_title("Avg patients treated", fontsize=9)
+    ax_n.set_xticks(xx)
+    ax_n.set_xticklabels([f"L{i}" for i in range(5)], fontsize=8)
+    ax_n.set_ylabel("Patients", fontsize=8)
+    compact_style(ax_n)
+    ax_n.legend(fontsize=7, frameon=False, labelcolor=_DARK_FG)
+
+    ax_s.bar(xx - w/2, res["avg_nsurg63"],  w, color="#4a9eff", label="6+3")
+    ax_s.bar(xx + w/2, res["avg_nsurgcrm"], w, color="#ffaa44", label="CRM")
+    ax_s.set_title("Avg surgery patients", fontsize=9)
+    ax_s.set_xticks(xx)
+    ax_s.set_xticklabels([f"L{i}" for i in range(5)], fontsize=8)
+    ax_s.set_ylabel("Patients", fontsize=8)
+    compact_style(ax_s)
+    ax_s.legend(fontsize=7, frameon=False, labelcolor=_DARK_FG)
+
+    fig.tight_layout(pad=0.4)
+    b64 = fig_to_b64(fig)
+    plt.close(fig)
+    return b64
+
+
+def generate_posterior_tracking_chart(crm_trace):
+    """Two-panel line chart: posterior mean tox1/tox2 per dose level over cohort steps."""
+    decs      = crm_trace.get("decisions", [])
+    if not decs:
+        return None
+
+    pt_steps  = [d["step"]  for d in decs]
+    pt_pm1    = np.array([d["pm1"] for d in decs])
+    pt_pm2    = np.array([d["pm2"] for d in decs])
+    n_lvls    = pt_pm1.shape[1]
+
+    sigma_pt   = float(crm_trace["sigma"])
+    skel_t1_pt = np.asarray(crm_trace["skel_t1"], dtype=float)
+    skel_t2_pt = np.asarray(crm_trace["skel_t2"], dtype=float)
+    gh_n_pt    = int(crm_trace["gh_n"])
+    tgt1       = float(crm_trace["target_t1"])
+    tgt2       = float(crm_trace["target_t2"])
+    ewoc_alpha = float(crm_trace["ewoc_alpha"])
+
+    n_steps = len(decs)
+    lo1 = np.zeros((n_steps, n_lvls)); hi1 = np.zeros((n_steps, n_lvls))
+    lo2 = np.zeros((n_steps, n_lvls)); hi2 = np.zeros((n_steps, n_lvls))
+
+    def _weighted_pct(vals, weights, pcts):
+        idx = np.argsort(vals)
+        sv  = vals[idx]; sw = weights[idx]
+        cum = np.cumsum(sw); cum = cum / cum[-1]
+        return np.interp(pcts, cum, sv)
+
+    for si, d in enumerate(decs):
+        n1a = np.asarray(d["n1"], dtype=float)
+        y1a = np.asarray(d["y1"], dtype=float)
+        n2a = np.asarray(d["n2"], dtype=float)
+        y2a = np.asarray(d["y2"], dtype=float)
+        pw1, P1 = posterior_via_gh(sigma_pt, skel_t1_pt, n1a, y1a, gh_n=gh_n_pt)
+        pw2, P2 = posterior_via_gh(sigma_pt, skel_t2_pt, n2a, y2a, gh_n=gh_n_pt)
+        for lvl in range(n_lvls):
+            lo1[si, lvl], hi1[si, lvl] = _weighted_pct(P1[:, lvl], pw1, [0.05, 0.95])
+            lo2[si, lvl], hi2[si, lvl] = _weighted_pct(P2[:, lvl], pw2, [0.05, 0.95])
+
+    dose_colors = ["#4a9eff", "#ffaa44", "#ff6677", "#55dd99", "#cc88ff"]
+
+    fig, (ax_p1, ax_p2) = plt.subplots(1, 2, figsize=(11.0, 3.8), dpi=150)
+    _apply_dark_fig(fig, ax_p1, ax_p2)
+
+    for lvl in range(n_lvls):
+        ax_p1.plot(pt_steps, pt_pm1[:, lvl], "o-",
+                   color=dose_colors[lvl], lw=1.8, ms=4, label=f"L{lvl}")
+        ax_p1.fill_between(pt_steps, lo1[:, lvl], hi1[:, lvl],
+                           alpha=0.15, color=dose_colors[lvl], linewidth=0)
+        ax_p2.plot(pt_steps, pt_pm2[:, lvl], "o-",
+                   color=dose_colors[lvl], lw=1.8, ms=4, label=f"L{lvl}")
+        ax_p2.fill_between(pt_steps, lo2[:, lvl], hi2[:, lvl],
+                           alpha=0.15, color=dose_colors[lvl], linewidth=0)
+
+    ax_p1.axhline(tgt1, lw=1.5, ls="--", color="#80ff80",
+                  alpha=0.8, label=f"Target ({tgt1:.2f})")
+    ax_p1.axhline(ewoc_alpha, lw=1.5, ls="--", color="#ff9944",
+                  alpha=0.8, label=f"EWOC α={ewoc_alpha:.2f}")
+    ax_p2.axhline(tgt2, lw=1.5, ls="--", color="#80ff80",
+                  alpha=0.8, label=f"Target ({tgt2:.2f})")
+    ax_p2.axhline(ewoc_alpha, lw=1.5, ls="--", color="#ff9944",
+                  alpha=0.8, label=f"EWOC α={ewoc_alpha:.2f}")
+
+    ax_p1.set_title("Tox1 posterior mean per dose level", fontsize=10)
+    ax_p1.set_xlabel("Cohort decision step", fontsize=9)
+    ax_p1.set_ylabel("Posterior mean P(tox1)", fontsize=9)
+    ax_p1.set_ylim(0, min(1.0, max(float(hi1.max()), tgt1, ewoc_alpha) * 1.18 + 0.05))
+    ax_p1.legend(fontsize=8, frameon=False, labelcolor=_DARK_FG, ncol=2)
+    compact_style(ax_p1)
+
+    ax_p2.set_title("Tox2 posterior mean per dose level", fontsize=10)
+    ax_p2.set_xlabel("Cohort decision step", fontsize=9)
+    ax_p2.set_ylabel("Posterior mean P(tox2)", fontsize=9)
+    ax_p2.set_ylim(0, min(1.0, max(float(hi2.max()), tgt2, ewoc_alpha) * 1.18 + 0.05))
+    ax_p2.legend(fontsize=8, frameon=False, labelcolor=_DARK_FG, ncol=2)
+    compact_style(ax_p2)
+
+    fig.tight_layout(pad=0.5)
+    b64 = fig_to_b64(fig)
+    plt.close(fig)
+    return b64
+
+
+def generate_study_end_posteriors_chart(crm_trace):
+    """Ridge plot: study-end posterior distributions for tox1 and tox2 per dose."""
+    decs = crm_trace.get("decisions", [])
+    if not decs:
+        return None
+
+    sigma_pt   = float(crm_trace["sigma"])
+    skel_t1_pt = np.asarray(crm_trace["skel_t1"], dtype=float)
+    skel_t2_pt = np.asarray(crm_trace["skel_t2"], dtype=float)
+    gh_n_pt    = int(crm_trace["gh_n"])
+    tgt1       = float(crm_trace["target_t1"])
+    tgt2       = float(crm_trace["target_t2"])
+    ewoc_alpha = float(crm_trace["ewoc_alpha"])
+    n_lvls     = len(skel_t1_pt)
+
+    n1e, y1e, n2e, y2e = tite_weights(
+        crm_trace["patients"],
+        float(crm_trace["study_days"]),
+        int(crm_trace["tox1_win"]),
+        int(crm_trace["tox2_win"]),
+        n_lvls,
+    )
+    pw1f, P1f = posterior_via_gh(sigma_pt, skel_t1_pt, n1e, y1e, gh_n=gh_n_pt)
+    pw2f, P2f = posterior_via_gh(sigma_pt, skel_t2_pt, n2e, y2e, gh_n=gh_n_pt)
+
+    od1_final = np.array([float(np.sum(pw1f[P1f[:, d] > tgt1])) for d in range(n_lvls)])
+    od2_final = np.array([float(np.sum(pw2f[P2f[:, d] > tgt2])) for d in range(n_lvls)])
+
+    xgrid  = np.linspace(0.0, 1.0, 400)
+    od_mask1 = xgrid >= tgt1
+    od_mask2 = xgrid >= tgt2
+
+    def _weighted_kde(p_col, weights, xgrid):
+        mu    = np.sum(weights * p_col)
+        var   = np.sum(weights * (p_col - mu) ** 2)
+        std   = np.sqrt(var) if var > 1e-12 else 0.01
+        eff_n = 1.0 / max(np.sum(weights ** 2), 1e-30)
+        bw    = max(1.06 * std * eff_n ** (-0.2), 0.005)
+        diff  = xgrid[:, None] - p_col[None, :]
+        kde   = (weights[None, :] * np.exp(-0.5 * (diff / bw) ** 2)).sum(axis=1)
+        return kde
+
+    dose_colors = ["#4a9eff", "#ffaa44", "#ff6677", "#55dd99", "#cc88ff"]
+    fig2, (ax_d1, ax_d2) = plt.subplots(1, 2, figsize=(11.0, 4.2), dpi=150)
+    _apply_dark_fig(fig2, ax_d1, ax_d2)
+
+    x_ann1 = min(0.94, tgt1 + 0.05)
+    x_ann2 = min(0.94, tgt2 + 0.05)
+
+    for lvl in range(n_lvls):
+        kde1 = _weighted_kde(P1f[:, lvl], pw1f, xgrid)
+        kde2 = _weighted_kde(P2f[:, lvl], pw2f, xgrid)
+        k1 = 0.85 / max(float(kde1.max()), 1e-12)
+        k2 = 0.85 / max(float(kde2.max()), 1e-12)
+        y1c = lvl + kde1 * k1
+        y2c = lvl + kde2 * k2
+
+        ax_d1.fill_between(xgrid, lvl, y1c,
+                           color=dose_colors[lvl], alpha=0.38, linewidth=0)
+        ax_d1.plot(xgrid, y1c, color=dose_colors[lvl], lw=1.3)
+        ax_d2.fill_between(xgrid, lvl, y2c,
+                           color=dose_colors[lvl], alpha=0.38, linewidth=0)
+        ax_d2.plot(xgrid, y2c, color=dose_colors[lvl], lw=1.3)
+
+        ax_d1.fill_between(xgrid, lvl, y1c, where=od_mask1,
+                           color=(1.0, 0.39, 0.39), alpha=0.45, linewidth=0)
+        ax_d2.fill_between(xgrid, lvl, y2c, where=od_mask2,
+                           color=(1.0, 0.39, 0.39), alpha=0.45, linewidth=0)
+
+        ax_d1.text(x_ann1, lvl + 0.08, f"OD: {od1_final[lvl] * 100:.1f}%",
+                   color="#e0e0e0", fontsize=7, ha="left", va="bottom", fontweight="bold")
+        ax_d2.text(x_ann2, lvl + 0.08, f"OD: {od2_final[lvl] * 100:.1f}%",
+                   color="#e0e0e0", fontsize=7, ha="left", va="bottom", fontweight="bold")
+
+    for ax, tgt in ((ax_d1, tgt1), (ax_d2, tgt2)):
+        ax.axvline(tgt, lw=1.5, ls="--", color="#80ff80",
+                   alpha=0.85, label=f"Target ({tgt:.2f})")
+        ax.set_xlim(0.0, 1.0)
+        ax.set_ylim(-0.2, n_lvls - 0.1)
+        ax.set_yticks(range(n_lvls))
+        ax.set_yticklabels([f"L{i}" for i in range(n_lvls)], fontsize=8)
+        ax.set_xlabel("P(tox)", fontsize=9)
+        ax.set_ylabel("Dose level", fontsize=9)
+        ax.legend(fontsize=8, frameon=False, labelcolor=_DARK_FG)
+        compact_style(ax)
+
+    ax_d1.set_title("Tox1 — study-end posterior per dose level", fontsize=10)
+    ax_d2.set_title("Tox2 — study-end posterior per dose level", fontsize=10)
+    fig2.tight_layout(pad=0.5)
+    b64 = fig_to_b64(fig2)
+    plt.close(fig2)
+    return b64
+
+
+def generate_dose_eligibility_chart(crm_trace):
+    """Heatmap grid: dose eligibility (green/amber/red) across cohort decision steps."""
+    decs = crm_trace.get("decisions", [])
+    if not decs:
+        return None
+
+    n_lvls      = len(crm_trace["skel_t1"])
+    ewoc_alpha  = float(crm_trace["ewoc_alpha"])
+    elig_border = ewoc_alpha - 0.05
+    final_mtd   = crm_trace.get("final_mtd")
+    n_steps     = len(decs)
+
+    fig3, ax3 = plt.subplots(
+        figsize=(max(8.0, n_steps * 0.90 + 1.5), 4.2), dpi=150)
+    _apply_dark_fig(fig3, ax3)
+    ax3.set_facecolor(_DARK_BG)
+    ax3.spines["top"].set_visible(False)
+    ax3.spines["right"].set_visible(False)
+
+    for si, step_d in enumerate(decs):
+        od1_row = step_d["od1"]
+        od2_row = step_d["od2"]
+        curr    = step_d["current_dose"]
+
+        for lvl in range(n_lvls):
+            o1 = float(od1_row[lvl])
+            o2 = float(od2_row[lvl])
+            if o1 > ewoc_alpha or o2 > ewoc_alpha:
+                fc = "#7b241c"
+            elif o1 >= elig_border or o2 >= elig_border:
+                fc = "#7e5109"
+            else:
+                fc = "#1a6835"
+
+            ax3.add_patch(mpatches.Rectangle(
+                (si, lvl), 1, 1,
+                facecolor=fc, edgecolor="#2c2c4c", linewidth=0.8, zorder=1))
+            ax3.text(si + 0.5, lvl + 0.64, f"{o1:.2f}",
+                     color="white",   fontsize=6.5, ha="center", va="center",
+                     fontweight="bold", zorder=3)
+            ax3.text(si + 0.5, lvl + 0.34, f"{o2:.2f}",
+                     color="#cccccc", fontsize=6.5, ha="center", va="center",
+                     fontweight="bold", zorder=3)
+
+        ax3.add_patch(mpatches.Rectangle(
+            (si, curr), 1, 1,
+            fill=False, edgecolor="#b8b8b8", linewidth=2.0, zorder=4))
+
+    if final_mtd is not None:
+        ax3.add_patch(mpatches.Rectangle(
+            (n_steps - 1, final_mtd), 1, 1,
+            fill=False, edgecolor="#ffd700", linewidth=3.5, zorder=5))
+
+    ax3.set_xlim(0, n_steps)
+    ax3.set_ylim(0, n_lvls)
+    ax3.set_xticks([s + 0.5 for s in range(n_steps)])
+    ax3.set_xticklabels([str(d["step"]) for d in decs], fontsize=8)
+    ax3.set_yticks([i + 0.5 for i in range(n_lvls)])
+    ax3.set_yticklabels([f"L{i}" for i in range(n_lvls)], fontsize=9)
+    ax3.set_xlabel("Cohort decision step", fontsize=9)
+    ax3.set_ylabel("Dose level", fontsize=9)
+    ax3.set_title("Dose eligibility trajectory across trial", fontsize=10)
+    ax3.tick_params(length=0)
+
+    elig_handles = [
+        mpatches.Patch(facecolor="#1a6835", edgecolor="#555", linewidth=0.8,
+                       label="Allowed — both OD < α"),
+        mpatches.Patch(facecolor="#7e5109", edgecolor="#555", linewidth=0.8,
+                       label=f"Borderline — either OD ∈ [{elig_border:.2f}, α]"),
+        mpatches.Patch(facecolor="#7b241c", edgecolor="#555", linewidth=0.8,
+                       label=f"Excluded — either OD > α ({ewoc_alpha:.2f})"),
+        mpatches.Patch(fill=False, edgecolor="#b8b8b8", linewidth=2.0,
+                       label="Active dose this cohort"),
+        mpatches.Patch(fill=False, edgecolor="#ffd700", linewidth=3.0,
+                       label="Final MTD selected"),
+    ]
+    ax3.legend(handles=elig_handles, fontsize=7, frameon=True, ncol=3,
+               loc="upper left", bbox_to_anchor=(0.0, -0.20),
+               labelcolor=_DARK_FG, facecolor=_DARK_AX, edgecolor=_DARK_GRD)
+
+    fig3.tight_layout(rect=[0, 0.17, 1, 1], pad=0.4)
+    b64 = fig_to_b64(fig3)
+    plt.close(fig3)
+    return b64
