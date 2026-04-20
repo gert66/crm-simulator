@@ -2018,3 +2018,301 @@ def generate_dose_eligibility_chart(crm_trace):
     b64 = fig_to_b64(fig3)
     plt.close(fig3)
     return b64
+
+
+# ==============================================================================
+# Trace chart generators (CRM decision walkthrough — first trial)
+# ==============================================================================
+
+def generate_trace_dose_chart(decs):
+    """Plot A: dose level assigned vs chosen per cohort decision step."""
+    steps = [d["step"]         for d in decs]
+    curr  = [d["current_dose"] for d in decs]
+    nxt   = [d["next_dose"]    for d in decs]
+
+    fig, ax = plt.subplots(figsize=(4.2, 2.8), dpi=130)
+    _apply_dark_fig(fig, ax)
+    ax.step(steps, curr, where="post", color="#4a9eff", lw=2, label="Dose assigned")
+    ax.step(steps, nxt,  where="post", color="#4a9eff", lw=1.2, ls="--",
+            alpha=0.6, label="Next dose chosen")
+    ax.set_title("Dose level over cohort steps", fontsize=9)
+    ax.set_xlabel("Decision step", fontsize=8)
+    ax.set_ylabel("Dose level (L0 – L4)", fontsize=8)
+    ax.set_yticks(range(5))
+    ax.set_yticklabels([f"L{i}" for i in range(5)], fontsize=7)
+    ax.legend(fontsize=7, frameon=False, labelcolor=_DARK_FG)
+    compact_style(ax)
+    fig.tight_layout(pad=0.5)
+    b64 = fig_to_b64(fig)
+    plt.close(fig)
+    return b64
+
+
+def generate_trace_safety_chart(decs, ewoc_on, ewoc_alpha):
+    """Plot B: OD probabilities at the current dose over decision steps."""
+    steps    = [d["step"]                          for d in decs]
+    od1_curr = [d["od1"][d["current_dose"]]        for d in decs]
+    od2_curr = [d["od2"][d["current_dose"]]        for d in decs]
+
+    fig, ax = plt.subplots(figsize=(4.2, 2.8), dpi=130)
+    _apply_dark_fig(fig, ax)
+    ax.plot(steps, od1_curr, "o-", color="#4a9eff", lw=1.8, ms=4, label="OD prob tox1")
+    ax.plot(steps, od2_curr, "s-", color="#ffaa44", lw=1.8, ms=4, label="OD prob tox2")
+    if ewoc_on:
+        ax.axhline(ewoc_alpha, lw=1, ls="--", color="#80ff80",
+                   alpha=0.7, label=f"EWOC α={ewoc_alpha:.2f}")
+    ax.set_title("Safety evolution at current dose", fontsize=9)
+    ax.set_xlabel("Decision step", fontsize=8)
+    ax.set_ylabel("P(overdose)", fontsize=8)
+    ax.set_ylim(0, min(1.05, max(max(od1_curr), max(od2_curr)) * 1.3 + 0.05))
+    ax.legend(fontsize=7, frameon=False, labelcolor=_DARK_FG)
+    compact_style(ax)
+    fig.tight_layout(pad=0.5)
+    b64 = fig_to_b64(fig)
+    plt.close(fig)
+    return b64
+
+
+def generate_trace_tite_chart(decs):
+    """Plot C: TITE follow-up accumulation (effective n) over decision steps."""
+    steps  = [d["step"]      for d in decs]
+    n1_sum = [d["n1_sum"]    for d in decs]
+    n2_sum = [d["n2_sum"]    for d in decs]
+    n_enr  = [d["n_enrolled"] for d in decs]
+
+    fig, ax = plt.subplots(figsize=(4.2, 2.8), dpi=130)
+    _apply_dark_fig(fig, ax)
+    ax.plot(steps, n1_sum, "o-", color="#4a9eff", lw=1.8, ms=4, label="Effective n (tox1)")
+    ax.plot(steps, n2_sum, "s-", color="#ffaa44", lw=1.8, ms=4, label="Effective n (tox2)")
+    ax.plot(steps, n_enr,  "^--", color="#c0c0c0", lw=1.2, ms=4, label="Patients enrolled")
+    ax.set_title("TITE follow-up accumulation", fontsize=9)
+    ax.set_xlabel("Decision step", fontsize=8)
+    ax.set_ylabel("Effective patient count", fontsize=8)
+    ax.legend(fontsize=7, frameon=False, labelcolor=_DARK_FG)
+    compact_style(ax)
+    fig.tight_layout(pad=0.5)
+    b64 = fig_to_b64(fig)
+    plt.close(fig)
+    return b64
+
+
+# ==============================================================================
+# Table builders — return HTML strings
+# ==============================================================================
+
+def build_patient_table_html(trace):
+    """Patient timeline table: one row per patient with TITE weights at their decision."""
+    pts      = trace["patients"]
+    decs     = trace["decisions"]
+    true_t1  = trace["true_t1"]
+    true_t2  = trace["true_t2"]
+    tox1_win = int(trace["tox1_win"])
+    tox2_win = int(trace["tox2_win"])
+
+    def _w1(pt, day):
+        t = float(day)
+        if t < pt["rt_start"]:
+            return 0.0
+        if pt["has_tox1"] and pt["tox1_day"] is not None and pt["tox1_day"] <= t:
+            return 1.0
+        if t >= pt["tox1_win_end"]:
+            return 1.0
+        return (t - pt["rt_start"]) / float(tox1_win)
+
+    def _w2(pt, day):
+        if not pt["has_surgery"] or pt["surgery_day"] is None:
+            return None
+        t  = float(day); sd = pt["surgery_day"]
+        if t < sd:
+            return 0.0
+        if pt["has_tox2"] and pt["tox2_day"] is not None and pt["tox2_day"] <= t:
+            return 1.0
+        if pt["tox2_win_end"] is not None and t >= pt["tox2_win_end"]:
+            return 1.0
+        return (t - sd) / float(tox2_win)
+
+    pt_to_dec = {}
+    for d in decs:
+        for pid in d["cohort_pts"]:
+            pt_to_dec[pid] = d
+
+    rows = []
+    for i, pt in enumerate(pts):
+        dec     = pt_to_dec.get(i)
+        dec_day = dec["decision_day"] if dec else None
+        w1v     = round(_w1(pt, dec_day), 2) if dec_day is not None else "—"
+        w2v     = _w2(pt, dec_day)
+        w2v_str = ("—" if w2v is None else
+                   round(w2v, 2) if dec_day is not None else "—")
+        rows.append({
+            "Pt #":          i + 1,
+            "Incl (day)":    round(pt["arrival"], 1),
+            "Dose":          f"L{pt['dose']}",
+            "True P(tox1)":  round(true_t1[pt["dose"]], 3),
+            "True P(tox2)":  round(true_t2[pt["dose"]], 3),
+            "Surgery":       "Yes" if pt["has_surgery"] else "No",
+            "Tox1 event":    "Yes" if pt["has_tox1"]   else "No",
+            "Tox2 event":    "Yes" if pt["has_tox2"]   else "No",
+            "Tox1 day":      (round(pt["tox1_day"], 0)
+                              if pt["tox1_day"] is not None else "—"),
+            "Surgery day":   (round(pt["surgery_day"], 0)
+                              if pt["surgery_day"] is not None else "—"),
+            "Tox2 day":      (round(pt["tox2_day"], 0)
+                              if pt["tox2_day"] is not None else "—"),
+            "Tox1 wt @dec":  w1v,
+            "Tox2 wt @dec":  w2v_str,
+        })
+    return pd.DataFrame(rows).to_html(index=False, border=0, classes="trace-tbl")
+
+
+def build_decision_table_html(decs):
+    """Decision walkthrough table: one row per cohort decision."""
+    rows = []
+    for d in decs:
+        allowed_str = ", ".join(f"L{a}" for a in d["allowed"]) or "none"
+        pm1_str = "[" + " ".join(f"{v:.2f}" for v in d["pm1"]) + "]"
+        pm2_str = "[" + " ".join(f"{v:.2f}" for v in d["pm2"]) + "]"
+        od1_str = "[" + " ".join(f"{v:.2f}" for v in d["od1"]) + "]"
+        od2_str = "[" + " ".join(f"{v:.2f}" for v in d["od2"]) + "]"
+        rows.append({
+            "Step":          d["step"],
+            "Day":           round(d["decision_day"], 0),
+            "N enrolled":    d["n_enrolled"],
+            "Curr dose":     f"L{d['current_dose']}",
+            "Next dose":     f"L{d['next_dose']}",
+            "Highest tried": f"L{d['highest_tried']}",
+            "Burn-in":       "Yes" if d["burn_in"] else "No",
+            "EWOC mode":     d.get("ewoc_mode", "?"),
+            "Obs tox1":      d["obs_t1"],
+            "Obs tox2":      d["obs_t2"],
+            "N surgery":     d["n_surgery"],
+            "Allowed doses": allowed_str,
+            "Post mean tox1 [L0..L4]": pm1_str,
+            "Post mean tox2 [L0..L4]": pm2_str,
+            "OD prob tox1  [L0..L4]":  od1_str,
+            "OD prob tox2  [L0..L4]":  od2_str,
+            "Decision reason": d["reason"],
+        })
+    return pd.DataFrame(rows).to_html(index=False, border=0, classes="trace-tbl")
+
+
+def build_final_mtd_html(trace):
+    """Final MTD selection section: banner + per-dose status table as HTML string."""
+    final_mtd  = trace.get("final_mtd")
+    if final_mtd is None or trace.get("skel_t1") is None:
+        return ""
+
+    pts      = trace["patients"]
+    sd_tr    = float(trace.get("study_days", 0.0))
+    tox1_win = int(trace["tox1_win"])
+    tox2_win = int(trace["tox2_win"])
+    sigma    = float(trace["sigma"])
+    skel_t1  = np.asarray(trace["skel_t1"], dtype=float)
+    skel_t2  = np.asarray(trace["skel_t2"], dtype=float)
+    tgt1     = float(trace["target_t1"])
+    tgt2     = float(trace["target_t2"])
+    gh_n     = int(trace["gh_n"])
+    ewoc_on  = bool(trace["ewoc_on"])
+    ewoc_a   = float(trace["ewoc_alpha"])
+    restr    = bool(trace.get("restrict_final_mtd", False))
+    n_levels = 5
+
+    n1f = np.zeros(n_levels); y1f = np.zeros(n_levels)
+    n2f = np.zeros(n_levels); y2f = np.zeros(n_levels)
+    if pts:
+        n1f, y1f, n2f, y2f = tite_weights(pts, sd_tr, tox1_win, tox2_win, n_levels)
+
+    pm1f, od1f = crm_posterior_summaries(sigma, skel_t1, n1f, y1f, tgt1, gh_n=gh_n)
+    pm2f, od2f = crm_posterior_summaries(sigma, skel_t2, n2f, y2f, tgt2, gh_n=gh_n)
+
+    tried = set(i for i in range(n_levels) if n1f[i] > 0)
+
+    if ewoc_on:
+        ewoc_cands = set(i for i in range(n_levels)
+                         if float(od1f[i]) < ewoc_a and float(od2f[i]) < ewoc_a)
+    else:
+        ewoc_cands = set(range(n_levels))
+
+    if restr and tried:
+        cands_i = ewoc_cands & tried
+        final_cands = cands_i if cands_i else tried
+    else:
+        final_cands = ewoc_cands
+
+    if ewoc_on:
+        rule_str = (
+            f"EWOC ON (α = {ewoc_a:.2f}): doses admitted only where "
+            f"P(tox1 OD) &lt; α and P(tox2 OD) &lt; α. "
+            f"Among admitted {'tried ' if restr else ''}doses, the highest is selected."
+        )
+    else:
+        rule_str = (
+            f"EWOC OFF: no overdose-probability filter. "
+            f"Among {'tried ' if restr else ''}doses, the one with "
+            f"posterior mean P(tox1) closest to target ({tgt1:.2f}) is selected."
+        )
+
+    exp_rows = []
+    for i in range(n_levels):
+        ewoc_ok_1 = float(od1f[i]) < ewoc_a
+        ewoc_ok_2 = float(od2f[i]) < ewoc_a
+
+        if i == final_mtd:
+            status = "Selected ★"; reason = "Final MTD"
+        elif i in final_cands:
+            status = "Allowed ✅"; reason = "Admissible — not selected"
+        else:
+            status = "Excluded ❌"
+            excl_parts = []
+            if ewoc_on:
+                if not ewoc_ok_1 and not ewoc_ok_2:
+                    excl_parts.append(
+                        f"OD prob too high for both tox1 ({od1f[i]:.2f} ≥ {ewoc_a:.2f}) "
+                        f"and tox2 ({od2f[i]:.2f} ≥ {ewoc_a:.2f})")
+                elif not ewoc_ok_1:
+                    excl_parts.append(f"tox1 OD prob {od1f[i]:.2f} ≥ α ({ewoc_a:.2f})")
+                elif not ewoc_ok_2:
+                    excl_parts.append(f"tox2 OD prob {od2f[i]:.2f} ≥ α ({ewoc_a:.2f})")
+            if restr and i not in tried and not ewoc_cands.isdisjoint(tried):
+                excl_parts.append("dose not tried")
+            reason = "Excluded: " + "; ".join(excl_parts) if excl_parts else "Excluded"
+
+        exp_rows.append({
+            "Dose":           f"L{i}",
+            "Tried":          "Yes" if i in tried else "No",
+            "Post mean tox1": round(float(pm1f[i]), 3),
+            "Post mean tox2": round(float(pm2f[i]), 3),
+            "OD prob tox1":   round(float(od1f[i]), 3),
+            "OD prob tox2":   round(float(od2f[i]), 3),
+            "Status":         status,
+            "Reason":         reason,
+        })
+
+    # Build row-coloured HTML table manually (pandas Styler not needed)
+    cols = list(exp_rows[0].keys())
+    header = "".join(f"<th>{c}</th>" for c in cols)
+    tbody  = ""
+    for row in exp_rows:
+        if "Selected" in row["Status"]:
+            style = "background:#1a3a1a;color:#7dffab;font-weight:700"
+        elif "Allowed" in row["Status"]:
+            style = "background:#0d2a1a;color:#a3e4c0"
+        else:
+            style = "background:#2a0d0d;color:#e4a3a3"
+        cells = "".join(f"<td>{row[c]}</td>" for c in cols)
+        tbody += f'<tr style="{style}">{cells}</tr>'
+
+    banner = (
+        f"<div style='font-size:1.2em;font-weight:700;padding:0.5em 0.8em;"
+        f"border-radius:6px;background:#1a3a5c;color:#e8f4ff;"
+        f"border-left:5px solid #4da6ff;margin-bottom:0.6em;'>"
+        f"&#128073; Final selected MTD (this trial): "
+        f"<span style='color:#7dd3fc;'>L{final_mtd}</span></div>"
+    )
+    rule_div = f"<p style='color:#aaa;font-size:.9em'>{rule_str}</p>"
+    table = (
+        f"<table class='trace-tbl'>"
+        f"<thead><tr>{header}</tr></thead>"
+        f"<tbody>{tbody}</tbody></table>"
+    )
+    return banner + rule_div + table
