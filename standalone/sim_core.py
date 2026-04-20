@@ -1156,3 +1156,498 @@ def run_prior_nu_sweep(nu1_values, nu2_values, base_ss,
             ))
 
     return pd.DataFrame(rows)
+
+
+# ==============================================================================
+# DE parameter helpers and batch-report generators
+# ==============================================================================
+
+_DE_PARAM_DISPLAY_NAMES = {
+    "sigma":       "Prior sigma (σ)",
+    "ewoc_alpha":  "EWOC α — overdose threshold",
+    "max_n":       "Maximum sample size (max N)",
+    "cohort_size": "Cohort size — patients per dose decision",
+    "prior_nu_t1": "Prior MTD level — tox1 (acute)",
+    "prior_nu_t2": "Prior MTD level — tox2 (subacute / surgery)",
+}
+
+_DE_ALL_PARAMS = [
+    "sigma", "ewoc_alpha", "max_n", "cohort_size", "prior_nu_t1", "prior_nu_t2",
+    "enforce_guardrail", "restrict_final_mtd", "burn_in",
+]
+
+
+def _de_pv_for_param(param_name, ss, speed=False):
+    """Return (pv_list, display_label) for *param_name* using session-state values.
+
+    Falls back to safe defaults for any key that has not yet been set.
+    """
+    if param_name == "sigma":
+        pv = np.linspace(
+            float(ss.get("de_sig_min", 0.3)),
+            float(ss.get("de_sig_max", 2.0)),
+            int(ss.get("de_sig_pts", 8)),
+        ).tolist()
+        if speed:
+            pv = pv[:8]
+        return pv, "σ (prior sigma)"
+
+    if param_name == "ewoc_alpha":
+        inc_off  = bool(ss.get("de_inc_off", True))
+        pv_num   = np.linspace(
+            float(ss.get("de_ea_min", 0.05)),
+            float(ss.get("de_ea_max", 0.60)),
+            int(ss.get("de_ea_pts", 8)),
+        ).tolist()
+        combined = ([None] if inc_off else []) + pv_num
+        if speed:
+            combined = combined[:8]
+        return combined, "EWOC α"
+
+    if param_name == "max_n":
+        pv = list(ss.get("de_max_n_vals",
+                         [12, 15, 18, 21, 24, 27, 30, 33, 36]))
+        if speed:
+            pv = pv[:3]
+        return pv, "Maximum total patients (max N)"
+
+    if param_name == "cohort_size":
+        pv = list(ss.get("de_cohort_vals", [1, 2, 3, 4]))
+        if speed:
+            pv = pv[:3]
+        return pv, "Cohort size (patients per dose decision)"
+
+    if param_name == "prior_nu_t1":
+        pv = list(ss.get("de_nu1_vals", [1, 2, 3, 4, 5]))
+        if speed:
+            pv = pv[:3]
+        return pv, "Prior MTD level — tox1 (acute)"
+
+    if param_name == "prior_nu_t2":
+        pv = list(ss.get("de_nu2_vals", [1, 2, 3, 4, 5]))
+        if speed:
+            pv = pv[:3]
+        return pv, "Prior MTD level — tox2 (subacute / surgery)"
+
+    _bool_param_labels = {
+        "enforce_guardrail":  "Guardrail (next dose ≤ highest tried + 1)",
+        "restrict_final_mtd": "Final MTD restricted to tried doses",
+        "burn_in":            "Burn-in until first tox1 DLT",
+    }
+    if param_name in _bool_param_labels:
+        return [False, True], _bool_param_labels[param_name]
+
+    raise ValueError(f"Unknown param_name: {param_name!r}")
+
+
+def _generate_de_html_report(param_name, param_label, result_df,
+                              base_ss, n_sim, seed, pv_list,
+                              fig_b64, ts_str, run_label=""):
+    """Build a self-contained HTML Design Exploration batch report."""
+    param_display = _DE_PARAM_DISPLAY_NAMES.get(param_name, param_name)
+    title = f"Design Exploration — {param_display}"
+    if run_label:
+        title += f"  ·  {run_label}"
+
+    ewoc_off_included = (param_name == "ewoc_alpha" and None in pv_list)
+
+    def _fv(v):
+        if v is None:
+            return "EWOC OFF"
+        if isinstance(v, float):
+            return f"{v:.4g}"
+        return str(v)
+
+    values_str = ", ".join(_fv(v) for v in pv_list)
+    yn = lambda b: "Yes" if b else "No"
+
+    cfg_rows = [
+        ("Target tox1 (acute)",           f"{base_ss['target_tox1']:.3f}"),
+        ("Target tox2 (surgery/subacute)", f"{base_ss['target_tox2']:.3f}"),
+        ("Prior sigma (σ)",                f"{base_ss['sigma']:.3g}"),
+        ("EWOC enabled",                   yn(base_ss["ewoc_on"])),
+        ("EWOC α",  f"{base_ss['ewoc_alpha']:.3g}" if base_ss["ewoc_on"] else "N/A"),
+        ("Max patients (max N)",           str(base_ss["max_n"])),
+        ("Cohort size",                    str(base_ss["cohort_size"])),
+        ("Start level",                    f"L{base_ss['start_level'] + 1}"),
+        ("Accrual per month",              f"{base_ss['accrual_per_month']:.1f}"),
+        ("RT duration (days)",             str(base_ss["rt_dur"])),
+        ("RT → surgery gap (days)",        str(base_ss["rt_to_surg"])),
+        ("Tox2 window (days)",             str(base_ss["tox2_win"])),
+        ("Burn-in until first DLT",        yn(base_ss["burn_in"])),
+        ("Guardrail (≤ highest tried + 1)",yn(base_ss["enforce_guardrail"])),
+        ("Final MTD restricted to tried",  yn(base_ss["restrict_final_to_tried"])),
+        ("Simulations per point",          str(n_sim)),
+        ("Random seed",                    str(seed)),
+    ]
+    cfg_html = "\n".join(
+        f"<tr><td>{k}</td><td><b>{v}</b></td></tr>" for k, v in cfg_rows
+    )
+
+    sweep_rows = [
+        ("Parameter swept",     param_display),
+        ("Sweep points",        str(len(pv_list))),
+        ("Values",              values_str),
+    ]
+    if param_name == "ewoc_alpha":
+        sweep_rows.append(("EWOC OFF included as a point", yn(ewoc_off_included)))
+    sweep_html = "\n".join(
+        f"<tr><td>{k}</td><td><b>{v}</b></td></tr>" for k, v in sweep_rows
+    )
+
+    df_disp = result_df[["param_label", "n_patients", "quality_score",
+                          "pct_correct_selection", "overdose_rate"]].copy()
+    df_disp.columns = [param_label, "N patients",
+                       "Quality score", "% Correct selection", "Overdose rate (%)"]
+    df_disp["Quality score"]        = df_disp["Quality score"].round(4)
+    df_disp["% Correct selection"]  = df_disp["% Correct selection"].round(1)
+    df_disp["Overdose rate (%)"]    = df_disp["Overdose rate (%)"].round(1)
+    results_html = df_disp.to_html(index=False, border=0,
+                                   classes="results-tbl", justify="left")
+
+    css = """
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+     max-width:1100px;margin:0 auto;padding:28px 44px;color:#2c3e50;background:#fafafa}
+h1{color:#1a237e;border-bottom:3px solid #3949ab;padding-bottom:10px;margin-bottom:4px}
+h2{color:#283593;margin-top:2.2em;border-left:4px solid #7986cb;padding-left:12px}
+.meta{color:#666;font-size:.88em;margin-bottom:2em}
+table{border-collapse:collapse;width:100%;margin:1em 0;background:#fff;
+      box-shadow:0 1px 4px rgba(0,0,0,.08);border-radius:6px;overflow:hidden}
+th{background:#3949ab;color:#fff;padding:9px 14px;text-align:left;
+   font-weight:600;font-size:.91em}
+td{padding:8px 14px;border-bottom:1px solid #e8eaf6;font-size:.92em}
+tr:last-child td{border-bottom:none}
+tr:nth-child(even) td{background:#f5f7ff}
+img{max-width:100%;border:1px solid #ddd;border-radius:6px;
+    box-shadow:0 2px 8px rgba(0,0,0,.10);margin:1em 0;display:block}
+.footer{color:#aaa;font-size:.78em;margin-top:3em;
+        border-top:1px solid #eee;padding-top:12px}
+"""
+
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>{title}</title>
+<style>{css}</style></head>
+<body>
+<h1>{title}</h1>
+<p class="meta">Generated: {ts_str}&nbsp;&nbsp;|&nbsp;&nbsp;{len(pv_list)} sweep
+points&nbsp;&nbsp;|&nbsp;&nbsp;{n_sim:,} simulations per point</p>
+
+<h2>Base Configuration</h2>
+<table><tbody>{cfg_html}</tbody></table>
+
+<h2>Sweep Definition</h2>
+<table><tbody>{sweep_html}</tbody></table>
+
+<h2>Results</h2>
+{results_html}
+
+<h2>Figures</h2>
+<img src="{fig_b64}" alt="Sweep results chart">
+
+<p class="footer">CRM Simulator — Design Exploration batch report</p>
+</body></html>"""
+    return html
+
+
+def _generate_de_all_html_report(results_list, base_ss, n_sim, seed,
+                                  ts_str, run_label=""):
+    """Build a single self-contained HTML report covering all swept parameters."""
+    title = "Design Exploration — All Parameters"
+    if run_label:
+        title += f"  ·  {run_label}"
+
+    yn = lambda b: "Yes" if b else "No"
+
+    def _fv(v):
+        if v is None:
+            return "EWOC OFF"
+        if isinstance(v, float):
+            return f"{v:.4g}"
+        return str(v)
+
+    cfg_rows = [
+        ("Target tox1 (acute)",            f"{base_ss['target_tox1']:.3f}"),
+        ("Target tox2 (surgery/subacute)",  f"{base_ss['target_tox2']:.3f}"),
+        ("Prior sigma (σ)",                 f"{base_ss['sigma']:.3g}"),
+        ("EWOC enabled",                    yn(base_ss["ewoc_on"])),
+        ("EWOC α",
+         f"{base_ss['ewoc_alpha']:.3g}" if base_ss["ewoc_on"] else "N/A"),
+        ("Max patients (max N)",            str(base_ss["max_n"])),
+        ("Cohort size",                     str(base_ss["cohort_size"])),
+        ("Start level",                     f"L{base_ss['start_level'] + 1}"),
+        ("Accrual per month",               f"{base_ss['accrual_per_month']:.1f}"),
+        ("RT duration (days)",              str(base_ss["rt_dur"])),
+        ("RT → surgery gap (days)",         str(base_ss["rt_to_surg"])),
+        ("Tox2 window (days)",              str(base_ss["tox2_win"])),
+        ("Burn-in until first DLT",         yn(base_ss["burn_in"])),
+        ("Guardrail (≤ highest tried + 1)", yn(base_ss["enforce_guardrail"])),
+        ("Final MTD restricted to tried",   yn(base_ss["restrict_final_to_tried"])),
+        ("Simulations per point",           str(n_sim)),
+        ("Random seed",                     str(seed)),
+    ]
+    cfg_html = "\n".join(
+        f"<tr><td>{k}</td><td><b>{v}</b></td></tr>" for k, v in cfg_rows
+    )
+
+    sum_rows = ""
+    for r in results_list:
+        df      = r["result_df"]
+        best    = df.loc[df["quality_score"].idxmax()]
+        note    = (" (EWOC OFF included)"
+                   if r["param_name"] == "ewoc_alpha" and None in r["pv_list"]
+                   else "")
+        sum_rows += (
+            f"<tr>"
+            f"<td>{r['param_label']}{note}</td>"
+            f"<td>{len(r['pv_list'])}</td>"
+            f"<td>{best['param_label']}</td>"
+            f"<td>{best['quality_score']:.4f}</td>"
+            f"<td>{best['pct_correct_selection']:.1f}%</td>"
+            f"<td>{best['overdose_rate']:.1f}%</td>"
+            f"</tr>\n"
+        )
+    summary_html = (
+        "<table><thead><tr>"
+        "<th>Parameter</th><th>Points</th><th>Best value</th>"
+        "<th>Quality score</th><th>% Correct selection</th>"
+        "<th>Overdose rate</th></tr></thead>"
+        f"<tbody>{sum_rows}</tbody></table>"
+    )
+
+    sections = ""
+    for r in results_list:
+        pname  = r["param_name"]
+        plabel = r["param_label"]
+        pv     = r["pv_list"]
+        df     = r["result_df"]
+
+        ewoc_row = ""
+        if pname == "ewoc_alpha":
+            ewoc_row = (
+                f"<tr><td>EWOC OFF included as a point</td>"
+                f"<td><b>{yn(None in pv)}</b></td></tr>"
+            )
+
+        sweep_tbl = (
+            f"<table><tbody>"
+            f"<tr><td>Sweep points</td><td><b>{len(pv)}</b></td></tr>"
+            f"<tr><td>Values</td>"
+            f"<td><b>{', '.join(_fv(v) for v in pv)}</b></td></tr>"
+            f"{ewoc_row}"
+            f"</tbody></table>"
+        )
+
+        df_d = df[["param_label", "n_patients", "quality_score",
+                   "pct_correct_selection", "overdose_rate"]].copy()
+        df_d.columns = [plabel, "N patients", "Quality score",
+                        "% Correct selection", "Overdose rate (%)"]
+        df_d["Quality score"]        = df_d["Quality score"].round(4)
+        df_d["% Correct selection"]  = df_d["% Correct selection"].round(1)
+        df_d["Overdose rate (%)"]    = df_d["Overdose rate (%)"].round(1)
+        res_tbl = df_d.to_html(index=False, border=0,
+                               classes="results-tbl", justify="left")
+
+        ctx_img = (
+            f'<img src="{r["context_fig_b64"]}" style="max-width:520px"'
+            f' alt="True toxicity vs prior MTD levels — {plabel}">'
+            if r.get("context_fig_b64") else ""
+        )
+        sections += (
+            f'<hr class="param-sep">'
+            f"<h2>{plabel}</h2>"
+            f"{sweep_tbl}"
+            f"{res_tbl}"
+            f'<img src="{r["fig_b64"]}" alt="Sweep — {plabel}">'
+            f"{ctx_img}"
+        )
+
+    css = """
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+     max-width:1100px;margin:0 auto;padding:28px 44px;color:#2c3e50;background:#fafafa}
+h1{color:#1a237e;border-bottom:3px solid #3949ab;padding-bottom:10px;margin-bottom:4px}
+h2{color:#283593;margin-top:2.2em;border-left:4px solid #7986cb;padding-left:12px}
+.meta{color:#666;font-size:.88em;margin-bottom:2em}
+table{border-collapse:collapse;width:100%;margin:1em 0;background:#fff;
+      box-shadow:0 1px 4px rgba(0,0,0,.08);border-radius:6px;overflow:hidden}
+th{background:#3949ab;color:#fff;padding:9px 14px;text-align:left;
+   font-weight:600;font-size:.91em}
+td{padding:8px 14px;border-bottom:1px solid #e8eaf6;font-size:.92em}
+tr:last-child td{border-bottom:none}
+tr:nth-child(even) td{background:#f5f7ff}
+img{max-width:100%;border:1px solid #ddd;border-radius:6px;
+    box-shadow:0 2px 8px rgba(0,0,0,.10);margin:1em 0;display:block}
+hr.param-sep{border:none;border-top:2px solid #e8eaf6;margin:3em 0 0}
+.footer{color:#aaa;font-size:.78em;margin-top:3em;
+        border-top:1px solid #eee;padding-top:12px}
+"""
+    total_pts = sum(len(r["pv_list"]) for r in results_list)
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>{title}</title>
+<style>{css}</style></head>
+<body>
+<h1>{title}</h1>
+<p class="meta">Generated: {ts_str}&nbsp;&nbsp;|&nbsp;&nbsp;\
+{len(results_list)} parameters&nbsp;&nbsp;|&nbsp;&nbsp;\
+{total_pts} total sweep points&nbsp;&nbsp;|&nbsp;&nbsp;\
+{n_sim:,} simulations per point</p>
+
+<h2>Base Configuration</h2>
+<table><tbody>{cfg_html}</tbody></table>
+
+<h2>Summary — Best Configuration per Parameter</h2>
+{summary_html}
+
+{sections}
+
+<p class="footer">CRM Simulator — Design Exploration batch report (all parameters)</p>
+</body></html>"""
+    return html
+
+
+def _plot_sweep_results(df, param_label, param_name="", param_info=None):
+    """Render the three-panel sweep results chart (dark theme for app UI)."""
+    param_info = param_info or {}
+    df = df.sort_values("param_raw", ascending=True).reset_index(drop=True)
+    fig, axes  = plt.subplots(1, 3, figsize=(13, 3.6))
+    x          = np.arange(len(df))
+
+    if param_name == "max_n":
+        xtick_labels = [str(v) for v in df["n_patients"].tolist()]
+        xlabel = "Maximum total patients in trial (max N)"
+    elif param_name == "cohort_size":
+        n_fixed = int(df["n_patients"].iloc[0])
+        xtick_labels = df["param_label"].tolist()
+        xlabel = f"Cohort size — patients per dose decision  (max N = {n_fixed})"
+    else:
+        n_fixed = int(df["n_patients"].iloc[0])
+        xtick_labels = df["param_label"].tolist()
+        xlabel = f"{param_label}  (N = {n_fixed} pts)"
+
+    _apply_dark_fig(fig, *axes)
+    specs = [
+        ("quality_score",         "Quality score",       "#4a9eff"),
+        ("pct_correct_selection", "% Correct selection", "#44dd88"),
+        ("overdose_rate",         "Overdose rate (%)",   "#ff6666"),
+    ]
+    for ax, (col, ylabel, color) in zip(axes, specs):
+        ax.bar(x, df[col].values, color=color, alpha=0.85)
+        ax.set_xticks(x)
+        ax.set_xticklabels(xtick_labels,
+                           rotation=35 if len(x) > 6 else 0,
+                           ha="right", fontsize=8)
+        ax.set_xlabel(xlabel, fontsize=9)
+        ax.set_title(ylabel, fontsize=10, fontweight="bold")
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+        ax.grid(axis="y", lw=0.5, alpha=0.3, color=_DARK_GRD)
+    fig.tight_layout(pad=1.5)
+    return fig
+
+
+def _plot_sweep_results_light(df, param_label, param_name="", param_info=None):
+    """Light-themed version of _plot_sweep_results for embedded HTML reports."""
+    param_info = param_info or {}
+    df = df.sort_values("param_raw", ascending=True).reset_index(drop=True)
+    fig, axes = plt.subplots(1, 3, figsize=(13, 3.6))
+    x = np.arange(len(df))
+
+    if param_name == "max_n":
+        xtick_labels = [str(v) for v in df["n_patients"].tolist()]
+        xlabel = "Maximum total patients in trial (max N)"
+    elif param_name == "cohort_size":
+        n_fixed = int(df["n_patients"].iloc[0])
+        xtick_labels = df["param_label"].tolist()
+        xlabel = f"Cohort size — patients per dose decision  (max N = {n_fixed})"
+    else:
+        n_fixed = int(df["n_patients"].iloc[0])
+        xtick_labels = df["param_label"].tolist()
+        xlabel = f"{param_label}  (N = {n_fixed} pts)"
+
+    fig.patch.set_facecolor("white")
+    specs = [
+        ("quality_score",         "Quality score",       "#2563eb"),
+        ("pct_correct_selection", "% Correct selection", "#16a34a"),
+        ("overdose_rate",         "Overdose rate (%)",   "#dc2626"),
+    ]
+    for ax, (col, ylabel, color) in zip(axes, specs):
+        ax.set_facecolor("white")
+        ax.bar(x, df[col].values, color=color, alpha=0.82)
+        ax.set_xticks(x)
+        ax.set_xticklabels(xtick_labels,
+                           rotation=35 if len(x) > 6 else 0,
+                           ha="right", fontsize=8, color="#333333")
+        ax.set_xlabel(xlabel, fontsize=9, color="#444444")
+        ax.set_title(ylabel, fontsize=10, fontweight="bold", color="#111111")
+        ax.tick_params(colors="#333333", labelsize=8)
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+        ax.spines["left"].set_edgecolor("#cccccc")
+        ax.spines["bottom"].set_edgecolor("#cccccc")
+        ax.grid(axis="y", lw=0.5, alpha=0.6, color="#e0e0e0")
+        ax.yaxis.label.set_color("#444444")
+    fig.tight_layout(pad=1.5)
+    return fig
+
+
+def _plot_prior_mtd_context(true_tox, pv_list, tox_label, title,
+                            prior_target, prior_halfwidth,
+                            model="empiric", intcpt=3.0, light=False):
+    """Compact chart: true toxicity bars + one CRM skeleton line per prior MTD level."""
+    true_tox = list(true_tox)
+    n_levels = len(true_tox)
+    x        = np.arange(n_levels)
+    x_labels = [f"L{i + 1}" for i in range(n_levels)]
+
+    fig, ax = plt.subplots(figsize=(5.5, 3.2), dpi=130)
+
+    if light:
+        fig.patch.set_facecolor("white")
+        ax.set_facecolor("white")
+        bar_color   = "#2563eb"
+        grid_color  = "#e0e0e0"
+        spine_color = "#cccccc"
+        ax.tick_params(colors="#333333", labelsize=9)
+        ax.xaxis.label.set_color("#444444")
+        ax.yaxis.label.set_color("#444444")
+        ax.title.set_color("#111111")
+        for sp in ax.spines.values():
+            sp.set_edgecolor(spine_color)
+        legend_kw = dict(fontsize=8, framealpha=0.90,
+                         facecolor="white", edgecolor="#cccccc")
+    else:
+        _apply_dark_fig(fig, ax)
+        bar_color  = "#4a9eff"
+        grid_color = _DARK_GRD
+        legend_kw  = dict(fontsize=8, framealpha=0.80,
+                          facecolor=_DARK_AX, edgecolor=_DARK_GRD,
+                          labelcolor=_DARK_FG)
+
+    ax.bar(x, true_tox, color=bar_color, alpha=0.55, label="True toxicity",
+           zorder=2)
+
+    for lv in sorted(set(pv_list)):
+        idx = lv - 1
+        if 0 <= idx < n_levels:
+            try:
+                sk = dfcrm_getprior(prior_halfwidth, prior_target, lv,
+                                    n_levels, model=model, intcpt=intcpt)
+                color = _MTD_LINE_COLORS[idx % len(_MTD_LINE_COLORS)]
+                ax.plot(x, sk, color=color, linewidth=1.8,
+                        marker="o", markersize=3.5,
+                        label=f"Skeleton L{lv}", zorder=3)
+            except Exception:
+                pass
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(x_labels, fontsize=9)
+    ax.set_xlabel("Dose level", fontsize=9)
+    ax.set_ylabel(f"True {tox_label} prob", fontsize=9)
+    ax.set_title(title, fontsize=10, fontweight="bold")
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.grid(axis="y", lw=0.5, alpha=0.5, color=grid_color)
+    ax.legend(**legend_kw)
+    fig.tight_layout(pad=1.2)
+    return fig
