@@ -1,0 +1,600 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>TITE CRM Simulator</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div id="app">
+
+<!-- ═══════════════ SIDEBAR ═══════════════ -->
+<aside id="sidebar">
+  <div class="sidebar-logo">🧬 TITE CRM Simulator</div>
+
+  <nav id="nav">
+    <button class="nav-btn active" onclick="switchView('essentials')">Essentials</button>
+    <button class="nav-btn"        onclick="switchView('playground')">Playground</button>
+    <button class="nav-btn"        onclick="switchView('de')">Design Exploration</button>
+  </nav>
+
+  <details id="config-panel">
+    <summary>⚙ Configuration</summary>
+    <div class="config-body">
+      <button class="btn-sm" onclick="exportConfig()">⬇ Export JSON</button>
+      <label class="btn-sm file-lbl" for="import-file">⬆ Import JSON</label>
+      <input type="file" id="import-file" accept=".json" style="display:none"
+             onchange="importConfig(this)">
+      <button class="btn-sm btn-warn" onclick="resetConfig()">↺ Reset defaults</button>
+    </div>
+  </details>
+</aside>
+
+<!-- ═══════════════ MAIN CONTENT ═══════════════ -->
+<main id="main">
+
+<!-- ──────────────────────────────────────────────────────────────
+     VIEW: ESSENTIALS
+────────────────────────────────────────────────────────────────── -->
+<section id="view-essentials" class="view active">
+  <h2 class="view-title">Essentials — Study Design</h2>
+  <div class="two-col">
+
+    <!-- LEFT: controls -->
+    <div class="left-panel">
+
+      <!-- Study Design -->
+      <details class="ctrl-group" open>
+        <summary>Study Design</summary>
+        <div class="ctrl-body">
+          <div class="ctrl-row">
+            <label>Target tox1 (acute) <span class="val-badge" id="target_t1-v">0.15</span></label>
+            <input type="range" data-key="target_t1" min="0.01" max="0.50" step="0.01" data-fmt="f3">
+          </div>
+          <div class="ctrl-row">
+            <label>Target tox2 (surgery/subacute) <span class="val-badge" id="target_t2-v">0.33</span></label>
+            <input type="range" data-key="target_t2" min="0.01" max="0.50" step="0.01" data-fmt="f3">
+          </div>
+          <div class="ctrl-row">
+            <label>P(surgery) <span class="val-badge" id="p_surgery-v">0.80</span></label>
+            <input type="range" data-key="p_surgery" min="0.0" max="1.0" step="0.01" data-fmt="f2">
+          </div>
+          <div class="ctrl-row inline">
+            <label>Starting dose level (1-based)</label>
+            <input type="number" data-key="start_level_1b" min="1" max="5" step="1" class="num-sm">
+          </div>
+        </div>
+      </details>
+
+      <!-- True Toxicity Rates -->
+      <details class="ctrl-group" open>
+        <summary>True Toxicity Rates (per dose level)</summary>
+        <div class="ctrl-body">
+          <div class="ctrl-row inline">
+            <label>Prior scenario</label>
+            <select data-key="prior_scenario" id="prior-scenario-sel" onchange="applyPriorScenario(this.value)">
+              {% for s in prior_scenarios %}<option value="{{ s }}">{{ s }}</option>{% endfor %}
+            </select>
+          </div>
+          <p id="scenario-desc" class="caption"></p>
+          <div class="tox-grid">
+            <div class="tox-col">
+              <div class="tox-header">Tox1 (acute DLT)</div>
+              {% for i in range(5) %}
+              <div class="ctrl-row">
+                <label>{{ dose_labels[i] }} <span class="val-badge" id="true_t1_L{{i}}-v"></span></label>
+                <input type="range" data-key="true_t1_L{{i}}" min="0.00" max="0.99" step="0.01" data-fmt="f2">
+              </div>
+              {% endfor %}
+            </div>
+            <div class="tox-col">
+              <div class="tox-header">Tox2 (subacute / surgery)</div>
+              {% for i in range(5) %}
+              <div class="ctrl-row">
+                <label>{{ dose_labels[i] }} <span class="val-badge" id="true_t2_L{{i}}-v"></span></label>
+                <input type="range" data-key="true_t2_L{{i}}" min="0.00" max="0.99" step="0.01" data-fmt="f2">
+              </div>
+              {% endfor %}
+            </div>
+          </div>
+        </div>
+      </details>
+
+      <!-- Prior Parameters -->
+      <details class="ctrl-group" open>
+        <summary>CRM Prior Parameters</summary>
+        <div class="ctrl-body">
+          <div class="ctrl-row inline">
+            <label>Prior model</label>
+            <select data-key="prior_model">
+              <option value="empiric">Empiric (power)</option>
+              <option value="logistic">Logistic</option>
+            </select>
+          </div>
+          <div class="ctrl-row inline" id="intcpt-row">
+            <label>Logistic intercept</label>
+            <input type="number" data-key="logistic_intcpt" min="0.5" max="6.0" step="0.1" class="num-sm">
+          </div>
+          <div class="tox-grid">
+            <div class="tox-col">
+              <div class="tox-header">Tox1 prior</div>
+              <div class="ctrl-row inline">
+                <label>Target rate</label>
+                <input type="number" data-key="prior_target_t1" min="0.01" max="0.50" step="0.01" class="num-sm">
+              </div>
+              <div class="ctrl-row inline">
+                <label>Half-width</label>
+                <input type="number" data-key="halfwidth_t1" min="0.01" max="0.30" step="0.01" class="num-sm">
+              </div>
+              <div class="ctrl-row inline">
+                <label>Prior MTD level (1-based)</label>
+                <input type="number" data-key="prior_nu_t1" min="1" max="5" step="1" class="num-sm">
+              </div>
+            </div>
+            <div class="tox-col">
+              <div class="tox-header">Tox2 prior</div>
+              <div class="ctrl-row inline">
+                <label>Target rate</label>
+                <input type="number" data-key="prior_target_t2" min="0.01" max="0.50" step="0.01" class="num-sm">
+              </div>
+              <div class="ctrl-row inline">
+                <label>Half-width</label>
+                <input type="number" data-key="halfwidth_t2" min="0.01" max="0.30" step="0.01" class="num-sm">
+              </div>
+              <div class="ctrl-row inline">
+                <label>Prior MTD level (1-based)</label>
+                <input type="number" data-key="prior_nu_t2" min="1" max="5" step="1" class="num-sm">
+              </div>
+            </div>
+          </div>
+        </div>
+      </details>
+
+      <!-- Timing & Accrual -->
+      <details class="ctrl-group">
+        <summary>Timing &amp; Accrual</summary>
+        <div class="ctrl-body">
+          <div class="ctrl-row inline">
+            <label>Inclusion → RT start (days)</label>
+            <input type="number" data-key="incl_to_rt" min="0" max="90" step="1" class="num-sm">
+          </div>
+          <div class="ctrl-row inline">
+            <label>RT duration (days)</label>
+            <input type="number" data-key="rt_dur" min="1" max="60" step="1" class="num-sm">
+          </div>
+          <div class="ctrl-row inline">
+            <label>RT end → Surgery (days)</label>
+            <input type="number" data-key="rt_to_surg" min="1" max="180" step="1" class="num-sm">
+          </div>
+          <div class="ctrl-row inline">
+            <label>Tox2 window (days post-surgery)</label>
+            <input type="number" data-key="tox2_win" min="1" max="120" step="1" class="num-sm">
+          </div>
+          <div class="ctrl-row inline">
+            <label>Accrual rate (patients / month)</label>
+            <input type="number" data-key="accrual_per_month" min="0.1" max="10.0" step="0.1" class="num-sm">
+          </div>
+        </div>
+      </details>
+
+    </div><!-- /left-panel -->
+
+    <!-- RIGHT: charts -->
+    <div class="right-panel">
+      <h4>Dose-risk preview</h4>
+      <div id="preview-wrap" class="chart-box">
+        <div class="spinner" id="preview-spinner"></div>
+        <img id="preview-img" class="chart-img" alt="">
+      </div>
+
+      <h4 style="margin-top:1.4rem">Patient timeline</h4>
+      <div id="timeline-wrap" class="chart-box">
+        <div class="spinner" id="timeline-spinner"></div>
+        <img id="timeline-img" class="chart-img timeline-img" alt="">
+      </div>
+    </div><!-- /right-panel -->
+
+  </div><!-- /two-col -->
+</section>
+
+
+<!-- ──────────────────────────────────────────────────────────────
+     VIEW: PLAYGROUND
+────────────────────────────────────────────────────────────────── -->
+<section id="view-playground" class="view">
+  <h2 class="view-title">Playground — Run Simulations</h2>
+  <div class="two-col">
+
+    <!-- LEFT: run controls -->
+    <div class="left-panel">
+
+      <details class="ctrl-group" open>
+        <summary>Simulation Settings</summary>
+        <div class="ctrl-body">
+          <div class="ctrl-row inline">
+            <label>Number of simulations</label>
+            <input type="number" data-key="n_sims" min="10" max="5000" step="10" class="num-sm">
+          </div>
+          <div class="ctrl-row inline">
+            <label>Random seed</label>
+            <input type="number" data-key="seed" min="0" max="99999" step="1" class="num-sm">
+          </div>
+          <div class="ctrl-row inline">
+            <label>Max patients — TITE 6+3</label>
+            <input type="number" data-key="max_n_63" min="6" max="100" step="1" class="num-sm">
+          </div>
+          <div class="ctrl-row inline">
+            <label>Max patients — TITE-CRM</label>
+            <input type="number" data-key="max_n_crm" min="6" max="100" step="1" class="num-sm">
+          </div>
+          <div class="ctrl-row inline">
+            <label>CRM cohort size</label>
+            <input type="number" data-key="cohort_size" min="1" max="6" step="1" class="num-sm">
+          </div>
+        </div>
+      </details>
+
+      <details class="ctrl-group" open>
+        <summary>TITE-CRM Parameters</summary>
+        <div class="ctrl-body">
+          <div class="ctrl-row">
+            <label>Prior sigma (σ) <span class="val-badge" id="sigma-v">1.0</span></label>
+            <input type="range" data-key="sigma" min="0.1" max="5.0" step="0.1" data-fmt="f1">
+          </div>
+          <div class="ctrl-row">
+            <label>EWOC α (overdose threshold) <span class="val-badge" id="ewoc_alpha-v">0.25</span></label>
+            <input type="range" data-key="ewoc_alpha" min="0.05" max="0.90" step="0.01" data-fmt="f2" id="ewoc-alpha-slider">
+          </div>
+          <div class="ctrl-row inline">
+            <label>EWOC enabled</label>
+            <input type="checkbox" data-key="ewoc_on" onchange="toggleEwoc(this.checked)">
+          </div>
+          <div class="ctrl-row inline">
+            <label>Max escalation step</label>
+            <input type="number" data-key="max_step" min="1" max="4" step="1" class="num-sm">
+          </div>
+          <div class="ctrl-row inline">
+            <label>GH quadrature points</label>
+            <input type="number" data-key="gh_n" min="11" max="121" step="2" class="num-sm">
+          </div>
+          <div class="ctrl-row inline">
+            <label>Guardrail (≤ highest tried + 1)</label>
+            <input type="checkbox" data-key="enforce_guardrail">
+          </div>
+          <div class="ctrl-row inline">
+            <label>Restrict final MTD to tried doses</label>
+            <input type="checkbox" data-key="restrict_final_mtd">
+          </div>
+          <div class="ctrl-row inline">
+            <label>Burn-in until first tox1 DLT</label>
+            <input type="checkbox" data-key="burn_in">
+          </div>
+        </div>
+      </details>
+
+      <details class="ctrl-group">
+        <summary>TITE 6+3 Parameters</summary>
+        <div class="ctrl-body">
+          <p class="caption">Acute (tox1) thresholds — 6-patient cohort</p>
+          <div class="ctrl-row inline">
+            <label>Max tox1 to escalate (a6_esc_max)</label>
+            <input type="number" data-key="a6_esc_max" min="0" max="3" step="1" class="num-sm">
+          </div>
+          <div class="ctrl-row inline">
+            <label>Min tox1 to stop (a6_stop_min)</label>
+            <input type="number" data-key="a6_stop_min" min="1" max="6" step="1" class="num-sm">
+          </div>
+          <p class="caption">Acute thresholds — 9-patient cohort</p>
+          <div class="ctrl-row inline">
+            <label>Max tox1 to escalate (a9_esc_max)</label>
+            <input type="number" data-key="a9_esc_max" min="0" max="5" step="1" class="num-sm">
+          </div>
+          <p class="caption">Subacute (tox2 / surgery) thresholds — 6-patient cohort</p>
+          <div class="ctrl-row inline">
+            <label>Max tox2 to escalate (s6_esc_max)</label>
+            <input type="number" data-key="s6_esc_max" min="0" max="3" step="1" class="num-sm">
+          </div>
+          <div class="ctrl-row inline">
+            <label>Min tox2 to stop (s6_stop_min)</label>
+            <input type="number" data-key="s6_stop_min" min="1" max="6" step="1" class="num-sm">
+          </div>
+          <p class="caption">Subacute thresholds — 9-patient cohort</p>
+          <div class="ctrl-row inline">
+            <label>Max tox2 to escalate (s9_esc_max)</label>
+            <input type="number" data-key="s9_esc_max" min="0" max="5" step="1" class="num-sm">
+          </div>
+          <div class="ctrl-row inline">
+            <label>Min tox2 to stop (s9_stop_min)</label>
+            <input type="number" data-key="s9_stop_min" min="1" max="9" step="1" class="num-sm">
+          </div>
+        </div>
+      </details>
+
+      <div style="margin-top:1rem">
+        <button id="run-btn" class="btn-run" onclick="runSimulation()">▶ Run Simulation</button>
+      </div>
+    </div><!-- /left-panel -->
+
+    <!-- RIGHT: results -->
+    <div class="right-panel" id="results-panel">
+      <div id="run-placeholder" class="placeholder-msg">
+        Configure parameters on the left, then click <strong>Run Simulation</strong>.
+      </div>
+      <div id="run-spinner" class="run-spinner" style="display:none">
+        <div class="spinner big"></div>
+        <p>Running simulations…</p>
+      </div>
+
+      <div id="results-area" style="display:none">
+
+        <!-- MTD + Patients charts -->
+        <div class="chart-row">
+          <div class="chart-box"><img id="res-mtd-img"      class="chart-img" alt="MTD selection"></div>
+          <div class="chart-box"><img id="res-patients-img" class="chart-img" alt="Patients per dose"></div>
+        </div>
+
+        <!-- Metrics -->
+        <div class="metrics-grid" id="metrics-grid"></div>
+        <p id="results-caption" class="caption"></p>
+
+        <!-- Posterior tracking -->
+        <hr>
+        <h3>Posterior mean tracking — first CRM trial</h3>
+        <p class="caption">How TITE-CRM posterior mean toxicity estimates evolved across cohort decisions in the first simulated trial. Shaded bands = 90% credible intervals. Dashed green = target; dashed orange = EWOC α.</p>
+        <div class="chart-box wide"><img id="res-post-track-img" class="chart-img" alt="Posterior tracking"></div>
+
+        <!-- Study-end posteriors -->
+        <h3>Study-end posterior distributions — first CRM trial</h3>
+        <p class="caption">Posteriors computed using complete TITE weights at study end. Red shading = region x ≥ target (area = OD probability). Green dashed = target; OD% labels match decision walkthrough exactly.</p>
+        <div class="chart-box wide"><img id="res-study-end-img" class="chart-img" alt="Study-end posteriors"></div>
+
+        <!-- Dose eligibility -->
+        <h3>Dose eligibility trajectory</h3>
+        <p class="caption">Green = both OD probs below EWOC α (admissible). Amber = borderline. Red = excluded. Silver border = active dose. Gold border = final MTD.</p>
+        <div class="chart-box wide"><img id="res-eligibility-img" class="chart-img" alt="Dose eligibility"></div>
+
+        <!-- CRM trace toggle -->
+        <hr>
+        <div class="ctrl-row inline" style="margin-bottom:.5rem">
+          <label><strong>Show first CRM trial walkthrough</strong></label>
+          <input type="checkbox" data-key="show_crm_trace" id="show-trace-cb"
+                 onchange="toggleTraceSection(this.checked)">
+        </div>
+
+        <div id="trace-section" style="display:none">
+          <h3>First CRM trial — decision walkthrough</h3>
+          <p id="ewoc-caption" class="caption"></p>
+
+          <details class="ctrl-group" open>
+            <summary>Patient timeline</summary>
+            <div class="table-scroll" id="patient-table-wrap"></div>
+            <p class="caption">Tox1/Tox2 wt @dec = fractional TITE weight at the decision immediately following this patient's enrollment.</p>
+          </details>
+
+          <details class="ctrl-group" open>
+            <summary>Dose decision walkthrough</summary>
+            <div class="table-scroll" id="decision-table-wrap"></div>
+            <p class="caption">Post mean = posterior mean toxicity. OD prob = P(tox > target). EWOC ON: highest jointly admissible dose selected. EWOC OFF: argmin|post mean tox1 − target|.</p>
+          </details>
+
+          <div id="final-mtd-wrap" style="margin-top:1rem"></div>
+
+          <!-- Three trace plots -->
+          <h3>Trace plots</h3>
+          <div class="chart-row three-col">
+            <div class="chart-box">
+              <img id="res-trace-dose-img" class="chart-img" alt="Dose level trace">
+              <p class="caption">Solid: dose given to current cohort. Dashed: dose selected for the next cohort.</p>
+            </div>
+            <div class="chart-box">
+              <img id="res-trace-safety-img" class="chart-img" alt="Safety evolution">
+              <p class="caption">Posterior OD probability at the current dose. Dashed = EWOC α threshold.</p>
+            </div>
+            <div class="chart-box">
+              <img id="res-trace-tite-img" class="chart-img" alt="TITE accumulation">
+              <p class="caption">Sum of fractional TITE weights vs enrolled patients. Tox2 lags tox1 — surgery must occur first.</p>
+            </div>
+          </div>
+        </div><!-- /trace-section -->
+
+      </div><!-- /results-area -->
+    </div><!-- /right-panel -->
+
+  </div><!-- /two-col -->
+</section>
+
+
+<!-- ──────────────────────────────────────────────────────────────
+     VIEW: DESIGN EXPLORATION
+────────────────────────────────────────────────────────────────── -->
+<section id="view-de" class="view">
+  <h2 class="view-title">Design Exploration — Parameter Sweep</h2>
+
+  <div class="de-layout">
+    <div class="de-controls">
+
+      <details class="ctrl-group" open>
+        <summary>Sweep Configuration</summary>
+        <div class="ctrl-body">
+          <div class="ctrl-row inline">
+            <label>Parameter to sweep</label>
+            <select id="de-param-sel" onchange="onDEParamChange(this.value)">
+              <option value="sigma">Prior sigma (σ)</option>
+              <option value="ewoc_alpha">EWOC α — overdose threshold</option>
+              <option value="max_n">Maximum sample size (max N)</option>
+              <option value="cohort_size">Cohort size</option>
+              <option value="prior_nu_t1">Prior MTD level — tox1 (acute)</option>
+              <option value="prior_nu_t2">Prior MTD level — tox2 (subacute)</option>
+              <option value="enforce_guardrail">Guardrail ON/OFF</option>
+              <option value="restrict_final_mtd">Restrict final MTD ON/OFF</option>
+              <option value="burn_in">Burn-in ON/OFF</option>
+            </select>
+          </div>
+
+          <!-- sigma controls -->
+          <div id="de-ctrl-sigma" class="de-param-ctrl">
+            <div class="ctrl-row inline">
+              <label>Min σ</label>
+              <input type="number" data-key="de_sig_min" min="0.1" max="4.9" step="0.1" class="num-sm">
+            </div>
+            <div class="ctrl-row inline">
+              <label>Max σ</label>
+              <input type="number" data-key="de_sig_max" min="0.2" max="5.0" step="0.1" class="num-sm">
+            </div>
+            <div class="ctrl-row inline">
+              <label>Number of points</label>
+              <input type="number" data-key="de_sig_pts" min="3" max="20" step="1" class="num-sm">
+            </div>
+          </div>
+
+          <!-- ewoc_alpha controls -->
+          <div id="de-ctrl-ewoc_alpha" class="de-param-ctrl" style="display:none">
+            <div class="ctrl-row inline">
+              <label>Min α</label>
+              <input type="number" data-key="de_ea_min" min="0.01" max="0.55" step="0.01" class="num-sm">
+            </div>
+            <div class="ctrl-row inline">
+              <label>Max α</label>
+              <input type="number" data-key="de_ea_max" min="0.02" max="0.90" step="0.01" class="num-sm">
+            </div>
+            <div class="ctrl-row inline">
+              <label>Number of points</label>
+              <input type="number" data-key="de_ea_pts" min="3" max="20" step="1" class="num-sm">
+            </div>
+            <div class="ctrl-row inline">
+              <label>Include EWOC OFF as a point</label>
+              <input type="checkbox" data-key="de_inc_off">
+            </div>
+          </div>
+
+          <!-- max_n controls -->
+          <div id="de-ctrl-max_n" class="de-param-ctrl" style="display:none">
+            <div class="ctrl-row inline">
+              <label>Values (comma-separated)</label>
+              <input type="text" id="de-max-n-input" class="txt-input"
+                     onchange="parseListInput('de_max_n_vals', this.value, 'int')">
+            </div>
+          </div>
+
+          <!-- cohort_size controls -->
+          <div id="de-ctrl-cohort_size" class="de-param-ctrl" style="display:none">
+            <div class="ctrl-row inline">
+              <label>Values (comma-separated)</label>
+              <input type="text" id="de-cohort-input" class="txt-input"
+                     onchange="parseListInput('de_cohort_vals', this.value, 'int')">
+            </div>
+          </div>
+
+          <!-- prior_nu_t1 controls -->
+          <div id="de-ctrl-prior_nu_t1" class="de-param-ctrl" style="display:none">
+            <div class="ctrl-row inline">
+              <label>Prior MTD level values for tox1 (comma-separated, 1-5)</label>
+              <input type="text" id="de-nu1-input" class="txt-input"
+                     onchange="parseListInput('de_nu1_vals', this.value, 'int')">
+            </div>
+          </div>
+
+          <!-- prior_nu_t2 controls -->
+          <div id="de-ctrl-prior_nu_t2" class="de-param-ctrl" style="display:none">
+            <div class="ctrl-row inline">
+              <label>Prior MTD level values for tox2 (comma-separated, 1-5)</label>
+              <input type="text" id="de-nu2-input" class="txt-input"
+                     onchange="parseListInput('de_nu2_vals', this.value, 'int')">
+            </div>
+          </div>
+
+          <!-- bool params (no range controls) -->
+          <div id="de-ctrl-enforce_guardrail" class="de-param-ctrl" style="display:none">
+            <p class="caption">Boolean sweep: will run with OFF then ON.</p>
+          </div>
+          <div id="de-ctrl-restrict_final_mtd" class="de-param-ctrl" style="display:none">
+            <p class="caption">Boolean sweep: will run with OFF then ON.</p>
+          </div>
+          <div id="de-ctrl-burn_in" class="de-param-ctrl" style="display:none">
+            <p class="caption">Boolean sweep: will run with OFF then ON.</p>
+          </div>
+        </div>
+      </details>
+
+      <details class="ctrl-group" open>
+        <summary>Run Settings</summary>
+        <div class="ctrl-body">
+          <div class="ctrl-row inline">
+            <label>Simulations per sweep point</label>
+            <input type="number" data-key="de_n_sim" min="20" max="2000" step="10" class="num-sm">
+          </div>
+          <div class="ctrl-row inline">
+            <label>Random seed</label>
+            <input type="number" data-key="de_seed" min="0" max="99999" step="1" class="num-sm">
+          </div>
+          <div class="ctrl-row inline">
+            <label>Speed mode (fewer points/sims)</label>
+            <input type="checkbox" data-key="de_speed_mode">
+          </div>
+        </div>
+      </details>
+
+      <div style="margin-top:1rem; display:flex; gap:.6rem; flex-wrap:wrap">
+        <button class="btn-run" onclick="runSweep()">▶ Run Sweep</button>
+        <button class="btn-secondary" onclick="showBatchModal()">⬛ Run All-Params Batch…</button>
+      </div>
+    </div><!-- /de-controls -->
+
+    <div class="de-results" id="de-results-panel">
+      <div id="de-placeholder" class="placeholder-msg">
+        Select a parameter and click <strong>Run Sweep</strong> to see results.
+      </div>
+      <div id="de-spinner" class="run-spinner" style="display:none">
+        <div class="spinner big"></div>
+        <p>Running sweep…</p>
+      </div>
+      <div id="de-results-area" style="display:none">
+        <h3 id="de-result-title"></h3>
+        <div class="chart-box wide"><img id="de-sweep-img" class="chart-img" alt="Sweep results"></div>
+        <div class="chart-box" id="de-ctx-wrap" style="display:none">
+          <img id="de-ctx-img" class="chart-img" alt="Prior MTD context">
+        </div>
+        <div class="table-scroll" id="de-table-wrap"></div>
+      </div>
+    </div><!-- /de-results-panel -->
+  </div><!-- /de-layout -->
+
+  <!-- Batch modal -->
+  <div id="batch-modal" class="modal-overlay" style="display:none">
+    <div class="modal-box">
+      <h3>Run All-Params Batch Report</h3>
+      <p class="caption">Sweeps all 9 parameters and generates a self-contained HTML report.</p>
+      <div class="ctrl-row inline">
+        <label>Simulations per point</label>
+        <input type="number" id="batch-n-sim" value="100" min="20" max="2000" step="10" class="num-sm">
+      </div>
+      <div class="ctrl-row inline">
+        <label>Seed</label>
+        <input type="number" id="batch-seed" value="42" min="0" max="99999" class="num-sm">
+      </div>
+      <div class="ctrl-row inline">
+        <label>Run label (optional)</label>
+        <input type="text" id="batch-label" class="txt-input" placeholder="e.g. Scenario A">
+      </div>
+      <div class="ctrl-row inline">
+        <label>Speed mode</label>
+        <input type="checkbox" id="batch-speed">
+      </div>
+      <div style="margin-top:1rem; display:flex; gap:.6rem">
+        <button class="btn-run" onclick="runBatch()">▶ Generate &amp; Download</button>
+        <button class="btn-secondary" onclick="hideBatchModal()">Cancel</button>
+      </div>
+      <div id="batch-spinner" class="run-spinner" style="display:none; margin-top:.8rem">
+        <div class="spinner"></div><p>Running…</p>
+      </div>
+    </div>
+  </div>
+
+</section><!-- /view-de -->
+
+</main><!-- /main -->
+</div><!-- /app -->
+
+<script src="/static/app.js"></script>
+</body>
+</html>
