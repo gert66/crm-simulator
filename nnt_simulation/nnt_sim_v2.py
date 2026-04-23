@@ -517,7 +517,7 @@ def render_playground(proton_mode, hist_mode, gtv, mhd, mhd_pr):
         st.markdown("**Sigmoid**")
         dual_param("Midpoint (cc)", "gtv_mid",   0.0, 200.0, 1.0,  "%.1f")
         dual_param(
-            "Slope", "gtv_slope", -10.0, 0.1, 0.1, "%.3f",
+            "Slope", "gtv_slope", -10.0, 10.0, 0.1, "%.3f",
             help_text="Negative → larger GTV reduces survival.",
         )
         dual_param(
@@ -559,7 +559,7 @@ def render_playground(proton_mode, hist_mode, gtv, mhd, mhd_pr):
         st.markdown("**Sigmoid**")
         dual_param("Midpoint (Gy)", "mhd_mid",   0.0, 60.0,  0.5,  "%.1f")
         dual_param(
-            "Slope", "mhd_slope", -10.0, 0.1, 0.1, "%.3f",
+            "Slope", "mhd_slope", -10.0, 10.0, 0.1, "%.3f",
             help_text="Negative → higher MHD reduces survival.",
         )
         dual_param(
