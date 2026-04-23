@@ -24,11 +24,11 @@ _DEFAULTS = {
     "gtv_std":        20.0,
     "mhd_mean":       15.0,
     "mhd_std":         5.0,
-    "intercept":      -1.5,
+    "intercept":       0.5,
     "gtv_mid":        50.0,
-    "gtv_slope":      -0.04,
+    "gtv_slope":      -0.1,
     "mhd_mid":        15.0,
-    "mhd_slope":      -0.30,
+    "mhd_slope":      -0.1,
     "proton_mode":    "Multiply by factor",
     "proton_delta":    5.0,
     "proton_factor":   0.5,
@@ -41,7 +41,7 @@ _DEFAULTS = {
     "z_sd":            1.0,
     "z_beta":          0.5,
     "w_gtv":           1.0,
-    "w_mhd":           1.0,
+    "w_mhd":          -1.0,
 }
 
 # ── Math helpers ──────────────────────────────────────────────────────────────
