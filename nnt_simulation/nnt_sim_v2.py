@@ -309,8 +309,6 @@ def make_combined_plot(
         margin=dict(t=55, b=50, l=65, r=75),
         legend=dict(orientation="h", y=1.16, x=0, xanchor="left", font=dict(size=11)),
         barmode="overlay",
-        plot_bgcolor="rgba(248,249,250,1)",
-        paper_bgcolor="white",
     )
     return fig
 
@@ -519,7 +517,6 @@ def render_selection(pred_delta, true_delta, delta_thresh, selected, n_sel, nois
             title="Predicted Δ — all patients",
             xaxis_title="Predicted Δ (P_proton − P_photon)", yaxis_title="Count",
             height=300, margin=dict(t=40, b=40, l=50, r=20),
-            plot_bgcolor="rgba(248,249,250,1)", paper_bgcolor="white",
         )
         st.plotly_chart(fig, use_container_width=True, config=_CHART_CFG)
 
@@ -532,7 +529,6 @@ def render_selection(pred_delta, true_delta, delta_thresh, selected, n_sel, nois
                 title=f"Predicted Δ — selected patients (n = {n_sel:,})",
                 xaxis_title="Predicted Δ", yaxis_title="Count",
                 height=300, margin=dict(t=40, b=40, l=50, r=20),
-                plot_bgcolor="rgba(248,249,250,1)", paper_bgcolor="white",
             )
             st.plotly_chart(fig, use_container_width=True, config=_CHART_CFG)
         else:
@@ -599,7 +595,6 @@ def render_bin_analysis(pred_delta, true_delta, delta_thresh, n_sel):
             margin=dict(t=50, b=50, l=60, r=20),
             legend=dict(orientation="h", yanchor="bottom", y=1.02,
                         xanchor="right", x=1),
-            plot_bgcolor="rgba(248,249,250,1)", paper_bgcolor="white",
         )
         st.plotly_chart(fig, use_container_width=True, config=_CHART_CFG)
     else:
@@ -648,7 +643,6 @@ def render_noise_section(p_ph, out_ph_base, out_ph, noise_sd):
         height=420,
         margin=dict(t=50, b=50, l=60, r=20),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        plot_bgcolor="rgba(248,249,250,1)", paper_bgcolor="white",
     )
     st.plotly_chart(fig, use_container_width=True, config=_CHART_CFG)
 
@@ -672,7 +666,6 @@ def render_extra_plots(gtv, mhd, p_ph, p_pr):
             title="GTV distribution",
             xaxis_title="GTV (cc)", yaxis_title="Count",
             height=320, margin=dict(t=45, b=45, l=55, r=20),
-            plot_bgcolor="rgba(248,249,250,1)", paper_bgcolor="white",
         )
         st.plotly_chart(fig, use_container_width=True, config=_CHART_CFG)
 
@@ -682,7 +675,6 @@ def render_extra_plots(gtv, mhd, p_ph, p_pr):
             title="MHD distribution (photon)",
             xaxis_title="MHD (Gy)", yaxis_title="Count",
             height=320, margin=dict(t=45, b=45, l=55, r=20),
-            plot_bgcolor="rgba(248,249,250,1)", paper_bgcolor="white",
         )
         st.plotly_chart(fig, use_container_width=True, config=_CHART_CFG)
 
@@ -718,7 +710,6 @@ def render_extra_plots(gtv, mhd, p_ph, p_pr):
             margin=dict(t=50, b=50, l=60, r=20),
             legend=dict(orientation="h", yanchor="bottom", y=1.02,
                         xanchor="right", x=1),
-            plot_bgcolor="rgba(248,249,250,1)", paper_bgcolor="white",
         )
         st.plotly_chart(fig, use_container_width=True, config=_CHART_CFG)
 
