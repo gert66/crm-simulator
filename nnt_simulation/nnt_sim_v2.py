@@ -120,14 +120,9 @@ def _compute_roc(scores, labels):
 # ── Logistic regression fitting ───────────────────────────────────────────────
 
 @st.cache_data
-def fit_logistic_regression(
-    gtv, mhd, outcomes,
-    gtv_mid, gtv_slope, mhd_mid, mhd_slope,
-):
+def fit_logistic_regression(gtv, mhd, outcomes):
     """
-    Fit logistic regression on sigmoid-transformed, standardised GTV+MHD.
-    Features: f_GTV = sigmoid(GTV; mid, slope), f_MHD = sigmoid(MHD; mid, slope),
-    each standardised to zero mean / unit variance before fitting.
+    Fit logistic regression on raw standardised GTV and MHD (zero mean, unit variance).
     Returns (model, scaler, None) on success or (None, None, error_string) on failure.
     """
     n_alive = int(outcomes.sum())
@@ -140,10 +135,8 @@ def fit_logistic_regression(
     try:
         from sklearn.linear_model import LogisticRegression
         from sklearn.preprocessing import StandardScaler
-        f_gtv = sigmoid(gtv, gtv_mid, gtv_slope)
-        f_mhd = sigmoid(mhd, mhd_mid, mhd_slope)
         scaler = StandardScaler()
-        X = scaler.fit_transform(np.column_stack([f_gtv, f_mhd]))
+        X = scaler.fit_transform(np.column_stack([gtv, mhd]))
         y = outcomes.astype(int)
         lr = LogisticRegression(solver="lbfgs", max_iter=5000, C=1e6)
         lr.fit(X, y)
@@ -793,19 +786,13 @@ def render_fitted_model(
 
         st.markdown(
             f"**logit(P(OS2y)) = {b0:.3f}"
-            f" {'+ ' if b_gtv >= 0 else '− '}{abs(b_gtv):.3f} × σ(GTV)"
-            f" {'+ ' if b_mhd >= 0 else '− '}{abs(b_mhd):.3f} × σ(MHD)**"
+            f" {'+ ' if b_gtv >= 0 else '− '}{abs(b_gtv):.3f} × GTV"
+            f" {'+ ' if b_mhd >= 0 else '− '}{abs(b_mhd):.3f} × MHD**"
         )
         st.caption(
-            "Features are sigmoid-transformed GTV and MHD, then standardised. "
+            "GTV and MHD are standardised raw values (zero mean, unit variance). "
             "Logistic regression is fitted on binary photon survival outcomes."
         )
-
-        # Sign sanity check
-        if gtv_slope is not None and gtv_slope < 0 and b_gtv > 0:
-            st.warning(
-                "Fitted coefficient sign may be incorrect — check feature construction."
-            )
 
         # Correlation sanity check
         if fit_corr is not None and fit_corr < 0:
@@ -854,7 +841,7 @@ def render_fitted_model(
 
         st.markdown(
             f"**Feature matrix:** shape ({n_total}, 2) — "
-            f"column 0 = σ(GTV), column 1 = σ(MHD)"
+            f"column 0 = GTV (standardised), column 1 = MHD (standardised)"
         )
         if fit_corr is not None:
             corr_colour = "red" if fit_corr < 0 else "green"
@@ -1082,17 +1069,12 @@ def main():
     n_sel    = int(selected.sum())
 
     # ── Logistic regression fitting ───────────────────────────────────────────
-    lr_model, lr_scaler, fit_error = fit_logistic_regression(
-        gtv, mhd, out_ph,
-        gtv_mid, gtv_slope, mhd_mid, mhd_slope,
-    )
+    lr_model, lr_scaler, fit_error = fit_logistic_regression(gtv, mhd, out_ph)
 
     # ── Fitted photon and proton predictions ──────────────────────────────────
     if lr_model is not None:
-        X_ph      = lr_scaler.transform(np.column_stack([sigmoid(gtv,    gtv_mid, gtv_slope),
-                                                         sigmoid(mhd,    mhd_mid, mhd_slope)]))
-        X_pr      = lr_scaler.transform(np.column_stack([sigmoid(gtv,    gtv_mid, gtv_slope),
-                                                         sigmoid(mhd_pr, mhd_mid, mhd_slope)]))
+        X_ph = lr_scaler.transform(np.column_stack([gtv,    mhd]))
+        X_pr = lr_scaler.transform(np.column_stack([gtv,    mhd_pr]))
         p_fit_ph  = logit_to_prob(lr_model.intercept_[0] + X_ph @ lr_model.coef_[0])
         p_fit_pr  = logit_to_prob(lr_model.intercept_[0] + X_pr @ lr_model.coef_[0])
         fit_delta = p_fit_pr - p_fit_ph
