@@ -40,6 +40,8 @@ _DEFAULTS = {
     "z_mean":          0.0,
     "z_sd":            1.0,
     "z_beta":          0.5,
+    "w_gtv":           1.0,
+    "w_mhd":           1.0,
 }
 
 # ── Math helpers ──────────────────────────────────────────────────────────────
@@ -157,6 +159,7 @@ def run_simulation(
     proton_mode, proton_delta, proton_factor,
     noise_enabled=False, noise_sd=1.0,
     z_enabled=False, z_mean=0.0, z_sd=1.0, z_beta=0.5,
+    w_gtv=1.0, w_mhd=1.0,
 ):
     rng    = np.random.default_rng(seed)
     gtv    = sample_truncnorm(rng, gtv_mean, gtv_std, n)
@@ -164,12 +167,13 @@ def run_simulation(
     mhd_pr = apply_proton_mhd(mhd, proton_mode, proton_delta, proton_factor)
 
     # ── Prediction-world: model sees only GTV and MHD ────────────────────────
+    # w_gtv / w_mhd scale each sigmoid contribution independently of its shape
     logit_ph = (intercept
-                + sigmoid(gtv, gtv_mid, gtv_slope)
-                + sigmoid(mhd, mhd_mid, mhd_slope))
+                + w_gtv * sigmoid(gtv, gtv_mid, gtv_slope)
+                + w_mhd * sigmoid(mhd, mhd_mid, mhd_slope))
     logit_pr = (intercept
-                + sigmoid(gtv, gtv_mid, gtv_slope)
-                + sigmoid(mhd_pr, mhd_mid, mhd_slope))
+                + w_gtv * sigmoid(gtv, gtv_mid, gtv_slope)
+                + w_mhd * sigmoid(mhd_pr, mhd_mid, mhd_slope))
 
     # Predicted probabilities — Z and noise are never seen by the model
     p_ph = logit_to_prob(logit_ph)
@@ -438,6 +442,10 @@ def render_playground(proton_mode, hist_mode, gtv, mhd, mhd_pr):
         "Adjust any parameter with the slider for quick exploration or type an "
         "exact value in the box on the right. All plots update on every change."
     )
+    st.caption(
+        "Shape and importance are now separate: you can have a sharp sigmoid "
+        "that contributes little, or a shallow one that dominates."
+    )
 
     col_gtv, col_mhd = st.columns(2)
 
@@ -471,6 +479,15 @@ def render_playground(proton_mode, hist_mode, gtv, mhd, mhd_pr):
             "Slope", "gtv_slope", -1.0, 1.0, 0.01, "%.3f",
             help_text="Negative → larger GTV reduces survival.",
         )
+        dual_param(
+            "Weight (w_GTV)", "w_gtv", -3.0, 3.0, 0.1, "%.1f",
+            help_text="Scales the GTV sigmoid contribution to the logit.",
+        )
+        st.caption(
+            "Midpoint controls where the transition happens. "
+            "Slope controls how sharp it is. "
+            "Weight controls how much GTV matters overall."
+        )
 
     with col_mhd:
         st.markdown("#### MHD")
@@ -503,6 +520,15 @@ def render_playground(proton_mode, hist_mode, gtv, mhd, mhd_pr):
         dual_param(
             "Slope", "mhd_slope", -2.0, 2.0, 0.05, "%.3f",
             help_text="Negative → higher MHD reduces survival.",
+        )
+        dual_param(
+            "Weight (w_MHD)", "w_mhd", -3.0, 3.0, 0.1, "%.1f",
+            help_text="Scales the MHD sigmoid contribution to the logit.",
+        )
+        st.caption(
+            "Midpoint controls where the transition happens. "
+            "Slope controls how sharp it is. "
+            "Weight controls how much MHD matters overall."
         )
 
     c_left, c_right = st.columns(2)
@@ -825,6 +851,8 @@ def main():
     proton_delta  = float(st.session_state["proton_delta"])
     proton_factor = float(st.session_state["proton_factor"])
     delta_thresh  = float(st.session_state["delta_thresh"])
+    w_gtv         = float(st.session_state["w_gtv"])
+    w_mhd         = float(st.session_state["w_mhd"])
 
     gtv, mhd, p_ph, p_pr, pred_delta, true_delta, out_ph_base, out_ph, z_vals = run_simulation(
         n_patients, seed,
@@ -833,6 +861,7 @@ def main():
         proton_mode, proton_delta, proton_factor,
         noise_enabled, noise_sd,
         z_enabled, z_mean, z_sd, z_beta,
+        w_gtv, w_mhd,
     )
     mhd_pr   = apply_proton_mhd(mhd, proton_mode, proton_delta, proton_factor)
     selected = pred_delta >= delta_thresh
