@@ -777,6 +777,8 @@ def render_fitted_model(
     p_fit_ph, p_fit_pr, fit_delta,
     true_delta,
     out_ph,
+    gtv_slope=None,
+    fit_corr=None,
 ):
     st.subheader("Fitted Model")
 
@@ -791,13 +793,26 @@ def render_fitted_model(
 
         st.markdown(
             f"**logit(P(OS2y)) = {b0:.3f}"
-            f" {'+ ' if b_gtv >= 0 else '− '}{abs(b_gtv):.3f} × GTV"
-            f" {'+ ' if b_mhd >= 0 else '− '}{abs(b_mhd):.3f} × MHD**"
+            f" {'+ ' if b_gtv >= 0 else '− '}{abs(b_gtv):.3f} × σ(GTV)"
+            f" {'+ ' if b_mhd >= 0 else '− '}{abs(b_mhd):.3f} × σ(MHD)**"
         )
         st.caption(
-            "GTV and MHD are standardised to zero mean and unit variance using training data. "
+            "Features are sigmoid-transformed GTV and MHD, then standardised. "
             "Logistic regression is fitted on binary photon survival outcomes."
         )
+
+        # Sign sanity check
+        if gtv_slope is not None and gtv_slope < 0 and b_gtv > 0:
+            st.warning(
+                "Fitted coefficient sign may be incorrect — check feature construction."
+            )
+
+        # Correlation sanity check
+        if fit_corr is not None and fit_corr < 0:
+            st.error(
+                f"Fitted predictions are anti-correlated with truth-generator "
+                f"(r = {fit_corr:.3f}). The feature matrix may be inverted."
+            )
 
         # Comparison table
         comp_rows = [
@@ -828,6 +843,7 @@ def render_fitted_model(
     with st.expander("Fitting diagnostics"):
         n_alive = int(out_ph.sum())
         n_dead  = int(len(out_ph) - n_alive)
+        n_total = len(out_ph)
         d1, d2, d3, d4, d5, d6 = st.columns(6)
         d1.metric("Alive (photon)",  f"{n_alive:,}")
         d2.metric("Dead (photon)",   f"{n_dead:,}")
@@ -835,6 +851,20 @@ def render_fitted_model(
         d4.metric("SD P(OS2y)",      f"{p_ph.std():.3f}")
         d5.metric("Min P(OS2y)",     f"{p_ph.min():.3f}")
         d6.metric("Max P(OS2y)",     f"{p_ph.max():.3f}")
+
+        st.markdown(
+            f"**Feature matrix:** shape ({n_total}, 2) — "
+            f"column 0 = σ(GTV), column 1 = σ(MHD)"
+        )
+        if fit_corr is not None:
+            corr_colour = "red" if fit_corr < 0 else "green"
+            st.markdown(
+                f"**Pearson r (fitted vs truth-generator):** "
+                f":{corr_colour}[{fit_corr:.3f}]"
+            )
+            if fit_corr < 0:
+                st.error("Anti-correlation detected — feature matrix may be inverted.")
+
         st.caption(
             "The summary above uses the truth-generator probability. "
             "The fitted logistic model is shown separately once the fit succeeds."
@@ -1069,9 +1099,11 @@ def main():
         b0    = float(lr_model.intercept_[0])
         b_gtv = float(lr_model.coef_[0][0])
         b_mhd = float(lr_model.coef_[0][1])
+        # Pearson r between fitted and truth-generator predictions
+        fit_corr = float(np.corrcoef(p_fit_ph, p_ph)[0, 1])
     else:
         b0 = b_gtv = b_mhd = None
-        p_fit_ph = p_fit_pr = fit_delta = None
+        p_fit_ph = p_fit_pr = fit_delta = fit_corr = None
 
     st.title("Predicted vs True NNT — Proton vs Photon")
     st.markdown(
@@ -1103,6 +1135,8 @@ def main():
         p_fit_ph, p_fit_pr, fit_delta,
         true_delta,
         out_ph,
+        gtv_slope=gtv_slope,
+        fit_corr=fit_corr,
     )
     st.divider()
     render_model_diagnostics(
