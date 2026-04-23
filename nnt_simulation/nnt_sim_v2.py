@@ -34,6 +34,8 @@ _DEFAULTS = {
     "proton_factor":   0.5,
     "delta_thresh":    0.02,
     "hist_mode":      "Histogram",
+    "noise_enabled":  False,
+    "noise_sd":        1.0,
 }
 
 # ── Math helpers ──────────────────────────────────────────────────────────────
@@ -84,6 +86,30 @@ def apply_proton_mhd(mhd, mode, delta, factor):
     return mhd * factor
 
 
+def _compute_auc(scores, labels):
+    n_pos = float(labels.sum())
+    n_neg = float(len(labels)) - n_pos
+    if n_pos == 0 or n_neg == 0:
+        return 0.5
+    order = np.argsort(-scores)
+    ls = labels[order].astype(float)
+    tpr = np.concatenate([[0.0], np.cumsum(ls) / n_pos])
+    fpr = np.concatenate([[0.0], np.cumsum(1.0 - ls) / n_neg])
+    return float(np.trapz(tpr, fpr))
+
+
+def _roc_curve_arrays(scores, labels):
+    n_pos = float(labels.sum())
+    n_neg = float(len(labels)) - n_pos
+    if n_pos == 0 or n_neg == 0:
+        return np.array([0.0, 1.0]), np.array([0.0, 1.0])
+    order = np.argsort(-scores)
+    ls = labels[order].astype(float)
+    tpr = np.concatenate([[0.0], np.cumsum(ls) / n_pos, [1.0]])
+    fpr = np.concatenate([[0.0], np.cumsum(1.0 - ls) / n_neg, [1.0]])
+    return fpr, tpr
+
+
 # ── Bin definitions ───────────────────────────────────────────────────────────
 
 BIN_EDGES  = [0.02, 0.05, 0.10, 0.20, 0.40, 0.60, 0.80, 1.01]
@@ -124,18 +150,49 @@ def run_simulation(
     mhd_mean, mhd_std,
     intercept, gtv_mid, gtv_slope, mhd_mid, mhd_slope,
     proton_mode, proton_delta, proton_factor,
+    noise_enabled=False, noise_sd=1.0,
 ):
     rng    = np.random.default_rng(seed)
     gtv    = sample_truncnorm(rng, gtv_mean, gtv_std, n)
     mhd    = sample_truncnorm(rng, mhd_mean, mhd_std, n)
-    p_ph   = survival_prob(gtv, mhd, intercept, gtv_mid, gtv_slope, mhd_mid, mhd_slope)
-    out_ph = (rng.random(n) < p_ph).astype(float)
     mhd_pr = apply_proton_mhd(mhd, proton_mode, proton_delta, proton_factor)
-    p_pr   = survival_prob(gtv, mhd_pr, intercept, gtv_mid, gtv_slope, mhd_mid, mhd_slope)
-    out_pr = (rng.random(n) < p_pr).astype(float)
-    pred_delta = p_pr - p_ph
-    true_delta = out_pr - out_ph
-    return gtv, mhd, p_ph, p_pr, pred_delta, true_delta
+
+    # Step 1 — predictor-based logit scores
+    logit_ph = (intercept
+                + sigmoid(gtv, gtv_mid, gtv_slope)
+                + sigmoid(mhd, mhd_mid, mhd_slope))
+    logit_pr = (intercept
+                + sigmoid(gtv, gtv_mid, gtv_slope)
+                + sigmoid(mhd_pr, mhd_mid, mhd_slope))
+
+    # Step 3 — predicted probabilities (noiseless; model never sees epsilon)
+    p_ph = logit_to_prob(logit_ph)
+    p_pr = logit_to_prob(logit_pr)
+
+    # Noiseless binary outcomes (preserve original RNG sequence for reproducibility)
+    out_ph_base = (rng.random(n) < p_ph).astype(float)
+    out_pr_base = (rng.random(n) < p_pr).astype(float)
+
+    pred_delta = p_pr - p_ph  # always noiseless
+
+    if noise_enabled:
+        # Step 2 — epsilon ~ Normal(0, noise_sd), independent of main RNG
+        noise_rng = np.random.default_rng(seed + 1000)
+        eps_ph = noise_rng.normal(0.0, noise_sd, n)
+        eps_pr = noise_rng.normal(0.0, noise_sd, n)
+        # Step 4 — true probabilities (model does not observe these)
+        p_true_ph = logit_to_prob(logit_ph + eps_ph)
+        p_true_pr = logit_to_prob(logit_pr + eps_pr)
+        # Step 5 — sampled binary outcomes from true probability
+        out_ph = (noise_rng.random(n) < p_true_ph).astype(float)
+        out_pr = (noise_rng.random(n) < p_true_pr).astype(float)
+        true_delta = out_pr - out_ph
+    else:
+        out_ph = out_ph_base
+        true_delta = out_pr_base - out_ph_base
+
+    # out_ph_base: noiseless outcomes (AUC reference); out_ph: current outcomes
+    return gtv, mhd, p_ph, p_pr, pred_delta, true_delta, out_ph_base, out_ph
 
 
 # ── Dual-input widget ─────────────────────────────────────────────────────────
@@ -298,11 +355,21 @@ def render_sidebar():
                 key="hist_mode",
             )
 
+        with st.expander("Survival noise", expanded=False):
+            st.checkbox(
+                "Add random noise to survival mechanism",
+                key="noise_enabled",
+            )
+            if st.session_state.get("noise_enabled", False):
+                dual_param("Noise SD", "noise_sd", 0.1, 3.0, 0.1, "%.1f")
+
     return (
         int(st.session_state["n_patients"]),
         int(st.session_state["seed"]),
         st.session_state["proton_mode"],
         st.session_state["hist_mode"],
+        bool(st.session_state["noise_enabled"]),
+        float(st.session_state["noise_sd"]),
     )
 
 
@@ -429,7 +496,7 @@ def render_playground(proton_mode, hist_mode, gtv, mhd, mhd_pr):
 
 # ── Patient selection ─────────────────────────────────────────────────────────
 
-def render_selection(pred_delta, true_delta, delta_thresh, selected, n_sel):
+def render_selection(pred_delta, true_delta, delta_thresh, selected, n_sel, noise_enabled=False):
     st.subheader("Predicted Survival Benefit (Proton − Photon)")
     st.markdown(
         f"Δ = P_proton − P_photon per patient. Patients with Δ ≥ threshold are "
@@ -473,6 +540,11 @@ def render_selection(pred_delta, true_delta, delta_thresh, selected, n_sel):
                 "No patients exceed the selection threshold. "
                 "Lower the threshold to see selected patients."
             )
+
+    if noise_enabled:
+        st.caption(
+            "True outcomes include additional random variation not visible to the model."
+        )
 
 
 # ── Bin analysis ──────────────────────────────────────────────────────────────
@@ -535,6 +607,56 @@ def render_bin_analysis(pred_delta, true_delta, delta_thresh, n_sel):
             "Not enough populated bins to draw the comparison chart. "
             "Increase the number of patients or adjust the proton effect."
         )
+
+
+# ── Noise: ROC curve + info panel ────────────────────────────────────────────
+
+def render_noise_section(p_ph, out_ph_base, out_ph, noise_sd):
+    st.subheader("Random Noise: Model Discrimination")
+
+    auc_no_noise   = _compute_auc(p_ph, out_ph_base)
+    auc_with_noise = _compute_auc(p_ph, out_ph)
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Noise SD",          f"{noise_sd:.1f}")
+    c2.metric("AUC without noise", f"{auc_no_noise:.3f}")
+    c3.metric("AUC with noise",    f"{auc_with_noise:.3f}")
+
+    fpr_nn,    tpr_nn    = _roc_curve_arrays(p_ph, out_ph_base)
+    fpr_noise, tpr_noise = _roc_curve_arrays(p_ph, out_ph)
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=fpr_nn, y=tpr_nn, mode="lines",
+        name=f"No noise (AUC = {auc_no_noise:.3f})",
+        line=dict(color="#4C8BF5", width=2.5),
+    ))
+    fig.add_trace(go.Scatter(
+        x=fpr_noise, y=tpr_noise, mode="lines",
+        name=f"With noise SD={noise_sd:.1f} (AUC = {auc_with_noise:.3f})",
+        line=dict(color="#E8543A", width=2.5),
+    ))
+    fig.add_trace(go.Scatter(
+        x=[0, 1], y=[0, 1], mode="lines",
+        line=dict(color="grey", width=1, dash="dash"),
+        name="Random (AUC = 0.50)", showlegend=True,
+    ))
+    fig.update_layout(
+        title="ROC Curve — Predicted vs Actual Survival (Photon arm)",
+        xaxis_title="False Positive Rate",
+        yaxis_title="True Positive Rate",
+        height=420,
+        margin=dict(t=50, b=50, l=60, r=20),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        plot_bgcolor="rgba(248,249,250,1)", paper_bgcolor="white",
+    )
+    st.plotly_chart(fig, use_container_width=True, config=_CHART_CFG)
+
+    st.info(
+        "Noise represents unexplained variation outside the measured predictors. "
+        "As noise increases, AUC falls. A good-looking predicted delta can still "
+        "correspond to a much weaker true effect."
+    )
 
 
 # ── Extra exploration plots ───────────────────────────────────────────────────
@@ -621,7 +743,7 @@ def main():
         if _k not in st.session_state:
             st.session_state[_k] = _v
 
-    n_patients, seed, proton_mode, hist_mode = render_sidebar()
+    n_patients, seed, proton_mode, hist_mode, noise_enabled, noise_sd = render_sidebar()
 
     gtv_mean      = float(st.session_state["gtv_mean"])
     gtv_std       = float(st.session_state["gtv_std"])
@@ -636,11 +758,12 @@ def main():
     proton_factor = float(st.session_state["proton_factor"])
     delta_thresh  = float(st.session_state["delta_thresh"])
 
-    gtv, mhd, p_ph, p_pr, pred_delta, true_delta = run_simulation(
+    gtv, mhd, p_ph, p_pr, pred_delta, true_delta, out_ph_base, out_ph = run_simulation(
         n_patients, seed,
         gtv_mean, gtv_std, mhd_mean, mhd_std,
         intercept, gtv_mid, gtv_slope, mhd_mid, mhd_slope,
         proton_mode, proton_delta, proton_factor,
+        noise_enabled, noise_sd,
     )
     mhd_pr   = apply_proton_mhd(mhd, proton_mode, proton_delta, proton_factor)
     selected = pred_delta >= delta_thresh
@@ -658,9 +781,12 @@ def main():
     st.divider()
     render_playground(proton_mode, hist_mode, gtv, mhd, mhd_pr)
     st.divider()
-    render_selection(pred_delta, true_delta, delta_thresh, selected, n_sel)
+    render_selection(pred_delta, true_delta, delta_thresh, selected, n_sel, noise_enabled)
     st.divider()
     render_bin_analysis(pred_delta, true_delta, delta_thresh, n_sel)
+    if noise_enabled:
+        st.divider()
+        render_noise_section(p_ph, out_ph_base, out_ph, noise_sd)
     render_extra_plots(gtv, mhd, p_ph, p_pr)
 
 
