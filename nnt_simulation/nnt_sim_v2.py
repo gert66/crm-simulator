@@ -36,6 +36,10 @@ _DEFAULTS = {
     "hist_mode":      "Histogram",
     "noise_enabled":  False,
     "noise_sd":        1.0,
+    "z_enabled":      False,
+    "z_mean":          0.0,
+    "z_sd":            1.0,
+    "z_beta":          0.5,
 }
 
 # ── Math helpers ──────────────────────────────────────────────────────────────
@@ -152,13 +156,14 @@ def run_simulation(
     intercept, gtv_mid, gtv_slope, mhd_mid, mhd_slope,
     proton_mode, proton_delta, proton_factor,
     noise_enabled=False, noise_sd=1.0,
+    z_enabled=False, z_mean=0.0, z_sd=1.0, z_beta=0.5,
 ):
     rng    = np.random.default_rng(seed)
     gtv    = sample_truncnorm(rng, gtv_mean, gtv_std, n)
     mhd    = sample_truncnorm(rng, mhd_mean, mhd_std, n)
     mhd_pr = apply_proton_mhd(mhd, proton_mode, proton_delta, proton_factor)
 
-    # Step 1 — predictor-based logit scores
+    # ── Prediction-world: model sees only GTV and MHD ────────────────────────
     logit_ph = (intercept
                 + sigmoid(gtv, gtv_mid, gtv_slope)
                 + sigmoid(mhd, mhd_mid, mhd_slope))
@@ -166,34 +171,52 @@ def run_simulation(
                 + sigmoid(gtv, gtv_mid, gtv_slope)
                 + sigmoid(mhd_pr, mhd_mid, mhd_slope))
 
-    # Step 3 — predicted probabilities (noiseless; model never sees epsilon)
+    # Predicted probabilities — Z and noise are never seen by the model
     p_ph = logit_to_prob(logit_ph)
     p_pr = logit_to_prob(logit_pr)
 
-    # Noiseless binary outcomes (preserve original RNG sequence for reproducibility)
+    # Noiseless, Z-free binary outcomes (AUC baseline reference)
     out_ph_base = (rng.random(n) < p_ph).astype(float)
     out_pr_base = (rng.random(n) < p_pr).astype(float)
 
-    pred_delta = p_pr - p_ph  # always noiseless
+    pred_delta = p_pr - p_ph  # always noiseless, always Z-free
 
+    # ── Truth-world: true logit includes hidden factor Z and/or noise ─────────
+    # Z is a patient-level characteristic; same value for both arms
+    if z_enabled:
+        z_rng  = np.random.default_rng(seed + 2000)
+        z_vals = z_rng.normal(z_mean, z_sd, n)
+        z_term = z_beta * z_vals
+    else:
+        z_rng  = None
+        z_vals = None
+        z_term = 0.0  # broadcasts cleanly with NumPy arrays
+
+    # Additive noise — independent per patient, independent RNG stream
     if noise_enabled:
-        # Step 2 — epsilon ~ Normal(0, noise_sd), independent of main RNG
         noise_rng = np.random.default_rng(seed + 1000)
-        eps_ph = noise_rng.normal(0.0, noise_sd, n)
-        eps_pr = noise_rng.normal(0.0, noise_sd, n)
-        # Step 4 — true probabilities (model does not observe these)
-        p_true_ph = logit_to_prob(logit_ph + eps_ph)
-        p_true_pr = logit_to_prob(logit_pr + eps_pr)
-        # Step 5 — sampled binary outcomes from true probability
-        out_ph = (noise_rng.random(n) < p_true_ph).astype(float)
-        out_pr = (noise_rng.random(n) < p_true_pr).astype(float)
+        eps_ph    = noise_rng.normal(0.0, noise_sd, n)
+        eps_pr    = noise_rng.normal(0.0, noise_sd, n)
+    else:
+        noise_rng    = None
+        eps_ph = eps_pr = 0.0
+
+    if z_enabled or noise_enabled:
+        p_true_ph  = logit_to_prob(logit_ph + z_term + eps_ph)
+        p_true_pr  = logit_to_prob(logit_pr + z_term + eps_pr)
+        # Binary draws use noise_rng when available, else z_rng
+        draw_rng   = noise_rng if noise_enabled else z_rng
+        out_ph     = (draw_rng.random(n) < p_true_ph).astype(float)
+        out_pr     = (draw_rng.random(n) < p_true_pr).astype(float)
         true_delta = out_pr - out_ph
     else:
-        out_ph = out_ph_base
+        out_ph     = out_ph_base
         true_delta = out_pr_base - out_ph_base
 
-    # out_ph_base: noiseless outcomes (AUC reference); out_ph: current outcomes
-    return gtv, mhd, p_ph, p_pr, pred_delta, true_delta, out_ph_base, out_ph
+    # out_ph_base: Z-free noiseless outcomes (AUC reference)
+    # out_ph:      outcomes from the full truth-world (Z + noise if enabled)
+    # z_vals:      sampled Z values (None when Z is disabled)
+    return gtv, mhd, p_ph, p_pr, pred_delta, true_delta, out_ph_base, out_ph, z_vals
 
 
 # ── Dual-input widget ─────────────────────────────────────────────────────────
@@ -362,6 +385,13 @@ def render_sidebar():
             if st.session_state.get("noise_enabled", False):
                 dual_param("Noise SD", "noise_sd", 0.1, 3.0, 0.1, "%.1f")
 
+        with st.expander("Hidden prognostic factor Z", expanded=False):
+            st.checkbox("Add hidden prognostic factor Z", key="z_enabled")
+            if st.session_state.get("z_enabled", False):
+                dual_param("Z mean",  "z_mean", -3.0, 3.0, 0.1, "%.1f")
+                dual_param("Z SD",    "z_sd",    0.1, 3.0, 0.1, "%.1f")
+                dual_param("β_Z",     "z_beta", -2.0, 2.0, 0.1, "%.1f")
+
     return (
         int(st.session_state["n_patients"]),
         int(st.session_state["seed"]),
@@ -369,6 +399,10 @@ def render_sidebar():
         st.session_state["hist_mode"],
         bool(st.session_state["noise_enabled"]),
         float(st.session_state["noise_sd"]),
+        bool(st.session_state["z_enabled"]),
+        float(st.session_state["z_mean"]),
+        float(st.session_state["z_sd"]),
+        float(st.session_state["z_beta"]),
     )
 
 
@@ -654,6 +688,37 @@ def render_noise_section(p_ph, out_ph_base, out_ph, noise_sd):
     )
 
 
+# ── Hidden factor Z: diagnostics panel ───────────────────────────────────────
+
+def render_z_section(z_vals, z_mean, z_sd, z_beta):
+    st.info(
+        "The true world includes an unmeasured prognostic factor Z. "
+        "The fitted model does not see Z."
+    )
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Z mean",  f"{z_mean:.2f}")
+    c2.metric("Z SD",    f"{z_sd:.2f}")
+    c3.metric("β_Z",     f"{z_beta:.2f}")
+
+    with st.expander("Hidden factor diagnostics"):
+        fig = go.Figure(go.Histogram(
+            x=z_vals, nbinsx=40,
+            marker_color="#A855F7", opacity=0.80,
+        ))
+        fig.update_layout(
+            title="Distribution of hidden factor Z",
+            xaxis_title="Z", yaxis_title="Count",
+            height=300, margin=dict(t=45, b=45, l=55, r=20),
+        )
+        st.plotly_chart(fig, use_container_width=True, config=_CHART_CFG)
+
+    st.caption(
+        "Z affects true survival but is invisible to the prediction model. "
+        "This can reduce AUC and increase the gap between predicted and true NNT."
+    )
+
+
 # ── Extra exploration plots ───────────────────────────────────────────────────
 
 def render_extra_plots(gtv, mhd, p_ph, p_pr, mhd_pr):
@@ -745,7 +810,8 @@ def main():
         if _k not in st.session_state:
             st.session_state[_k] = _v
 
-    n_patients, seed, proton_mode, hist_mode, noise_enabled, noise_sd = render_sidebar()
+    n_patients, seed, proton_mode, hist_mode, noise_enabled, noise_sd, \
+        z_enabled, z_mean, z_sd, z_beta = render_sidebar()
 
     gtv_mean      = float(st.session_state["gtv_mean"])
     gtv_std       = float(st.session_state["gtv_std"])
@@ -760,12 +826,13 @@ def main():
     proton_factor = float(st.session_state["proton_factor"])
     delta_thresh  = float(st.session_state["delta_thresh"])
 
-    gtv, mhd, p_ph, p_pr, pred_delta, true_delta, out_ph_base, out_ph = run_simulation(
+    gtv, mhd, p_ph, p_pr, pred_delta, true_delta, out_ph_base, out_ph, z_vals = run_simulation(
         n_patients, seed,
         gtv_mean, gtv_std, mhd_mean, mhd_std,
         intercept, gtv_mid, gtv_slope, mhd_mid, mhd_slope,
         proton_mode, proton_delta, proton_factor,
         noise_enabled, noise_sd,
+        z_enabled, z_mean, z_sd, z_beta,
     )
     mhd_pr   = apply_proton_mhd(mhd, proton_mode, proton_delta, proton_factor)
     selected = pred_delta >= delta_thresh
@@ -789,6 +856,9 @@ def main():
     if noise_enabled:
         st.divider()
         render_noise_section(p_ph, out_ph_base, out_ph, noise_sd)
+    if z_enabled:
+        st.divider()
+        render_z_section(z_vals, z_mean, z_sd, z_beta)
     render_extra_plots(gtv, mhd, p_ph, p_pr, mhd_pr)
 
 
