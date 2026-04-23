@@ -120,31 +120,29 @@ def _compute_roc(scores, labels):
 # ── Logistic regression fitting ───────────────────────────────────────────────
 
 @st.cache_data
-def fit_logistic_regression(gtv, mhd, out_ph):
+def fit_logistic_regression(gtv, mhd, outcomes):
     """
-    Fit LogisticRegression on standardised GTV+MHD to predict binary photon outcome.
-    Returns (b0, b_gtv, b_mhd, gtv_mu, gtv_sig, mhd_mu, mhd_sig) or None on failure.
+    Fit logistic regression on standardised GTV+MHD to predict binary photon outcome.
+    Returns (model, scaler, None) on success or (None, None, error_string) on failure.
     """
+    n_alive = int(outcomes.sum())
+    n_dead  = int(len(outcomes) - n_alive)
+    if len(np.unique(outcomes)) < 2:
+        return None, None, (
+            f"Cannot fit: all {len(outcomes)} patients have the same outcome "
+            f"({n_alive} alive, {n_dead} dead)."
+        )
     try:
         from sklearn.linear_model import LogisticRegression
-        gtv_mu, gtv_sig = float(gtv.mean()), float(gtv.std())
-        mhd_mu, mhd_sig = float(mhd.mean()), float(mhd.std())
-        X = np.column_stack([
-            (gtv - gtv_mu) / gtv_sig,
-            (mhd - mhd_mu) / mhd_sig,
-        ])
-        y = out_ph.astype(int)
-        lr = LogisticRegression(max_iter=1000)
+        from sklearn.preprocessing import StandardScaler
+        scaler = StandardScaler()
+        X = scaler.fit_transform(np.column_stack([gtv, mhd]))
+        y = outcomes.astype(int)
+        lr = LogisticRegression(solver="lbfgs", max_iter=5000, C=1e6)
         lr.fit(X, y)
-        return (
-            float(lr.intercept_[0]),
-            float(lr.coef_[0][0]),
-            float(lr.coef_[0][1]),
-            gtv_mu, gtv_sig,
-            mhd_mu, mhd_sig,
-        )
-    except Exception:
-        return None
+        return lr, scaler, None
+    except Exception as e:
+        return None, None, f"Fitting failed: {e}"
 
 
 # ── Bin definitions ───────────────────────────────────────────────────────────
@@ -766,53 +764,74 @@ def render_z_section(z_vals, z_mean, z_sd, z_beta):
 # ── Fitted model ─────────────────────────────────────────────────────────────
 
 def render_fitted_model(
+    fit_error,
     b0, b_gtv, b_mhd,
     p_ph, p_pr, pred_delta,
     p_fit_ph, p_fit_pr, fit_delta,
     true_delta,
+    out_ph,
 ):
     st.subheader("Fitted Model")
 
-    # Coefficients row
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Intercept (β₀)",  f"{b0:.3f}")
-    c2.metric("β_GTV",           f"{b_gtv:.3f}")
-    c3.metric("β_MHD",           f"{b_mhd:.3f}")
+    if fit_error is not None:
+        st.error(fit_error)
+    else:
+        # Coefficients row
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Intercept (β₀)", f"{b0:.3f}")
+        c2.metric("β_GTV",          f"{b_gtv:.3f}")
+        c3.metric("β_MHD",          f"{b_mhd:.3f}")
 
-    st.markdown(
-        f"**logit(P(OS2y)) = {b0:.3f}"
-        f" {'+ ' if b_gtv >= 0 else '− '}{abs(b_gtv):.3f} × GTV"
-        f" {'+ ' if b_mhd >= 0 else '− '}{abs(b_mhd):.3f} × MHD**"
-    )
-    st.caption(
-        "GTV and MHD are standardised to zero mean and unit variance using training data. "
-        "Logistic regression is fitted on binary photon survival outcomes."
-    )
+        st.markdown(
+            f"**logit(P(OS2y)) = {b0:.3f}"
+            f" {'+ ' if b_gtv >= 0 else '− '}{abs(b_gtv):.3f} × GTV"
+            f" {'+ ' if b_mhd >= 0 else '− '}{abs(b_mhd):.3f} × MHD**"
+        )
+        st.caption(
+            "GTV and MHD are standardised to zero mean and unit variance using training data. "
+            "Logistic regression is fitted on binary photon survival outcomes."
+        )
 
-    # Comparison table
-    comp_rows = [
-        {
-            "Metric":          "Mean photon survival",
-            "Truth-generator": f"{p_ph.mean():.3f}",
-            "Fitted model":    f"{p_fit_ph.mean():.3f}",
-        },
-        {
-            "Metric":          "Mean proton survival",
-            "Truth-generator": f"{p_pr.mean():.3f}",
-            "Fitted model":    f"{p_fit_pr.mean():.3f}",
-        },
-        {
-            "Metric":          "Mean predicted Δ",
-            "Truth-generator": f"{pred_delta.mean():.4f}",
-            "Fitted model":    f"{fit_delta.mean():.4f}",
-        },
-        {
-            "Metric":          "Mean true Δ (outcomes)",
-            "Truth-generator": f"{true_delta.mean():.4f}",
-            "Fitted model":    "—",
-        },
-    ]
-    st.dataframe(pd.DataFrame(comp_rows), hide_index=True, use_container_width=True)
+        # Comparison table
+        comp_rows = [
+            {
+                "Metric":          "Mean photon survival",
+                "Truth-generator": f"{p_ph.mean():.3f}",
+                "Fitted model":    f"{p_fit_ph.mean():.3f}",
+            },
+            {
+                "Metric":          "Mean proton survival",
+                "Truth-generator": f"{p_pr.mean():.3f}",
+                "Fitted model":    f"{p_fit_pr.mean():.3f}",
+            },
+            {
+                "Metric":          "Mean predicted Δ",
+                "Truth-generator": f"{pred_delta.mean():.4f}",
+                "Fitted model":    f"{fit_delta.mean():.4f}",
+            },
+            {
+                "Metric":          "Mean true Δ (outcomes)",
+                "Truth-generator": f"{true_delta.mean():.4f}",
+                "Fitted model":    "—",
+            },
+        ]
+        st.dataframe(pd.DataFrame(comp_rows), hide_index=True, use_container_width=True)
+
+    # Fitting diagnostics — always visible
+    with st.expander("Fitting diagnostics"):
+        n_alive = int(out_ph.sum())
+        n_dead  = int(len(out_ph) - n_alive)
+        d1, d2, d3, d4, d5, d6 = st.columns(6)
+        d1.metric("Alive (photon)",  f"{n_alive:,}")
+        d2.metric("Dead (photon)",   f"{n_dead:,}")
+        d3.metric("Mean P(OS2y)",    f"{p_ph.mean():.3f}")
+        d4.metric("SD P(OS2y)",      f"{p_ph.std():.3f}")
+        d5.metric("Min P(OS2y)",     f"{p_ph.min():.3f}")
+        d6.metric("Max P(OS2y)",     f"{p_ph.max():.3f}")
+        st.caption(
+            "The summary above uses the truth-generator probability. "
+            "The fitted logistic model is shown separately once the fit succeeds."
+        )
 
 
 # ── Model diagnostics ────────────────────────────────────────────────────────
@@ -1026,17 +1045,18 @@ def main():
     n_sel    = int(selected.sum())
 
     # ── Logistic regression fitting ───────────────────────────────────────────
-    fit_result = fit_logistic_regression(gtv, mhd, out_ph)
+    lr_model, lr_scaler, fit_error = fit_logistic_regression(gtv, mhd, out_ph)
 
     # ── Fitted photon and proton predictions ──────────────────────────────────
-    if fit_result is not None:
-        b0, b_gtv, b_mhd, gtv_mu, gtv_sig, mhd_mu, mhd_sig = fit_result
-        gtv_z     = (gtv    - gtv_mu) / gtv_sig
-        mhd_z_ph  = (mhd    - mhd_mu) / mhd_sig
-        mhd_z_pr  = (mhd_pr - mhd_mu) / mhd_sig
-        p_fit_ph  = logit_to_prob(b0 + b_gtv * gtv_z + b_mhd * mhd_z_ph)
-        p_fit_pr  = logit_to_prob(b0 + b_gtv * gtv_z + b_mhd * mhd_z_pr)
+    if lr_model is not None:
+        X_ph      = lr_scaler.transform(np.column_stack([gtv,    mhd]))
+        X_pr      = lr_scaler.transform(np.column_stack([gtv,    mhd_pr]))
+        p_fit_ph  = logit_to_prob(lr_model.intercept_[0] + X_ph @ lr_model.coef_[0])
+        p_fit_pr  = logit_to_prob(lr_model.intercept_[0] + X_pr @ lr_model.coef_[0])
         fit_delta = p_fit_pr - p_fit_ph
+        b0    = float(lr_model.intercept_[0])
+        b_gtv = float(lr_model.coef_[0][0])
+        b_mhd = float(lr_model.coef_[0][1])
     else:
         b0 = b_gtv = b_mhd = None
         p_fit_ph = p_fit_pr = fit_delta = None
@@ -1048,12 +1068,6 @@ def main():
         "**true NNT** (from Monte Carlo binary outcomes) when selecting patients "
         "for proton therapy. All parameters update instantly."
     )
-
-    if fit_result is None:
-        st.warning(
-            "Logistic regression did not converge. "
-            "Try adjusting the survival model parameters."
-        )
 
     render_summary_cards(n_patients, n_sel, p_ph, p_pr, pred_delta, true_delta, selected)
     st.divider()
@@ -1069,14 +1083,15 @@ def main():
     if z_enabled:
         st.divider()
         render_z_section(z_vals, z_mean, z_sd, z_beta)
-    if fit_result is not None:
-        st.divider()
-        render_fitted_model(
-            b0, b_gtv, b_mhd,
-            p_ph, p_pr, pred_delta,
-            p_fit_ph, p_fit_pr, fit_delta,
-            true_delta,
-        )
+    st.divider()
+    render_fitted_model(
+        fit_error,
+        b0, b_gtv, b_mhd,
+        p_ph, p_pr, pred_delta,
+        p_fit_ph, p_fit_pr, fit_delta,
+        true_delta,
+        out_ph,
+    )
     st.divider()
     render_model_diagnostics(
         p_ph, p_pr, out_ph_base, out_ph,
