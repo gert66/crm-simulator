@@ -120,9 +120,14 @@ def _compute_roc(scores, labels):
 # ── Logistic regression fitting ───────────────────────────────────────────────
 
 @st.cache_data
-def fit_logistic_regression(gtv, mhd, outcomes):
+def fit_logistic_regression(
+    gtv, mhd, outcomes,
+    gtv_mid, gtv_slope, mhd_mid, mhd_slope,
+):
     """
-    Fit logistic regression on standardised GTV+MHD to predict binary photon outcome.
+    Fit logistic regression on sigmoid-transformed, standardised GTV+MHD.
+    Features: f_GTV = sigmoid(GTV; mid, slope), f_MHD = sigmoid(MHD; mid, slope),
+    each standardised to zero mean / unit variance before fitting.
     Returns (model, scaler, None) on success or (None, None, error_string) on failure.
     """
     n_alive = int(outcomes.sum())
@@ -135,8 +140,10 @@ def fit_logistic_regression(gtv, mhd, outcomes):
     try:
         from sklearn.linear_model import LogisticRegression
         from sklearn.preprocessing import StandardScaler
+        f_gtv = sigmoid(gtv, gtv_mid, gtv_slope)
+        f_mhd = sigmoid(mhd, mhd_mid, mhd_slope)
         scaler = StandardScaler()
-        X = scaler.fit_transform(np.column_stack([gtv, mhd]))
+        X = scaler.fit_transform(np.column_stack([f_gtv, f_mhd]))
         y = outcomes.astype(int)
         lr = LogisticRegression(solver="lbfgs", max_iter=5000, C=1e6)
         lr.fit(X, y)
@@ -1045,12 +1052,17 @@ def main():
     n_sel    = int(selected.sum())
 
     # ── Logistic regression fitting ───────────────────────────────────────────
-    lr_model, lr_scaler, fit_error = fit_logistic_regression(gtv, mhd, out_ph)
+    lr_model, lr_scaler, fit_error = fit_logistic_regression(
+        gtv, mhd, out_ph,
+        gtv_mid, gtv_slope, mhd_mid, mhd_slope,
+    )
 
     # ── Fitted photon and proton predictions ──────────────────────────────────
     if lr_model is not None:
-        X_ph      = lr_scaler.transform(np.column_stack([gtv,    mhd]))
-        X_pr      = lr_scaler.transform(np.column_stack([gtv,    mhd_pr]))
+        X_ph      = lr_scaler.transform(np.column_stack([sigmoid(gtv,    gtv_mid, gtv_slope),
+                                                         sigmoid(mhd,    mhd_mid, mhd_slope)]))
+        X_pr      = lr_scaler.transform(np.column_stack([sigmoid(gtv,    gtv_mid, gtv_slope),
+                                                         sigmoid(mhd_pr, mhd_mid, mhd_slope)]))
         p_fit_ph  = logit_to_prob(lr_model.intercept_[0] + X_ph @ lr_model.coef_[0])
         p_fit_pr  = logit_to_prob(lr_model.intercept_[0] + X_pr @ lr_model.coef_[0])
         fit_delta = p_fit_pr - p_fit_ph
