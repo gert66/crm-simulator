@@ -665,7 +665,7 @@ def render_bin_analysis(pred_delta, true_delta, delta_thresh, n_sel):
         )
 
 
-# ── Noise: ROC curve + info panel ────────────────────────────────────────────
+# ── Noise: AUC summary panel ──────────────────────────────────────────────────
 
 def render_noise_section(p_ph, out_ph_base, out_ph, noise_sd):
     st.subheader("Random Noise: Model Discrimination")
@@ -677,35 +677,6 @@ def render_noise_section(p_ph, out_ph_base, out_ph, noise_sd):
     c1.metric("Noise SD",          f"{noise_sd:.1f}")
     c2.metric("AUC without noise", f"{auc_no_noise:.3f}")
     c3.metric("AUC with noise",    f"{auc_with_noise:.3f}")
-
-    fpr_nn,    tpr_nn    = _compute_roc(p_ph, out_ph_base)
-    fpr_noise, tpr_noise = _compute_roc(p_ph, out_ph)
-
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(
-        x=fpr_nn, y=tpr_nn, mode="lines",
-        name=f"No noise (AUC = {auc_no_noise:.3f})",
-        line=dict(color="#4C8BF5", width=2.5),
-    ))
-    fig.add_trace(go.Scatter(
-        x=fpr_noise, y=tpr_noise, mode="lines",
-        name=f"With noise SD={noise_sd:.1f} (AUC = {auc_with_noise:.3f})",
-        line=dict(color="#E8543A", width=2.5),
-    ))
-    fig.add_trace(go.Scatter(
-        x=[0, 1], y=[0, 1], mode="lines",
-        line=dict(color="grey", width=1, dash="dash"),
-        name="Random (AUC = 0.50)", showlegend=True,
-    ))
-    fig.update_layout(
-        title="ROC Curve — Predicted vs Actual Survival (Photon arm)",
-        xaxis_title="False Positive Rate",
-        yaxis_title="True Positive Rate",
-        height=420,
-        margin=dict(t=50, b=50, l=60, r=20),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-    )
-    st.plotly_chart(fig, use_container_width=True, config=_CHART_CFG)
 
     st.info(
         "Noise represents unexplained variation outside the measured predictors. "
@@ -743,6 +714,89 @@ def render_z_section(z_vals, z_mean, z_sd, z_beta):
         "Z affects true survival but is invisible to the prediction model. "
         "This can reduce AUC and increase the gap between predicted and true NNT."
     )
+
+
+# ── Model diagnostics ────────────────────────────────────────────────────────
+
+def render_model_diagnostics(
+    p_ph, p_pr, out_ph_base, out_ph,
+    noise_enabled, noise_sd,
+    intercept, gtv_mid, gtv_slope, mhd_mid, mhd_slope, w_gtv, w_mhd,
+):
+    st.subheader("Model Diagnostics")
+
+    # ── ROC curve ─────────────────────────────────────────────────────────────
+    auc_base = _compute_auc(p_ph, out_ph_base)
+    fpr_base, tpr_base = _compute_roc(p_ph, out_ph_base)
+
+    fig_roc = go.Figure()
+    fig_roc.add_trace(go.Scatter(
+        x=fpr_base, y=tpr_base, mode="lines",
+        name=f"Noiseless outcomes (AUC = {auc_base:.3f})",
+        line=dict(width=2.5),
+    ))
+
+    if noise_enabled:
+        auc_noise = _compute_auc(p_ph, out_ph)
+        fpr_noise, tpr_noise = _compute_roc(p_ph, out_ph)
+        fig_roc.add_trace(go.Scatter(
+            x=fpr_noise, y=tpr_noise, mode="lines",
+            name=f"Noisy outcomes SD={noise_sd:.1f} (AUC = {auc_noise:.3f})",
+            line=dict(width=2.5, dash="dot"),
+        ))
+
+    fig_roc.add_trace(go.Scatter(
+        x=[0, 1], y=[0, 1], mode="lines",
+        line=dict(color="grey", width=1, dash="dash"),
+        name="Random (AUC = 0.50)", showlegend=True,
+    ))
+    fig_roc.update_layout(
+        title="ROC Curve — Predicted vs Actual Photon Survival",
+        xaxis_title="False Positive Rate",
+        yaxis_title="True Positive Rate",
+        height=420,
+        margin=dict(t=50, b=50, l=60, r=20),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+    )
+    st.plotly_chart(fig_roc, use_container_width=True, config=_CHART_CFG)
+
+    col1, col2 = st.columns(2)
+
+    # ── Prediction stats ───────────────────────────────────────────────────────
+    with col1:
+        st.markdown("**Predicted survival probability — summary**")
+        stats_rows = [
+            {"Arm": "Photon", "Mean": f"{p_ph.mean():.3f}", "SD": f"{p_ph.std():.3f}",
+             "Min": f"{p_ph.min():.3f}", "Max": f"{p_ph.max():.3f}"},
+            {"Arm": "Proton", "Mean": f"{p_pr.mean():.3f}", "SD": f"{p_pr.std():.3f}",
+             "Min": f"{p_pr.min():.3f}", "Max": f"{p_pr.max():.3f}"},
+        ]
+        st.dataframe(pd.DataFrame(stats_rows), hide_index=True, use_container_width=True)
+
+        # Histogram of predicted photon survival
+        fig_hist = go.Figure(go.Histogram(
+            x=p_ph, nbinsx=40, opacity=0.85,
+        ))
+        fig_hist.update_layout(
+            title="Predicted photon survival probability",
+            xaxis_title="Predicted P(survival)", yaxis_title="Count",
+            height=280, margin=dict(t=45, b=45, l=55, r=20),
+        )
+        st.plotly_chart(fig_hist, use_container_width=True, config=_CHART_CFG)
+
+    # ── Model parameter table ──────────────────────────────────────────────────
+    with col2:
+        st.markdown("**Survival model parameters**")
+        param_rows = [
+            {"Parameter": "Intercept",    "Value": f"{intercept:.3f}"},
+            {"Parameter": "GTV midpoint", "Value": f"{gtv_mid:.1f} cc"},
+            {"Parameter": "GTV slope",    "Value": f"{gtv_slope:.4f}"},
+            {"Parameter": "GTV weight",   "Value": f"{w_gtv:.2f}"},
+            {"Parameter": "MHD midpoint", "Value": f"{mhd_mid:.1f} Gy"},
+            {"Parameter": "MHD slope",    "Value": f"{mhd_slope:.4f}"},
+            {"Parameter": "MHD weight",   "Value": f"{w_mhd:.2f}"},
+        ]
+        st.dataframe(pd.DataFrame(param_rows), hide_index=True, use_container_width=True)
 
 
 # ── Extra exploration plots ───────────────────────────────────────────────────
@@ -888,6 +942,12 @@ def main():
     if z_enabled:
         st.divider()
         render_z_section(z_vals, z_mean, z_sd, z_beta)
+    st.divider()
+    render_model_diagnostics(
+        p_ph, p_pr, out_ph_base, out_ph,
+        noise_enabled, noise_sd,
+        intercept, gtv_mid, gtv_slope, mhd_mid, mhd_slope, w_gtv, w_mhd,
+    )
     render_extra_plots(gtv, mhd, p_ph, p_pr, mhd_pr)
 
 
