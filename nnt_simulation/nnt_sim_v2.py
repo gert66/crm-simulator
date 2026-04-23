@@ -117,13 +117,43 @@ def _compute_roc(scores, labels):
     return fpr, tpr
 
 
+# ── Logistic regression fitting ───────────────────────────────────────────────
+
+@st.cache_data
+def fit_logistic_regression(gtv, mhd, out_ph):
+    """
+    Fit LogisticRegression on standardised GTV+MHD to predict binary photon outcome.
+    Returns (b0, b_gtv, b_mhd, gtv_mu, gtv_sig, mhd_mu, mhd_sig) or None on failure.
+    """
+    try:
+        from sklearn.linear_model import LogisticRegression
+        gtv_mu, gtv_sig = float(gtv.mean()), float(gtv.std())
+        mhd_mu, mhd_sig = float(mhd.mean()), float(mhd.std())
+        X = np.column_stack([
+            (gtv - gtv_mu) / gtv_sig,
+            (mhd - mhd_mu) / mhd_sig,
+        ])
+        y = out_ph.astype(int)
+        lr = LogisticRegression(max_iter=1000)
+        lr.fit(X, y)
+        return (
+            float(lr.intercept_[0]),
+            float(lr.coef_[0][0]),
+            float(lr.coef_[0][1]),
+            gtv_mu, gtv_sig,
+            mhd_mu, mhd_sig,
+        )
+    except Exception:
+        return None
+
+
 # ── Bin definitions ───────────────────────────────────────────────────────────
 
 BIN_EDGES  = [0.02, 0.05, 0.10, 0.20, 0.40, 0.60, 0.80, 1.01]
 BIN_LABELS = ["2–5 %", "5–10 %", "10–20 %", "20–40 %", "40–60 %", "60–80 %", "80–100 %"]
 
 
-def bin_analysis(pred_delta, true_delta, threshold):
+def bin_analysis(pred_delta, true_delta, threshold, fit_delta=None):
     sel   = pred_delta >= threshold
     n_sel = int(sel.sum())
     rows  = []
@@ -131,12 +161,14 @@ def bin_analysis(pred_delta, true_delta, threshold):
         mask = sel & (pred_delta >= lo) & (pred_delta < hi)
         n    = int(mask.sum())
         if n == 0:
-            rows.append(dict(Bin=label, n=0, **{k: np.nan for k in
-                         ["Share (%)", "Mean Δ pred", "Pred NNT", "True ARR", "True NNT"]}))
+            nan_cols = ["Share (%)", "Mean Δ pred", "Pred NNT", "True ARR", "True NNT"]
+            if fit_delta is not None:
+                nan_cols.append("Fitted NNT")
+            rows.append(dict(Bin=label, n=0, **{k: np.nan for k in nan_cols}))
             continue
         mean_pred = pred_delta[mask].mean()
         true_arr  = true_delta[mask].mean()
-        rows.append({
+        row = {
             "Bin":         label,
             "n":           n,
             "Share (%)":   n / n_sel * 100 if n_sel > 0 else np.nan,
@@ -144,7 +176,11 @@ def bin_analysis(pred_delta, true_delta, threshold):
             "Pred NNT":    1.0 / mean_pred if mean_pred > 1e-9 else np.nan,
             "True ARR":    true_arr,
             "True NNT":    1.0 / true_arr  if true_arr  > 1e-9 else np.nan,
-        })
+        }
+        if fit_delta is not None:
+            mean_fit = float(fit_delta[mask].mean())
+            row["Fitted NNT"] = 1.0 / mean_fit if mean_fit > 1e-9 else np.nan
+        rows.append(row)
     return pd.DataFrame(rows), n_sel
 
 
@@ -606,7 +642,7 @@ def render_selection(pred_delta, true_delta, delta_thresh, selected, n_sel, nois
 
 # ── Bin analysis ──────────────────────────────────────────────────────────────
 
-def render_bin_analysis(pred_delta, true_delta, delta_thresh, n_sel):
+def render_bin_analysis(pred_delta, true_delta, delta_thresh, n_sel, fit_delta=None):
     st.subheader("Bin Analysis: Predicted NNT vs True NNT")
     st.markdown(
         "Selected patients are grouped into fixed bins by their predicted benefit. "
@@ -620,7 +656,7 @@ def render_bin_analysis(pred_delta, true_delta, delta_thresh, n_sel):
         st.info("Lower the selection threshold to populate the bin analysis.")
         return
 
-    bin_df, _ = bin_analysis(pred_delta, true_delta, float(delta_thresh))
+    bin_df, _ = bin_analysis(pred_delta, true_delta, float(delta_thresh), fit_delta)
 
     def _fmt(v, spec):
         return format(v, spec) if pd.notna(v) else "—"
@@ -631,6 +667,8 @@ def render_bin_analysis(pred_delta, true_delta, delta_thresh, n_sel):
     display["Pred NNT"]    = display["Pred NNT"].map(lambda v: _fmt(v, ".1f"))
     display["True ARR"]    = display["True ARR"].map(lambda v: _fmt(v, ".4f"))
     display["True NNT"]    = display["True NNT"].map(lambda v: _fmt(v, ".1f"))
+    if "Fitted NNT" in display.columns:
+        display["Fitted NNT"] = display["Fitted NNT"].map(lambda v: _fmt(v, ".1f"))
     st.dataframe(display, use_container_width=True, hide_index=True)
 
     chart_df = bin_df.dropna(subset=["Pred NNT", "True NNT"])
@@ -648,6 +686,15 @@ def render_bin_analysis(pred_delta, true_delta, delta_thresh, n_sel):
             line=dict(color="#00C9A7", width=2.5),
             marker=dict(size=9, symbol="diamond"),
         ))
+        if fit_delta is not None and "Fitted NNT" in chart_df.columns:
+            fit_chart = bin_df.dropna(subset=["Fitted NNT"])
+            if len(fit_chart) >= 1:
+                fig.add_trace(go.Scatter(
+                    x=fit_chart["Bin"], y=fit_chart["Fitted NNT"],
+                    mode="lines+markers", name="Fitted NNT",
+                    line=dict(color="#E8543A", width=2.5, dash="dot"),
+                    marker=dict(size=9, symbol="square"),
+                ))
         fig.update_layout(
             title="Predicted NNT vs True NNT by predicted benefit bin",
             xaxis_title="Predicted benefit bin",
@@ -716,32 +763,88 @@ def render_z_section(z_vals, z_mean, z_sd, z_beta):
     )
 
 
+# ── Fitted model ─────────────────────────────────────────────────────────────
+
+def render_fitted_model(
+    b0, b_gtv, b_mhd,
+    p_ph, p_pr, pred_delta,
+    p_fit_ph, p_fit_pr, fit_delta,
+    true_delta,
+):
+    st.subheader("Fitted Model")
+
+    # Coefficients row
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Intercept (β₀)",  f"{b0:.3f}")
+    c2.metric("β_GTV",           f"{b_gtv:.3f}")
+    c3.metric("β_MHD",           f"{b_mhd:.3f}")
+
+    st.markdown(
+        f"**logit(P(OS2y)) = {b0:.3f}"
+        f" {'+ ' if b_gtv >= 0 else '− '}{abs(b_gtv):.3f} × GTV"
+        f" {'+ ' if b_mhd >= 0 else '− '}{abs(b_mhd):.3f} × MHD**"
+    )
+    st.caption(
+        "GTV and MHD are standardised to zero mean and unit variance using training data. "
+        "Logistic regression is fitted on binary photon survival outcomes."
+    )
+
+    # Comparison table
+    comp_rows = [
+        {
+            "Metric":          "Mean photon survival",
+            "Truth-generator": f"{p_ph.mean():.3f}",
+            "Fitted model":    f"{p_fit_ph.mean():.3f}",
+        },
+        {
+            "Metric":          "Mean proton survival",
+            "Truth-generator": f"{p_pr.mean():.3f}",
+            "Fitted model":    f"{p_fit_pr.mean():.3f}",
+        },
+        {
+            "Metric":          "Mean predicted Δ",
+            "Truth-generator": f"{pred_delta.mean():.4f}",
+            "Fitted model":    f"{fit_delta.mean():.4f}",
+        },
+        {
+            "Metric":          "Mean true Δ (outcomes)",
+            "Truth-generator": f"{true_delta.mean():.4f}",
+            "Fitted model":    "—",
+        },
+    ]
+    st.dataframe(pd.DataFrame(comp_rows), hide_index=True, use_container_width=True)
+
+
 # ── Model diagnostics ────────────────────────────────────────────────────────
 
 def render_model_diagnostics(
     p_ph, p_pr, out_ph_base, out_ph,
     noise_enabled, noise_sd,
     intercept, gtv_mid, gtv_slope, mhd_mid, mhd_slope, w_gtv, w_mhd,
+    p_fit_ph=None,
 ):
     st.subheader("Model Diagnostics")
 
-    # ── ROC curve ─────────────────────────────────────────────────────────────
-    auc_base = _compute_auc(p_ph, out_ph_base)
-    fpr_base, tpr_base = _compute_roc(p_ph, out_ph_base)
+    # ── ROC curve — use fitted predictions when available ─────────────────────
+    roc_scores = p_fit_ph if p_fit_ph is not None else p_ph
+    score_label = "Fitted LR" if p_fit_ph is not None else "Truth-generator"
+
+    auc_base = _compute_auc(roc_scores, out_ph_base)
+    fpr_base, tpr_base = _compute_roc(roc_scores, out_ph_base)
 
     fig_roc = go.Figure()
     fig_roc.add_trace(go.Scatter(
         x=fpr_base, y=tpr_base, mode="lines",
-        name=f"Noiseless outcomes (AUC = {auc_base:.3f})",
+        name=f"{score_label} vs noiseless outcomes (AUC = {auc_base:.3f})",
         line=dict(width=2.5),
     ))
 
     if noise_enabled:
-        auc_noise = _compute_auc(p_ph, out_ph)
-        fpr_noise, tpr_noise = _compute_roc(p_ph, out_ph)
+        auc_noise = _compute_auc(roc_scores, out_ph)
+        fpr_noise, tpr_noise = _compute_roc(roc_scores, out_ph)
         fig_roc.add_trace(go.Scatter(
             x=fpr_noise, y=tpr_noise, mode="lines",
-            name=f"Noisy outcomes SD={noise_sd:.1f} (AUC = {auc_noise:.3f})",
+            name=f"{score_label} vs noisy outcomes SD={noise_sd:.1f} (AUC = {auc_noise:.3f})",
             line=dict(width=2.5, dash="dot"),
         ))
 
@@ -908,6 +1011,7 @@ def main():
     w_gtv         = float(st.session_state["w_gtv"])
     w_mhd         = float(st.session_state["w_mhd"])
 
+    # ── Truth-world generation ────────────────────────────────────────────────
     gtv, mhd, p_ph, p_pr, pred_delta, true_delta, out_ph_base, out_ph, z_vals = run_simulation(
         n_patients, seed,
         gtv_mean, gtv_std, mhd_mean, mhd_std,
@@ -921,6 +1025,22 @@ def main():
     selected = pred_delta >= delta_thresh
     n_sel    = int(selected.sum())
 
+    # ── Logistic regression fitting ───────────────────────────────────────────
+    fit_result = fit_logistic_regression(gtv, mhd, out_ph)
+
+    # ── Fitted photon and proton predictions ──────────────────────────────────
+    if fit_result is not None:
+        b0, b_gtv, b_mhd, gtv_mu, gtv_sig, mhd_mu, mhd_sig = fit_result
+        gtv_z     = (gtv    - gtv_mu) / gtv_sig
+        mhd_z_ph  = (mhd    - mhd_mu) / mhd_sig
+        mhd_z_pr  = (mhd_pr - mhd_mu) / mhd_sig
+        p_fit_ph  = logit_to_prob(b0 + b_gtv * gtv_z + b_mhd * mhd_z_ph)
+        p_fit_pr  = logit_to_prob(b0 + b_gtv * gtv_z + b_mhd * mhd_z_pr)
+        fit_delta = p_fit_pr - p_fit_ph
+    else:
+        b0 = b_gtv = b_mhd = None
+        p_fit_ph = p_fit_pr = fit_delta = None
+
     st.title("Predicted vs True NNT — Proton vs Photon")
     st.markdown(
         "This app simulates a patient population to explore how well the "
@@ -929,24 +1049,40 @@ def main():
         "for proton therapy. All parameters update instantly."
     )
 
+    if fit_result is None:
+        st.warning(
+            "Logistic regression did not converge. "
+            "Try adjusting the survival model parameters."
+        )
+
     render_summary_cards(n_patients, n_sel, p_ph, p_pr, pred_delta, true_delta, selected)
     st.divider()
     render_playground(proton_mode, hist_mode, gtv, mhd, mhd_pr)
     st.divider()
     render_selection(pred_delta, true_delta, delta_thresh, selected, n_sel, noise_enabled)
     st.divider()
-    render_bin_analysis(pred_delta, true_delta, delta_thresh, n_sel)
+    # ── NNT analysis ─────────────────────────────────────────────────────────
+    render_bin_analysis(pred_delta, true_delta, delta_thresh, n_sel, fit_delta)
     if noise_enabled:
         st.divider()
         render_noise_section(p_ph, out_ph_base, out_ph, noise_sd)
     if z_enabled:
         st.divider()
         render_z_section(z_vals, z_mean, z_sd, z_beta)
+    if fit_result is not None:
+        st.divider()
+        render_fitted_model(
+            b0, b_gtv, b_mhd,
+            p_ph, p_pr, pred_delta,
+            p_fit_ph, p_fit_pr, fit_delta,
+            true_delta,
+        )
     st.divider()
     render_model_diagnostics(
         p_ph, p_pr, out_ph_base, out_ph,
         noise_enabled, noise_sd,
         intercept, gtv_mid, gtv_slope, mhd_mid, mhd_slope, w_gtv, w_mhd,
+        p_fit_ph=p_fit_ph,
     )
     render_extra_plots(gtv, mhd, p_ph, p_pr, mhd_pr)
 
