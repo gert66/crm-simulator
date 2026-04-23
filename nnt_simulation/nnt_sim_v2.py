@@ -123,26 +123,85 @@ def _compute_roc(scores, labels):
 def fit_logistic_regression(gtv, mhd, outcomes):
     """
     Fit logistic regression on raw standardised GTV and MHD (zero mean, unit variance).
-    Returns (model, scaler, None) on success or (None, None, error_string) on failure.
+    Returns (model, scaler, error_string, debug_logs).
+    debug_logs is always a dict; error_string is None on success.
     """
+    import warnings as _warnings
+    debug_logs = {}
+
     n_alive = int(outcomes.sum())
     n_dead  = int(len(outcomes) - n_alive)
+    debug_logs["n_alive"] = n_alive
+    debug_logs["n_dead"]  = n_dead
+
     if len(np.unique(outcomes)) < 2:
-        return None, None, (
+        msg = (
             f"Cannot fit: all {len(outcomes)} patients have the same outcome "
             f"({n_alive} alive, {n_dead} dead)."
         )
+        debug_logs["error"] = msg
+        return None, None, msg, debug_logs
+
     try:
         from sklearn.linear_model import LogisticRegression
         from sklearn.preprocessing import StandardScaler
+
         scaler = StandardScaler()
         X = scaler.fit_transform(np.column_stack([gtv, mhd]))
         y = outcomes.astype(int)
-        lr = LogisticRegression(solver="lbfgs", max_iter=5000, C=1e6)
-        lr.fit(X, y)
-        return lr, scaler, None
+
+        # ── Pre-fit diagnostics ───────────────────────────────────────────────
+        debug_logs["X_shape"]    = tuple(X.shape)
+        debug_logs["y_shape"]    = tuple(y.shape)
+        debug_logs["n_zeros"]    = int((y == 0).sum())
+        debug_logs["n_ones"]     = int((y == 1).sum())
+        debug_logs["col0_mean"]  = float(X[:, 0].mean())
+        debug_logs["col0_std"]   = float(X[:, 0].std())
+        debug_logs["col1_mean"]  = float(X[:, 1].mean())
+        debug_logs["col1_std"]   = float(X[:, 1].std())
+        debug_logs["X_head"]     = X[:5].tolist()
+        debug_logs["y_head"]     = y[:5].tolist()
+
+        with _warnings.catch_warnings():
+            _warnings.filterwarnings("error")
+            lr = LogisticRegression(solver="lbfgs", max_iter=5000, C=1e6)
+            lr.fit(X, y)
+
+        b0    = float(lr.intercept_[0])
+        b_gtv = float(lr.coef_[0][0])
+        b_mhd = float(lr.coef_[0][1])
+
+        # ── Post-fit diagnostics ──────────────────────────────────────────────
+        fit_proba = lr.predict_proba(X)[:, 1]
+        debug_logs["fit_proba_mean"] = float(fit_proba.mean())
+        debug_logs["fit_proba_std"]  = float(fit_proba.std())
+        debug_logs["b0"]    = b0
+        debug_logs["b_gtv"] = b_gtv
+        debug_logs["b_mhd"] = b_mhd
+
+        # ── Manual single-patient verification (patient 0) ────────────────────
+        ex_gtv_raw  = float(gtv[0])
+        ex_mhd_raw  = float(mhd[0])
+        ex_gtv_z    = float(X[0, 0])
+        ex_mhd_z    = float(X[0, 1])
+        ex_logit    = b0 + b_gtv * ex_gtv_z + b_mhd * ex_mhd_z
+        ex_p_manual = float(1.0 / (1.0 + np.exp(-ex_logit)))
+        ex_p_sklearn = float(lr.predict_proba(X[0:1, :])[0, 1])
+        debug_logs["example"] = {
+            "gtv_raw":    ex_gtv_raw,
+            "mhd_raw":    ex_mhd_raw,
+            "gtv_z":      ex_gtv_z,
+            "mhd_z":      ex_mhd_z,
+            "logit":      ex_logit,
+            "p_manual":   ex_p_manual,
+            "p_sklearn":  ex_p_sklearn,
+        }
+
+        return lr, scaler, None, debug_logs
+
     except Exception as e:
-        return None, None, f"Fitting failed: {e}"
+        debug_logs["exception"] = str(e)
+        return None, None, f"Fitting failed: {e}", debug_logs
 
 
 # ── Bin definitions ───────────────────────────────────────────────────────────
@@ -772,6 +831,7 @@ def render_fitted_model(
     out_ph,
     gtv_slope=None,
     fit_corr=None,
+    fit_debug=None,
 ):
     st.subheader("Fitted Model")
 
@@ -856,6 +916,77 @@ def render_fitted_model(
             "The summary above uses the truth-generator probability. "
             "The fitted logistic model is shown separately once the fit succeeds."
         )
+
+    # Fitting debug logs — always visible
+    with st.expander("Fitting debug logs"):
+        d = fit_debug or {}
+
+        if not d:
+            st.info("No debug data available.")
+        else:
+            st.markdown("#### Pre-fit")
+            st.write(f"**X shape:** {d.get('X_shape', 'N/A')}  |  "
+                     f"**y shape:** {d.get('y_shape', 'N/A')}")
+            st.write(f"**y=0 (dead):** {d.get('n_zeros', 'N/A')}  |  "
+                     f"**y=1 (alive):** {d.get('n_ones', 'N/A')}")
+
+            col_stats = {
+                "Feature":   ["GTV (col 0)", "MHD (col 1)"],
+                "Mean after scaling": [
+                    f"{d['col0_mean']:.6f}" if "col0_mean" in d else "N/A",
+                    f"{d['col1_mean']:.6f}" if "col1_mean" in d else "N/A",
+                ],
+                "SD after scaling": [
+                    f"{d['col0_std']:.6f}" if "col0_std" in d else "N/A",
+                    f"{d['col1_std']:.6f}" if "col1_std" in d else "N/A",
+                ],
+            }
+            st.dataframe(pd.DataFrame(col_stats), hide_index=True, use_container_width=True)
+
+            if "X_head" in d and "y_head" in d:
+                head_df = pd.DataFrame(d["X_head"], columns=["GTV_z", "MHD_z"])
+                head_df.insert(0, "y", d["y_head"])
+                st.markdown("**First 5 rows of X and y:**")
+                st.dataframe(head_df, hide_index=True, use_container_width=True)
+
+            if "exception" in d:
+                st.error(f"Exception during fitting: {d['exception']}")
+
+            if "b0" in d:
+                st.markdown("#### Post-fit")
+                st.write(f"**Coefficients:** β₀ = {d['b0']:.4f} | "
+                         f"β_GTV = {d['b_gtv']:.4f} | β_MHD = {d['b_mhd']:.4f}")
+                st.write(f"**Fitted P̂ mean:** {d.get('fit_proba_mean', 'N/A'):.4f}  |  "
+                         f"**SD:** {d.get('fit_proba_std', 'N/A'):.4f}")
+
+                if "truth_mean" in d:
+                    st.write(f"**Truth-generator P mean:** {d['truth_mean']:.4f}  |  "
+                             f"**SD:** {d['truth_std']:.4f}")
+
+                if "fit_truth_corr" in d:
+                    r = d["fit_truth_corr"]
+                    colour = "red" if r < 0.5 else "green"
+                    st.markdown(f"**Pearson r (fitted vs truth):** :{colour}[{r:.4f}]")
+                    if r < 0.5:
+                        st.warning(f"Low correlation (r = {r:.4f}) — fitted predictions "
+                                   "diverge from truth-generator.")
+
+            if "example" in d:
+                ex = d["example"]
+                st.markdown("#### Manual single-patient check (patient 0)")
+                st.write(f"Raw GTV = **{ex['gtv_raw']:.3f}** cc  |  "
+                         f"Raw MHD = **{ex['mhd_raw']:.3f}** Gy")
+                st.write(f"Standardised GTV_z = **{ex['gtv_z']:.4f}**  |  "
+                         f"MHD_z = **{ex['mhd_z']:.4f}**")
+                st.write(f"logit = {d['b0']:.4f} + "
+                         f"{d['b_gtv']:.4f}×{ex['gtv_z']:.4f} + "
+                         f"{d['b_mhd']:.4f}×{ex['mhd_z']:.4f} = **{ex['logit']:.4f}**")
+                st.write(f"Manual P = 1/(1+exp(−logit)) = **{ex['p_manual']:.4f}**")
+                st.write(f"sklearn predict_proba = **{ex['p_sklearn']:.4f}**")
+                if abs(ex["p_manual"] - ex["p_sklearn"]) > 1e-4:
+                    st.error("Manual and sklearn probabilities disagree — check implementation.")
+                else:
+                    st.success("Manual and sklearn probabilities agree ✓")
 
 
 # ── Model diagnostics ────────────────────────────────────────────────────────
@@ -1069,7 +1200,7 @@ def main():
     n_sel    = int(selected.sum())
 
     # ── Logistic regression fitting ───────────────────────────────────────────
-    lr_model, lr_scaler, fit_error = fit_logistic_regression(gtv, mhd, out_ph)
+    lr_model, lr_scaler, fit_error, fit_debug = fit_logistic_regression(gtv, mhd, out_ph)
 
     # ── Fitted photon and proton predictions ──────────────────────────────────
     if lr_model is not None:
@@ -1081,8 +1212,12 @@ def main():
         b0    = float(lr_model.intercept_[0])
         b_gtv = float(lr_model.coef_[0][0])
         b_mhd = float(lr_model.coef_[0][1])
-        # Pearson r between fitted and truth-generator predictions
+        # Pearson r and truth stats appended to debug dict (copy to avoid mutating cache)
         fit_corr = float(np.corrcoef(p_fit_ph, p_ph)[0, 1])
+        fit_debug = dict(fit_debug)
+        fit_debug["fit_truth_corr"]  = fit_corr
+        fit_debug["truth_mean"]      = float(p_ph.mean())
+        fit_debug["truth_std"]       = float(p_ph.std())
     else:
         b0 = b_gtv = b_mhd = None
         p_fit_ph = p_fit_pr = fit_delta = fit_corr = None
@@ -1119,6 +1254,7 @@ def main():
         out_ph,
         gtv_slope=gtv_slope,
         fit_corr=fit_corr,
+        fit_debug=fit_debug,
     )
     st.divider()
     render_model_diagnostics(
