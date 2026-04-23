@@ -514,7 +514,7 @@ def render_playground(proton_mode, hist_mode, gtv, mhd, mhd_pr):
             help_text="Negative → larger GTV reduces survival.",
         )
         dual_param(
-            "Weight (w_GTV)", "w_gtv", -3.0, 3.0, 0.1, "%.1f",
+            "Weight (w_GTV)", "w_gtv", -3.0, 8.0, 0.1, "%.1f",
             help_text="Scales the GTV sigmoid contribution to the logit.",
         )
         st.caption(
@@ -556,7 +556,7 @@ def render_playground(proton_mode, hist_mode, gtv, mhd, mhd_pr):
             help_text="Negative → higher MHD reduces survival.",
         )
         dual_param(
-            "Weight (w_MHD)", "w_mhd", -3.0, 3.0, 0.1, "%.1f",
+            "Weight (w_MHD)", "w_mhd", -3.0, 8.0, 0.1, "%.1f",
             help_text="Scales the MHD sigmoid contribution to the logit.",
         )
         st.caption(
