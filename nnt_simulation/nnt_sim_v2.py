@@ -95,10 +95,11 @@ def _compute_auc(scores, labels):
     ls = labels[order].astype(float)
     tpr = np.concatenate([[0.0], np.cumsum(ls) / n_pos])
     fpr = np.concatenate([[0.0], np.cumsum(1.0 - ls) / n_neg])
-    return float(np.trapz(tpr, fpr))
+    return float(np.sum((fpr[1:] - fpr[:-1]) * (tpr[1:] + tpr[:-1])) / 2)
 
 
-def _roc_curve_arrays(scores, labels):
+def _compute_roc(scores, labels):
+    """Return (fpr, tpr) arrays sorted by ascending fpr, pure numpy."""
     n_pos = float(labels.sum())
     n_neg = float(len(labels)) - n_pos
     if n_pos == 0 or n_neg == 0:
@@ -617,8 +618,8 @@ def render_noise_section(p_ph, out_ph_base, out_ph, noise_sd):
     c2.metric("AUC without noise", f"{auc_no_noise:.3f}")
     c3.metric("AUC with noise",    f"{auc_with_noise:.3f}")
 
-    fpr_nn,    tpr_nn    = _roc_curve_arrays(p_ph, out_ph_base)
-    fpr_noise, tpr_noise = _roc_curve_arrays(p_ph, out_ph)
+    fpr_nn,    tpr_nn    = _compute_roc(p_ph, out_ph_base)
+    fpr_noise, tpr_noise = _compute_roc(p_ph, out_ph)
 
     fig = go.Figure()
     fig.add_trace(go.Scatter(
@@ -655,7 +656,7 @@ def render_noise_section(p_ph, out_ph_base, out_ph, noise_sd):
 
 # ── Extra exploration plots ───────────────────────────────────────────────────
 
-def render_extra_plots(gtv, mhd, p_ph, p_pr):
+def render_extra_plots(gtv, mhd, p_ph, p_pr, mhd_pr):
     st.divider()
     st.subheader("Additional Exploration")
 
@@ -670,11 +671,21 @@ def render_extra_plots(gtv, mhd, p_ph, p_pr):
         st.plotly_chart(fig, use_container_width=True, config=_CHART_CFG)
 
     with col2:
-        fig = go.Figure(go.Histogram(x=mhd, nbinsx=40, marker_color="#E8543A", opacity=0.85))
+        fig = go.Figure()
+        fig.add_trace(go.Histogram(
+            x=mhd, nbinsx=40, name="Photon MHD",
+            marker_color="#E8543A", opacity=0.75,
+        ))
+        fig.add_trace(go.Histogram(
+            x=mhd_pr, nbinsx=40, name="Proton MHD",
+            marker_color="#00C9A7", opacity=0.55,
+        ))
         fig.update_layout(
-            title="MHD distribution (photon)",
+            title="MHD distribution (photon vs proton)",
             xaxis_title="MHD (Gy)", yaxis_title="Count",
+            barmode="overlay",
             height=320, margin=dict(t=45, b=45, l=55, r=20),
+            legend=dict(orientation="h", y=1.12, x=0, xanchor="left", font=dict(size=11)),
         )
         st.plotly_chart(fig, use_container_width=True, config=_CHART_CFG)
 
@@ -778,7 +789,7 @@ def main():
     if noise_enabled:
         st.divider()
         render_noise_section(p_ph, out_ph_base, out_ph, noise_sd)
-    render_extra_plots(gtv, mhd, p_ph, p_pr)
+    render_extra_plots(gtv, mhd, p_ph, p_pr, mhd_pr)
 
 
 main()
