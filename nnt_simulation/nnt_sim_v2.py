@@ -6,10 +6,12 @@ Run with:  streamlit run nnt_simulation/nnt_sim_v2.py
 """
 
 import math
+import json
 import numpy as np
 import pandas as pd
 import streamlit as st
 import plotly.graph_objects as go
+from datetime import datetime
 
 # ── Chart config ──────────────────────────────────────────────────────────────
 
@@ -48,6 +50,164 @@ _DEFAULTS = {
     "w_mhd":             0.5,
     "overlay_patients":  False,
 }
+
+# ── Presets ───────────────────────────────────────────────────────────────────
+
+PRESETS = {
+    "High AUC (GTV threshold, no noise)": {
+        "n_patients": 5000, "seed": 42,
+        "gtv_mean": 50.0, "gtv_sd": 20.0,
+        "gtv_use": True, "gtv_curve": "Hard threshold",
+        "gtv_mid": 50.0, "gtv_slope": -5.0,
+        "mhd_use": False,
+        "combination_mode": "GTV only",
+        "noise_enabled": False,
+        "z_enabled": False,
+        "threshold": 0.02,
+    },
+    "Low AUC (add noise)": {
+        "n_patients": 5000, "seed": 42,
+        "gtv_mean": 50.0, "gtv_sd": 20.0,
+        "gtv_use": True, "gtv_curve": "Sigmoid",
+        "gtv_mid": 50.0, "gtv_slope": -2.0,
+        "mhd_use": False,
+        "combination_mode": "GTV only",
+        "noise_enabled": True, "noise_sd": 2.0,
+        "z_enabled": False,
+        "threshold": 0.02,
+    },
+    "Hidden Z world": {
+        "n_patients": 5000, "seed": 42,
+        "gtv_mean": 50.0, "gtv_sd": 20.0,
+        "gtv_use": True, "gtv_curve": "Sigmoid",
+        "gtv_mid": 50.0, "gtv_slope": -3.0,
+        "mhd_use": False,
+        "combination_mode": "GTV only",
+        "noise_enabled": False,
+        "z_enabled": True, "z_mean": 0.0, "z_sd": 1.0, "beta_z": 2.0,
+        "threshold": 0.02,
+    },
+    "2D interaction (GTV + MHD multiplicative)": {
+        "n_patients": 5000, "seed": 42,
+        "gtv_mean": 50.0, "gtv_sd": 20.0,
+        "gtv_use": True, "gtv_curve": "Sigmoid",
+        "gtv_mid": 50.0, "gtv_slope": -3.0,
+        "mhd_mean": 15.0, "mhd_sd": 5.0,
+        "mhd_use": True, "mhd_curve": "Sigmoid",
+        "mhd_mid": 15.0, "mhd_slope": -3.0,
+        "combination_mode": "Multiplicative",
+        "noise_enabled": False,
+        "z_enabled": False,
+        "threshold": 0.02,
+    },
+}
+
+# ── Preset / import helpers ───────────────────────────────────────────────────
+
+# Mapping from preset-dict keys → session_state keys (with defaults)
+_PRESET_KEY_MAP = {
+    "n_patients":      ("n_patients",      5_000),
+    "seed":            ("seed",            42),
+    "gtv_mean":        ("gtv_mean",        50.0),
+    "gtv_sd":          ("gtv_std",         20.0),
+    "gtv_use":         ("use_gtv",         True),
+    "gtv_curve":       ("gtv_curve_type",  "Sigmoid"),
+    "gtv_mid":         ("gtv_mid",         50.0),
+    "gtv_slope":       ("gtv_slope",       -0.1),
+    "mhd_mean":        ("mhd_mean",        15.0),
+    "mhd_sd":          ("mhd_std",         5.0),
+    "mhd_use":         ("use_mhd",         True),
+    "mhd_curve":       ("mhd_curve_type",  "Sigmoid"),
+    "mhd_mid":         ("mhd_mid",         15.0),
+    "mhd_slope":       ("mhd_slope",       -0.1),
+    "combination_mode": ("combination_mode", "Multiplicative"),
+    "noise_enabled":   ("noise_enabled",   False),
+    "noise_sd":        ("noise_sd",        1.0),
+    "z_enabled":       ("z_enabled",       False),
+    "z_mean":          ("z_mean",          0.0),
+    "z_sd":            ("z_sd",            1.0),
+    "beta_z":          ("z_beta",          0.5),
+    "threshold":       ("delta_thresh",    0.02),
+}
+
+
+def _apply_preset(p):
+    for preset_key, (ss_key, default) in _PRESET_KEY_MAP.items():
+        if preset_key in p:
+            st.session_state[ss_key] = p[preset_key]
+
+
+def _load_json_params(loaded):
+    """Write loaded JSON parameter dict (export format) into session_state."""
+    pop = loaded.get("population", {})
+    st.session_state["n_patients"] = pop.get("n_patients", _DEFAULTS["n_patients"])
+    st.session_state["seed"]       = pop.get("seed",       _DEFAULTS["seed"])
+
+    gtv = loaded.get("gtv", {})
+    st.session_state["gtv_mean"]       = gtv.get("mean",     _DEFAULTS["gtv_mean"])
+    st.session_state["gtv_std"]        = gtv.get("sd",       _DEFAULTS["gtv_std"])
+    st.session_state["use_gtv"]        = gtv.get("use",      _DEFAULTS["use_gtv"])
+    st.session_state["gtv_curve_type"] = gtv.get("curve",    _DEFAULTS["gtv_curve_type"])
+    st.session_state["gtv_mid"]        = gtv.get("midpoint", _DEFAULTS["gtv_mid"])
+    st.session_state["gtv_slope"]      = gtv.get("slope",    _DEFAULTS["gtv_slope"])
+
+    mhd = loaded.get("mhd", {})
+    st.session_state["mhd_mean"]       = mhd.get("mean",     _DEFAULTS["mhd_mean"])
+    st.session_state["mhd_std"]        = mhd.get("sd",       _DEFAULTS["mhd_std"])
+    st.session_state["use_mhd"]        = mhd.get("use",      _DEFAULTS["use_mhd"])
+    st.session_state["mhd_curve_type"] = mhd.get("curve",    _DEFAULTS["mhd_curve_type"])
+    st.session_state["mhd_mid"]        = mhd.get("midpoint", _DEFAULTS["mhd_mid"])
+    st.session_state["mhd_slope"]      = mhd.get("slope",    _DEFAULTS["mhd_slope"])
+
+    st.session_state["combination_mode"] = loaded.get("combination_mode", _DEFAULTS["combination_mode"])
+    st.session_state["w_gtv"]            = loaded.get("w_gtv", _DEFAULTS["w_gtv"])
+    st.session_state["w_mhd"]            = loaded.get("w_mhd", _DEFAULTS["w_mhd"])
+
+    proton = loaded.get("proton", {})
+    st.session_state["proton_mode"]   = proton.get("mode",   _DEFAULTS["proton_mode"])
+    st.session_state["proton_delta"]  = proton.get("delta",  _DEFAULTS["proton_delta"])
+    st.session_state["proton_factor"] = proton.get("factor", _DEFAULTS["proton_factor"])
+
+    noise = loaded.get("noise", {})
+    st.session_state["noise_enabled"] = noise.get("enabled", _DEFAULTS["noise_enabled"])
+    st.session_state["noise_sd"]      = noise.get("sd",      _DEFAULTS["noise_sd"])
+
+    z = loaded.get("z_factor", {})
+    st.session_state["z_enabled"] = z.get("enabled", _DEFAULTS["z_enabled"])
+    st.session_state["z_mean"]    = z.get("mean",    _DEFAULTS["z_mean"])
+    st.session_state["z_sd"]      = z.get("sd",      _DEFAULTS["z_sd"])
+    st.session_state["z_beta"]    = z.get("beta_z",  _DEFAULTS["z_beta"])
+
+    sel = loaded.get("selection", {})
+    st.session_state["delta_thresh"] = sel.get("threshold", _DEFAULTS["delta_thresh"])
+
+
+def collect_params(ss) -> dict:
+    return {
+        "population": {"n_patients": ss["n_patients"], "seed": ss["seed"]},
+        "gtv": {
+            "mean": ss["gtv_mean"], "sd": ss["gtv_std"], "use": ss["use_gtv"],
+            "curve": ss["gtv_curve_type"], "midpoint": ss["gtv_mid"], "slope": ss["gtv_slope"],
+        },
+        "mhd": {
+            "mean": ss["mhd_mean"], "sd": ss["mhd_std"], "use": ss["use_mhd"],
+            "curve": ss["mhd_curve_type"], "midpoint": ss["mhd_mid"], "slope": ss["mhd_slope"],
+        },
+        "combination_mode": ss["combination_mode"],
+        "w_gtv": ss.get("w_gtv", 0.5),
+        "w_mhd": ss.get("w_mhd", 0.5),
+        "proton": {
+            "mode": ss["proton_mode"], "delta": ss["proton_delta"], "factor": ss["proton_factor"],
+        },
+        "noise": {"enabled": ss["noise_enabled"], "sd": ss.get("noise_sd", 1.0)},
+        "z_factor": {
+            "enabled": ss["z_enabled"], "mean": ss.get("z_mean", 0.0),
+            "sd": ss.get("z_sd", 1.0), "beta_z": ss.get("z_beta", 0.5),
+        },
+        "selection": {"threshold": ss["delta_thresh"]},
+        "metadata": {"exported_at": datetime.now().isoformat(), "app_version": "nnt_sim_v2"},
+    }
+
 
 # ── Math helpers ──────────────────────────────────────────────────────────────
 
@@ -504,8 +664,49 @@ def make_combined_plot(
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 
+def _on_preset_change():
+    name = st.session_state.get("_preset_sel", "— select —")
+    if name != "— select —":
+        _apply_preset(PRESETS[name])
+        st.session_state["_preset_sel"] = "— select —"
+        st.rerun()
+
+
 def render_sidebar():
     with st.sidebar:
+        # ── Presets / export / import ─────────────────────────────────────────
+        st.selectbox(
+            "Load preset",
+            ["— select —"] + list(PRESETS.keys()),
+            key="_preset_sel",
+            on_change=_on_preset_change,
+            help="Instantly load a pre-configured scenario. The selector resets after loading so you can re-apply at any time.",
+        )
+
+        params_json = json.dumps(collect_params(st.session_state), indent=2)
+        st.download_button(
+            "⬇ Export parameters",
+            data=params_json,
+            file_name=f"nnt_sim_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+            mime="application/json",
+            help="Download the current parameter set as a JSON file for later import.",
+        )
+
+        uploaded = st.file_uploader(
+            "Import parameters (.json)",
+            type="json",
+            label_visibility="collapsed",
+            help="Upload a previously exported JSON file to restore all parameters.",
+        )
+        if uploaded is not None:
+            try:
+                loaded = json.loads(uploaded.read())
+                _load_json_params(loaded)
+                st.rerun()
+            except Exception as e:
+                st.error(f"Could not load: {e}")
+
+        st.divider()
         st.title("Simulation Setup")
 
         with st.expander("Population", expanded=True):
@@ -515,6 +716,7 @@ def render_sidebar():
                 max_value=100_000,
                 step=200,
                 key="n_patients",
+                help="Total number of virtual patients. Larger values reduce Monte Carlo noise but increase runtime.",
             )
             st.number_input(
                 "Random seed",
@@ -522,6 +724,7 @@ def render_sidebar():
                 max_value=9_999,
                 step=1,
                 key="seed",
+                help="Controls reproducibility. Different seeds produce different patient draws with the same parameters.",
             )
 
         with st.expander("Proton effect", expanded=True):
@@ -533,6 +736,7 @@ def render_sidebar():
                 "MHD reduction mode",
                 ["Set to zero", "Subtract fixed delta", "Multiply by factor"],
                 key="proton_mode",
+                help="Set to zero: remove MHD entirely. Subtract delta: fixed Gy reduction. Multiply: scale by a factor (0 = zero, 1 = no change).",
             )
 
         with st.expander("Display", expanded=True):
@@ -540,46 +744,66 @@ def render_sidebar():
                 "Distribution view",
                 ["Histogram", "Density"],
                 key="hist_mode",
+                help="Histogram: raw counts per bin. Density: smooth parametric curve scaled to match the histogram area.",
             )
 
         with st.expander("Survival model", expanded=True):
-            st.checkbox("Enable GTV effect", key="use_gtv")
+            st.checkbox(
+                "Enable GTV effect", key="use_gtv",
+                help="Include tumour volume as a predictor of survival. When disabled, GTV has no effect on P(OS2y).",
+            )
             if st.session_state.get("use_gtv", True):
                 st.radio(
                     "GTV curve type",
                     ["Sigmoid", "Hard threshold"],
                     key="gtv_curve_type",
+                    help="Sigmoid: smooth S-shaped probability curve. Hard threshold: step function — survival = 1 below midpoint, 0 at or above.",
                 )
-            st.checkbox("Enable MHD effect", key="use_mhd")
+            st.checkbox(
+                "Enable MHD effect", key="use_mhd",
+                help="Include mean heart dose as a predictor of survival. When disabled, MHD has no effect on P(OS2y).",
+            )
             if st.session_state.get("use_mhd", True):
                 st.radio(
                     "MHD curve type",
                     ["Sigmoid", "Hard threshold"],
                     key="mhd_curve_type",
+                    help="Sigmoid: smooth S-shaped probability curve. Hard threshold: step function — survival = 1 below midpoint, 0 at or above.",
                 )
             st.selectbox(
                 "Combination mode",
                 ["GTV only", "MHD only", "Multiplicative", "Minimum rule", "Weighted blend"],
                 key="combination_mode",
+                help="How GTV and MHD components are combined: product (multiplicative), minimum, weighted sum, or single-variable mode.",
             )
             if st.session_state.get("combination_mode") == "Weighted blend":
-                dual_param("w_GTV", "w_gtv", 0.0, 1.0, 0.05, "%.2f")
-                dual_param("w_MHD", "w_mhd", 0.0, 1.0, 0.05, "%.2f")
+                dual_param("w_GTV", "w_gtv", 0.0, 1.0, 0.05, "%.2f",
+                           help_text="Weight for the GTV component. Weights do not need to sum to 1.")
+                dual_param("w_MHD", "w_mhd", 0.0, 1.0, 0.05, "%.2f",
+                           help_text="Weight for the MHD component. Weights do not need to sum to 1.")
 
         with st.expander("Survival noise", expanded=False):
             st.checkbox(
                 "Add random noise to survival mechanism",
                 key="noise_enabled",
+                help="Add patient-level noise on the logit scale. This reduces AUC and widens the gap between predicted and true NNT.",
             )
             if st.session_state.get("noise_enabled", False):
-                dual_param("Noise SD", "noise_sd", 0.1, 3.0, 0.1, "%.1f")
+                dual_param("Noise SD", "noise_sd", 0.1, 3.0, 0.1, "%.1f",
+                           help_text="SD of logit-scale noise per patient. SD ≈ 1 causes a noticeable AUC drop; SD ≥ 2 approaches random.")
 
         with st.expander("Hidden prognostic factor Z", expanded=False):
-            st.checkbox("Add hidden prognostic factor Z", key="z_enabled")
+            st.checkbox(
+                "Add hidden prognostic factor Z", key="z_enabled",
+                help="Introduce an unmeasured confounder. The fitted logistic model cannot see Z, reducing its calibration.",
+            )
             if st.session_state.get("z_enabled", False):
-                dual_param("Z mean",  "z_mean", -3.0, 3.0, 0.1, "%.1f")
-                dual_param("Z SD",    "z_sd",    0.1, 3.0, 0.1, "%.1f")
-                dual_param("β_Z",     "z_beta", -2.0, 2.0, 0.1, "%.1f")
+                dual_param("Z mean",  "z_mean", -3.0, 3.0, 0.1, "%.1f",
+                           help_text="Mean of the hidden Z distribution. 0 = no average confounding across the population.")
+                dual_param("Z SD",    "z_sd",    0.1, 3.0, 0.1, "%.1f",
+                           help_text="SD of the hidden Z distribution. Larger values create more between-patient heterogeneity.")
+                dual_param("β_Z",     "z_beta", -2.0, 2.0, 0.1, "%.1f",
+                           help_text="Effect size of Z on the logit scale. Positive = high Z improves survival.")
 
     return (
         int(st.session_state["n_patients"]),
@@ -622,11 +846,22 @@ def render_summary_cards(n_patients, n_sel, p_ph, p_pr, pred_delta, true_delta, 
 # ── Model playground ──────────────────────────────────────────────────────────
 
 def render_playground(proton_mode, hist_mode, gtv, mhd, mhd_pr):
-    st.subheader("Model Playground")
     st.markdown(
-        "Adjust any parameter with the slider for quick exploration or type an "
-        "exact value in the box on the right. All plots update on every change."
+        "### Model Playground "
+        '<span title="Adjust GTV and MHD distributions and their survival curves. '
+        'All plots update live on every change." '
+        'style="cursor:help;font-size:0.85em">ℹ️</span>',
+        unsafe_allow_html=True,
     )
+    with st.expander("About this section", expanded=False):
+        st.markdown(
+            "Each column shows the distribution of one predictor alongside the "
+            "truth-generator survival curve (orange / purple). Use the sliders to "
+            "move the midpoint (where P = 0.5) or change the slope (how sharply "
+            "survival changes). The **Proton MHD reduction** controls how much "
+            "heart dose falls under proton therapy — this drives the predicted "
+            "benefit Δ used for patient selection."
+        )
     col_gtv, col_mhd = st.columns(2)
 
     with col_gtv:
@@ -653,10 +888,13 @@ def render_playground(proton_mode, hist_mode, gtv, mhd, mhd_pr):
             config=_CHART_CFG,
         )
         st.markdown("**Distribution**")
-        dual_param("Mean (cc)",  "gtv_mean",  0.0, 200.0, 1.0,  "%.1f")
-        dual_param("Std  (cc)",  "gtv_std",   0.5,  80.0, 0.5,  "%.1f")
+        dual_param("Mean (cc)",  "gtv_mean",  0.0, 200.0, 1.0,  "%.1f",
+                   help_text="Mean GTV of the simulated population. Shift to explore high- or low-tumour scenarios.")
+        dual_param("Std  (cc)",  "gtv_std",   0.5,  80.0, 0.5,  "%.1f",
+                   help_text="Standard deviation of the GTV distribution. Larger values spread the population more.")
         st.markdown("**Survival curve**")
-        dual_param("Midpoint (cc)", "gtv_mid",   0.0, 200.0, 1.0,  "%.1f")
+        dual_param("Midpoint (cc)", "gtv_mid",   0.0, 200.0, 1.0,  "%.1f",
+                   help_text="GTV value where P(OS2y) = 0.5 (sigmoid) or where survival steps to 0 (hard threshold).")
         dual_param(
             "Slope", "gtv_slope", -10.0, 10.0, 0.1, "%.3f",
             help_text="Negative → larger GTV reduces survival. Not used for hard threshold.",
@@ -692,10 +930,13 @@ def render_playground(proton_mode, hist_mode, gtv, mhd, mhd_pr):
             config=_CHART_CFG,
         )
         st.markdown("**Distribution**")
-        dual_param("Mean (Gy)", "mhd_mean",  0.0, 60.0, 0.5,  "%.1f")
-        dual_param("Std  (Gy)", "mhd_std",   0.5, 25.0, 0.5,  "%.1f")
+        dual_param("Mean (Gy)", "mhd_mean",  0.0, 60.0, 0.5,  "%.1f",
+                   help_text="Mean photon MHD for the simulated population.")
+        dual_param("Std  (Gy)", "mhd_std",   0.5, 25.0, 0.5,  "%.1f",
+                   help_text="Standard deviation of the MHD distribution.")
         st.markdown("**Survival curve**")
-        dual_param("Midpoint (Gy)", "mhd_mid",   0.0, 60.0,  0.5,  "%.1f")
+        dual_param("Midpoint (Gy)", "mhd_mid",   0.0, 60.0,  0.5,  "%.1f",
+                   help_text="MHD value where P(OS2y) = 0.5 (sigmoid) or where survival steps to 0 (hard threshold).")
         dual_param(
             "Slope", "mhd_slope", -10.0, 10.0, 0.1, "%.3f",
             help_text="Negative → higher MHD reduces survival. Not used for hard threshold.",
@@ -707,7 +948,8 @@ def render_playground(proton_mode, hist_mode, gtv, mhd, mhd_pr):
 
     st.markdown("**Proton MHD reduction**")
     if proton_mode == "Subtract fixed delta":
-        dual_param("Reduction (Gy)", "proton_delta", 0.0, 40.0, 0.5, "%.1f")
+        dual_param("Reduction (Gy)", "proton_delta", 0.0, 40.0, 0.5, "%.1f",
+                   help_text="Fixed Gy subtracted from each patient's photon MHD under proton therapy.")
     elif proton_mode == "Multiply by factor":
         dual_param(
             "Reduction factor", "proton_factor", 0.0, 1.0, 0.05, "%.2f",
@@ -730,6 +972,7 @@ def render_selection(pred_delta, true_delta, delta_thresh, selected, n_sel, nois
         "Predicted Δ threshold",
         "delta_thresh",
         lo=0.0, hi=0.50, step=0.005, fmt="%.3f",
+        help_text="Patients with predicted benefit ≥ this threshold are selected for proton therapy.",
     )
 
     col1, col2 = st.columns(2)
@@ -771,7 +1014,21 @@ def render_selection(pred_delta, true_delta, delta_thresh, selected, n_sel, nois
 # ── Bin analysis ──────────────────────────────────────────────────────────────
 
 def render_bin_analysis(pred_delta, true_delta, delta_thresh, n_sel, fit_delta=None):
-    st.subheader("Bin Analysis: Predicted NNT vs True NNT")
+    st.markdown(
+        "### NNT Analysis "
+        '<span title="Selected patients are binned by predicted benefit. '
+        'Predicted NNT (1 / mean Δ̂) is compared with true NNT from Monte Carlo outcomes." '
+        'style="cursor:help;font-size:0.85em">ℹ️</span>',
+        unsafe_allow_html=True,
+    )
+    with st.expander("About this section", expanded=False):
+        st.markdown(
+            "Patients above the selection threshold are grouped into fixed predicted-benefit "
+            "bins (2–5 %, 5–10 %, …). Within each bin, **predicted NNT** (1 / mean predicted Δ) "
+            "is compared with **true NNT** (1 / mean true Δ from Monte Carlo binary outcomes). "
+            "Close agreement indicates good calibration. Divergence — especially at high-benefit "
+            "bins — reveals where the truth-generator and the model disagree most."
+        )
     st.markdown(
         "Selected patients are grouped into fixed bins by their predicted benefit. "
         "Within each bin, predicted NNT (1 / mean predicted Δ) is compared with "
@@ -910,7 +1167,22 @@ def render_fitted_model(
     proton_delta=None,
     proton_factor=None,
 ):
-    st.subheader("Fitted Model")
+    st.markdown(
+        "### Fitted Model "
+        '<span title="A logistic regression fitted on binary photon outcomes, '
+        'predicting P(OS2y) from raw GTV and MHD." '
+        'style="cursor:help;font-size:0.85em">ℹ️</span>',
+        unsafe_allow_html=True,
+    )
+    with st.expander("About this section", expanded=False):
+        st.markdown(
+            "The fitted model is a separate observer — it sees only raw GTV and MHD "
+            "values and binary photon survival outcomes. It knows nothing about the "
+            "truth-generator curves. Coefficients are on standardised (zero-mean, "
+            "unit-variance) inputs. The comparison table quantifies how well the "
+            "fitted model reproduces the truth-generator probabilities. Low Pearson r "
+            "or anti-correlation indicates a problem with the feature matrix."
+        )
 
     if fit_error is not None:
         st.error(fit_error)
@@ -1154,7 +1426,23 @@ def render_model_diagnostics(
     gtv=None, mhd=None, sim_params=None,
     z_enabled=False, z_vals=None, z_beta=0.5,
 ):
-    st.subheader("Model Diagnostics")
+    st.markdown(
+        "### Model Diagnostics "
+        '<span title="ROC curve, component-level survival probabilities, '
+        'and model parameter summary." '
+        'style="cursor:help;font-size:0.85em">ℹ️</span>',
+        unsafe_allow_html=True,
+    )
+    with st.expander("About this section", expanded=False):
+        st.markdown(
+            "The **ROC curve** shows how well P(OS2y) scores rank-order actual binary "
+            "outcomes. AUC = 1 means perfect discrimination; AUC = 0.5 is random. "
+            "AUC falls when noise or a hidden Z factor reduces the signal in the "
+            "measured predictors. The **Survival model diagnostics** expander shows "
+            "the p_gtv, p_mhd, and p_base component distributions for the current "
+            "parameter set. The **parameter table** summarises the truth-generator "
+            "curve settings."
+        )
 
     # ── Survival model diagnostics ────────────────────────────────────────────
     with st.expander("Survival model diagnostics", expanded=True):
@@ -1297,7 +1585,22 @@ def render_model_diagnostics(
 # ── 2D survival surface ───────────────────────────────────────────────────────
 
 def render_survival_surface(gtv, mhd, p_ph, params):
-    st.subheader("2D Survival Probability Surface")
+    st.markdown(
+        "### 2D Survival Probability Surface "
+        '<span title="Heatmap of P(OS2y) across the full GTV × MHD space, '
+        'independent of patient sampling." '
+        'style="cursor:help;font-size:0.85em">ℹ️</span>',
+        unsafe_allow_html=True,
+    )
+    with st.expander("About this section", expanded=False):
+        st.markdown(
+            "The colour shows the truth-generator survival probability for every "
+            "(GTV, MHD) combination on a 100 × 100 grid. White iso-probability "
+            "contours appear at P = 0.25, 0.50, and 0.75. This surface is computed "
+            "analytically — it does not depend on which patients were sampled. "
+            "Toggle **Overlay sampled patients** to see where the simulated cohort "
+            "falls on the surface."
+        )
 
     gtv_max  = float(gtv.max())
     mhd_max  = float(mhd.max())
@@ -1632,6 +1935,31 @@ def main():
         "**true NNT** (from Monte Carlo binary outcomes) when selecting patients "
         "for proton therapy. All parameters update instantly."
     )
+    with st.expander("How this simulator works", expanded=False):
+        st.markdown(
+            """
+**Truth-generator vs fitted model.** The simulator maintains two separate worlds.
+The *truth-generator* uses the survival curves you configure in the sidebar to assign
+each patient a true 2-year survival probability. Binary outcomes (alive / dead) are
+then drawn from those probabilities via Monte Carlo. The *fitted model* is a logistic
+regression that can only see raw GTV and MHD values plus the binary outcomes — it
+must recover the survival signal without knowing the underlying curves.
+
+**Predicted benefit and NNT.** For each patient, Δ = P(OS2y | proton) − P(OS2y | photon)
+is computed from the truth-generator. Patients with Δ ≥ threshold are selected for
+proton therapy. The *predicted NNT* = 1 / mean Δ among selected patients; the
+*true NNT* is computed from the Monte Carlo outcomes. The closer these two numbers,
+the better the model is calibrated.
+
+**Noise and hidden factors.** Enabling **Survival noise** adds patient-level logit-scale
+variation that the model cannot explain, reducing AUC. Enabling **Hidden Z** introduces
+an unmeasured prognostic variable; the fitted model cannot adjust for it, widening the
+gap between predicted and true NNT.
+
+**Presets and parameters.** Use the sidebar preset selector to load standard scenarios,
+or export and import parameter sets as JSON for reproducibility and sharing.
+            """
+        )
 
     render_summary_cards(n_patients, n_sel, p_ph, p_pr, pred_delta, true_delta, selected)
     st.divider()
