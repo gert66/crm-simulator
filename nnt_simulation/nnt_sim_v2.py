@@ -832,6 +832,12 @@ def render_fitted_model(
     gtv_slope=None,
     fit_corr=None,
     fit_debug=None,
+    gtv=None,
+    mhd=None,
+    lr_scaler=None,
+    proton_mode=None,
+    proton_delta=None,
+    proton_factor=None,
 ):
     st.subheader("Fitted Model")
 
@@ -885,6 +891,80 @@ def render_fitted_model(
             },
         ]
         st.dataframe(pd.DataFrame(comp_rows), hide_index=True, use_container_width=True)
+
+        # ── Reference patient plots ───────────────────────────────────────────
+        if lr_scaler is not None and gtv is not None and mhd is not None:
+            coef = np.array([b_gtv, b_mhd])
+            gtv_med = float(np.median(gtv))
+            mhd_med = float(np.median(mhd))
+
+            col1, col2 = st.columns(2)
+
+            # Plot 1: fixed median GTV, vary MHD
+            with col1:
+                mhd_x   = np.linspace(mhd.min(), mhd.max(), 300)
+                mhd_x_pr = apply_proton_mhd(mhd_x, proton_mode, proton_delta, proton_factor)
+                gtv_rep  = np.full_like(mhd_x, gtv_med)
+
+                p_ph_mhd = logit_to_prob(
+                    b0 + lr_scaler.transform(np.column_stack([gtv_rep, mhd_x])) @ coef
+                )
+                p_pr_mhd = logit_to_prob(
+                    b0 + lr_scaler.transform(np.column_stack([gtv_rep, mhd_x_pr])) @ coef
+                )
+
+                fig1 = go.Figure()
+                fig1.add_trace(go.Scatter(
+                    x=mhd_x, y=p_ph_mhd, mode="lines", name="Photon",
+                    line=dict(width=2.5),
+                ))
+                fig1.add_trace(go.Scatter(
+                    x=mhd_x, y=p_pr_mhd, mode="lines", name="Proton",
+                    line=dict(width=2.5, dash="dot"),
+                ))
+                fig1.update_layout(
+                    title=f"Fitted model: OS2y vs MHD (at median GTV = {gtv_med:.1f} cc)",
+                    xaxis_title="MHD (Gy)",
+                    yaxis=dict(title="P(OS2y)", range=[0, 1]),
+                    height=360,
+                    margin=dict(t=55, b=50, l=60, r=20),
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                                xanchor="right", x=1),
+                )
+                st.plotly_chart(fig1, use_container_width=True, config=_CHART_CFG)
+
+            # Plot 2: fixed median MHD, vary GTV
+            with col2:
+                gtv_x    = np.linspace(gtv.min(), gtv.max(), 300)
+                mhd_rep  = np.full_like(gtv_x, mhd_med)
+                mhd_rep_pr = apply_proton_mhd(mhd_rep, proton_mode, proton_delta, proton_factor)
+
+                p_ph_gtv = logit_to_prob(
+                    b0 + lr_scaler.transform(np.column_stack([gtv_x, mhd_rep])) @ coef
+                )
+                p_pr_gtv = logit_to_prob(
+                    b0 + lr_scaler.transform(np.column_stack([gtv_x, mhd_rep_pr])) @ coef
+                )
+
+                fig2 = go.Figure()
+                fig2.add_trace(go.Scatter(
+                    x=gtv_x, y=p_ph_gtv, mode="lines", name="Photon",
+                    line=dict(width=2.5),
+                ))
+                fig2.add_trace(go.Scatter(
+                    x=gtv_x, y=p_pr_gtv, mode="lines", name="Proton",
+                    line=dict(width=2.5, dash="dot"),
+                ))
+                fig2.update_layout(
+                    title=f"Fitted model: OS2y vs GTV (at median MHD = {mhd_med:.1f} Gy)",
+                    xaxis_title="GTV (cc)",
+                    yaxis=dict(title="P(OS2y)", range=[0, 1]),
+                    height=360,
+                    margin=dict(t=55, b=50, l=60, r=20),
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                                xanchor="right", x=1),
+                )
+                st.plotly_chart(fig2, use_container_width=True, config=_CHART_CFG)
 
     # Fitting diagnostics — always visible
     with st.expander("Fitting diagnostics"):
@@ -1255,6 +1335,12 @@ def main():
         gtv_slope=gtv_slope,
         fit_corr=fit_corr,
         fit_debug=fit_debug,
+        gtv=gtv,
+        mhd=mhd,
+        lr_scaler=lr_scaler,
+        proton_mode=proton_mode,
+        proton_delta=proton_delta,
+        proton_factor=proton_factor,
     )
     st.divider()
     render_model_diagnostics(
