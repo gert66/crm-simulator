@@ -33,12 +33,19 @@ _DEFAULTS = {
     "proton_factor":   0.5,
     "delta_thresh":    0.02,
     "hist_mode":      "Histogram",
-    "noise_enabled":  False,
-    "noise_sd":        1.0,
-    "z_enabled":      False,
-    "z_mean":          0.0,
-    "z_sd":            1.0,
-    "z_beta":          0.5,
+    "noise_enabled":    False,
+    "noise_sd":          1.0,
+    "z_enabled":        False,
+    "z_mean":            0.0,
+    "z_sd":              1.0,
+    "z_beta":            0.5,
+    "use_gtv":          True,
+    "use_mhd":          True,
+    "gtv_curve_type":   "Sigmoid",
+    "mhd_curve_type":   "Sigmoid",
+    "combination_mode": "Multiplicative",
+    "w_gtv":             0.5,
+    "w_mhd":             0.5,
 }
 
 # ── Math helpers ──────────────────────────────────────────────────────────────
@@ -103,6 +110,67 @@ def _compute_roc(scores, labels):
     tpr = np.concatenate([[0.0], np.cumsum(ls) / n_pos, [1.0]])
     fpr = np.concatenate([[0.0], np.cumsum(1.0 - ls) / n_neg, [1.0]])
     return fpr, tpr
+
+
+# ── Survival probability functions ────────────────────────────────────────────
+
+def probability_component(values, midpoint, slope, curve_type="sigmoid"):
+    """Single variable survival probability.
+    Interpreted as P(survival | this variable, assuming all others are optimal).
+    curve_type: 'sigmoid' or 'hard_threshold'
+    """
+    if curve_type == "hard_threshold":
+        return np.where(values < midpoint, 1.0, 0.0)
+    return sigmoid(values, midpoint, slope)
+
+
+def compute_survival_probability(gtv, mhd, params):
+    """Single source of truth for survival probability.
+    Used by simulation, plots, and diagnostics.
+    Returns p_base (clean, before noise/Z).
+    """
+    p_gtv = (
+        probability_component(
+            gtv, params["gtv_mid"], params["gtv_slope"], params["gtv_curve_type"]
+        )
+        if params["use_gtv"]
+        else np.ones(len(gtv))
+    )
+    p_mhd = (
+        probability_component(
+            mhd, params["mhd_mid"], params["mhd_slope"], params["mhd_curve_type"]
+        )
+        if params["use_mhd"]
+        else np.ones(len(mhd))
+    )
+
+    mode = params["combination_mode"]
+    if mode == "GTV only":
+        p_base = p_gtv
+    elif mode == "MHD only":
+        p_base = p_mhd
+    elif mode == "Minimum rule":
+        p_base = np.minimum(p_gtv, p_mhd)
+    elif mode == "Weighted blend":
+        p_base = params["w_gtv"] * p_gtv + params["w_mhd"] * p_mhd
+    else:  # Multiplicative (default)
+        p_base = p_gtv * p_mhd
+
+    return np.clip(p_base, 1e-9, 1.0 - 1e-9)
+
+
+def apply_hidden_factor(p_base, z, beta_z):
+    """Apply hidden factor Z on the logit scale."""
+    p_clip = np.clip(p_base, 1e-9, 1.0 - 1e-9)
+    logit  = np.log(p_clip / (1.0 - p_clip))
+    return logit_to_prob(logit + beta_z * z)
+
+
+def apply_noise(p, noise_sd, rng):
+    """Add unexplained variation on the logit scale."""
+    p_clip = np.clip(p, 1e-9, 1.0 - 1e-9)
+    logit  = np.log(p_clip / (1.0 - p_clip))
+    return logit_to_prob(logit + rng.normal(0.0, noise_sd, size=len(p)))
 
 
 # ── Logistic regression fitting ───────────────────────────────────────────────
@@ -236,7 +304,10 @@ def run_simulation(
     n, seed,
     gtv_mean, gtv_std,
     mhd_mean, mhd_std,
-    gtv_mid, gtv_slope, mhd_mid, mhd_slope,
+    gtv_mid, gtv_slope, gtv_curve_type,
+    mhd_mid, mhd_slope, mhd_curve_type,
+    use_gtv, use_mhd, combination_mode,
+    w_gtv_blend, w_mhd_blend,
     proton_mode, proton_delta, proton_factor,
     noise_enabled=False, noise_sd=1.0,
     z_enabled=False, z_mean=0.0, z_sd=1.0, z_beta=0.5,
@@ -246,15 +317,23 @@ def run_simulation(
     mhd    = sample_truncnorm(rng, mhd_mean, mhd_std, n)
     mhd_pr = apply_proton_mhd(mhd, proton_mode, proton_delta, proton_factor)
 
-    # ── Truth-world generation ────────────────────────────────────────────────
-    # Step 1: direct survival probability per variable
-    p_gtv    = sigmoid(gtv,    gtv_mid, gtv_slope)   # ranges 0–1
-    p_mhd_ph = sigmoid(mhd,    mhd_mid, mhd_slope)
-    p_mhd_pr = sigmoid(mhd_pr, mhd_mid, mhd_slope)
+    params = {
+        "gtv_mid":          gtv_mid,
+        "gtv_slope":        gtv_slope,
+        "gtv_curve_type":   gtv_curve_type,
+        "mhd_mid":          mhd_mid,
+        "mhd_slope":        mhd_slope,
+        "mhd_curve_type":   mhd_curve_type,
+        "use_gtv":          use_gtv,
+        "use_mhd":          use_mhd,
+        "combination_mode": combination_mode,
+        "w_gtv":            w_gtv_blend,
+        "w_mhd":            w_mhd_blend,
+    }
 
-    # Step 2: combine multiplicatively
-    p_ph = p_gtv * p_mhd_ph
-    p_pr = p_gtv * p_mhd_pr
+    # ── Base probabilities (noiseless, Z-free) ────────────────────────────────
+    p_ph = compute_survival_probability(gtv, mhd,    params)
+    p_pr = compute_survival_probability(gtv, mhd_pr, params)
 
     # Noiseless, Z-free binary outcomes (AUC baseline reference)
     out_ph_base = (rng.random(n) < p_ph).astype(float)
@@ -262,38 +341,29 @@ def run_simulation(
 
     pred_delta = p_pr - p_ph  # always noiseless, always Z-free
 
-    # Step 3: hidden factor Z (only if enabled)
+    # ── Hidden factor Z ───────────────────────────────────────────────────────
     if z_enabled:
         z_rng         = np.random.default_rng(seed + 2000)
         z_vals        = z_rng.normal(z_mean, z_sd, n)
-        p_z           = sigmoid(z_vals, 0.0, z_beta)   # expit(beta_z * Z)
-        p_combined_ph = p_ph * p_z
-        p_combined_pr = p_pr * p_z
+        p_combined_ph = apply_hidden_factor(p_ph, z_vals, z_beta)
+        p_combined_pr = apply_hidden_factor(p_pr, z_vals, z_beta)
     else:
-        z_rng         = None
         z_vals        = None
         p_combined_ph = p_ph
         p_combined_pr = p_pr
 
-    # Step 4: additive noise on logit (only if enabled)
+    # ── Additive noise on logit scale ─────────────────────────────────────────
     if noise_enabled:
-        noise_rng    = np.random.default_rng(seed + 1000)
-        eps_ph       = noise_rng.normal(0.0, noise_sd, n)
-        eps_pr       = noise_rng.normal(0.0, noise_sd, n)
-        p_clip_ph    = np.clip(p_combined_ph, 1e-9, 1.0 - 1e-9)
-        p_clip_pr    = np.clip(p_combined_pr, 1e-9, 1.0 - 1e-9)
-        logit_ph     = np.log(p_clip_ph / (1.0 - p_clip_ph))
-        logit_pr     = np.log(p_clip_pr / (1.0 - p_clip_pr))
-        p_final_ph   = logit_to_prob(logit_ph + eps_ph)
-        p_final_pr   = logit_to_prob(logit_pr + eps_pr)
-        draw_rng     = noise_rng
+        noise_rng  = np.random.default_rng(seed + 1000)
+        p_final_ph = apply_noise(p_combined_ph, noise_sd, noise_rng)
+        p_final_pr = apply_noise(p_combined_pr, noise_sd, noise_rng)
+        draw_rng   = noise_rng
     else:
-        noise_rng    = None
-        p_final_ph   = p_combined_ph
-        p_final_pr   = p_combined_pr
-        draw_rng     = np.random.default_rng(seed + 2001) if z_enabled else None
+        p_final_ph = p_combined_ph
+        p_final_pr = p_combined_pr
+        draw_rng   = np.random.default_rng(seed + 2001) if z_enabled else None
 
-    # Step 5: sample binary outcomes
+    # ── Final binary outcomes ─────────────────────────────────────────────────
     if z_enabled or noise_enabled:
         out_ph     = (draw_rng.random(n) < p_final_ph).astype(float)
         out_pr     = (draw_rng.random(n) < p_final_pr).astype(float)
@@ -366,11 +436,15 @@ def make_combined_plot(
     data_b=None, label_a="Photon", label_b="Proton",
     color_a="#4C8BF5", color_b="#00C9A7", color_sig="#E86510",
     hist_mode="Histogram", n_bins=40,
+    curve_type="Sigmoid",
 ):
     x_lo    = max(0.0, mean - 4 * std)
     x_hi    = mean + 4 * std
     x_curve = np.linspace(x_lo, x_hi, 400)
-    sig_y   = sigmoid(x_curve, sig_mid, sig_slope)
+    sig_y   = probability_component(
+        x_curve, sig_mid, sig_slope,
+        "hard_threshold" if curve_type == "Hard threshold" else "sigmoid",
+    )
 
     fig = go.Figure()
 
@@ -466,6 +540,30 @@ def render_sidebar():
                 key="hist_mode",
             )
 
+        with st.expander("Survival model", expanded=True):
+            st.checkbox("Enable GTV effect", key="use_gtv")
+            if st.session_state.get("use_gtv", True):
+                st.radio(
+                    "GTV curve type",
+                    ["Sigmoid", "Hard threshold"],
+                    key="gtv_curve_type",
+                )
+            st.checkbox("Enable MHD effect", key="use_mhd")
+            if st.session_state.get("use_mhd", True):
+                st.radio(
+                    "MHD curve type",
+                    ["Sigmoid", "Hard threshold"],
+                    key="mhd_curve_type",
+                )
+            st.selectbox(
+                "Combination mode",
+                ["GTV only", "MHD only", "Multiplicative", "Minimum rule", "Weighted blend"],
+                key="combination_mode",
+            )
+            if st.session_state.get("combination_mode") == "Weighted blend":
+                dual_param("w_GTV", "w_gtv", 0.0, 1.0, 0.05, "%.2f")
+                dual_param("w_MHD", "w_mhd", 0.0, 1.0, 0.05, "%.2f")
+
         with st.expander("Survival noise", expanded=False):
             st.checkbox(
                 "Add random noise to survival mechanism",
@@ -532,13 +630,14 @@ def render_playground(proton_mode, hist_mode, gtv, mhd, mhd_pr):
     with col_gtv:
         st.markdown("#### GTV")
         st.caption(
-            "Gross tumour volume directly determines survival probability via a sigmoid. "
+            "Gross tumour volume directly determines survival probability. "
             "The orange curve shows P(2-year survival) as a function of GTV."
         )
-        gtv_mean  = float(st.session_state["gtv_mean"])
-        gtv_std   = float(st.session_state["gtv_std"])
-        gtv_mid   = float(st.session_state["gtv_mid"])
-        gtv_slope = float(st.session_state["gtv_slope"])
+        gtv_mean      = float(st.session_state["gtv_mean"])
+        gtv_std       = float(st.session_state["gtv_std"])
+        gtv_mid       = float(st.session_state["gtv_mid"])
+        gtv_slope     = float(st.session_state["gtv_slope"])
+        gtv_curve_type = st.session_state.get("gtv_curve_type", "Sigmoid")
         st.plotly_chart(
             make_combined_plot(
                 gtv, gtv_mean, gtv_std, gtv_mid, gtv_slope,
@@ -546,6 +645,7 @@ def render_playground(proton_mode, hist_mode, gtv, mhd, mhd_pr):
                 title="GTV distribution & survival probability",
                 color_a="#4C8BF5", color_sig="#E86510",
                 hist_mode=hist_mode,
+                curve_type=gtv_curve_type,
             ),
             use_container_width=True,
             config=_CHART_CFG,
@@ -553,13 +653,16 @@ def render_playground(proton_mode, hist_mode, gtv, mhd, mhd_pr):
         st.markdown("**Distribution**")
         dual_param("Mean (cc)",  "gtv_mean",  0.0, 200.0, 1.0,  "%.1f")
         dual_param("Std  (cc)",  "gtv_std",   0.5,  80.0, 0.5,  "%.1f")
-        st.markdown("**Sigmoid**")
+        st.markdown("**Survival curve**")
         dual_param("Midpoint (cc)", "gtv_mid",   0.0, 200.0, 1.0,  "%.1f")
         dual_param(
             "Slope", "gtv_slope", -10.0, 10.0, 0.1, "%.3f",
-            help_text="Negative → larger GTV reduces survival.",
+            help_text="Negative → larger GTV reduces survival. Not used for hard threshold.",
         )
-        st.caption("Midpoint controls where the transition happens. Slope controls how sharp it is.")
+        if gtv_curve_type == "Hard threshold":
+            st.caption("Hard threshold: survival = 1 below midpoint, 0 at or above. Slope is not used.")
+        else:
+            st.caption("Midpoint controls where the transition happens. Slope controls how sharp it is.")
 
     with col_mhd:
         st.markdown("#### MHD")
@@ -567,10 +670,11 @@ def render_playground(proton_mode, hist_mode, gtv, mhd, mhd_pr):
             "Mean heart dose is reduced by proton therapy. "
             "The teal overlay shows the proton MHD distribution."
         )
-        mhd_mean  = float(st.session_state["mhd_mean"])
-        mhd_std   = float(st.session_state["mhd_std"])
-        mhd_mid   = float(st.session_state["mhd_mid"])
-        mhd_slope = float(st.session_state["mhd_slope"])
+        mhd_mean       = float(st.session_state["mhd_mean"])
+        mhd_std        = float(st.session_state["mhd_std"])
+        mhd_mid        = float(st.session_state["mhd_mid"])
+        mhd_slope      = float(st.session_state["mhd_slope"])
+        mhd_curve_type = st.session_state.get("mhd_curve_type", "Sigmoid")
         st.plotly_chart(
             make_combined_plot(
                 mhd, mhd_mean, mhd_std, mhd_mid, mhd_slope,
@@ -580,6 +684,7 @@ def render_playground(proton_mode, hist_mode, gtv, mhd, mhd_pr):
                 label_a="Photon MHD", label_b="Proton MHD",
                 color_a="#E8543A", color_b="#00C9A7", color_sig="#7B61FF",
                 hist_mode=hist_mode,
+                curve_type=mhd_curve_type,
             ),
             use_container_width=True,
             config=_CHART_CFG,
@@ -587,13 +692,16 @@ def render_playground(proton_mode, hist_mode, gtv, mhd, mhd_pr):
         st.markdown("**Distribution**")
         dual_param("Mean (Gy)", "mhd_mean",  0.0, 60.0, 0.5,  "%.1f")
         dual_param("Std  (Gy)", "mhd_std",   0.5, 25.0, 0.5,  "%.1f")
-        st.markdown("**Sigmoid**")
+        st.markdown("**Survival curve**")
         dual_param("Midpoint (Gy)", "mhd_mid",   0.0, 60.0,  0.5,  "%.1f")
         dual_param(
             "Slope", "mhd_slope", -10.0, 10.0, 0.1, "%.3f",
-            help_text="Negative → higher MHD reduces survival.",
+            help_text="Negative → higher MHD reduces survival. Not used for hard threshold.",
         )
-        st.caption("Midpoint controls where the transition happens. Slope controls how sharp it is.")
+        if mhd_curve_type == "Hard threshold":
+            st.caption("Hard threshold: survival = 1 below midpoint, 0 at or above. Slope is not used.")
+        else:
+            st.caption("Midpoint controls where the transition happens. Slope controls how sharp it is.")
 
     st.markdown("**Proton MHD reduction**")
     if proton_mode == "Subtract fixed delta":
@@ -1036,6 +1144,10 @@ def render_model_diagnostics(
     p_ph, p_pr, out_ph_base, out_ph,
     noise_enabled, noise_sd,
     gtv_mid, gtv_slope, mhd_mid, mhd_slope,
+    use_gtv=True, use_mhd=True,
+    gtv_curve_type="Sigmoid", mhd_curve_type="Sigmoid",
+    combination_mode="Multiplicative",
+    w_gtv=0.5, w_mhd=0.5,
     p_fit_ph=None,
 ):
     st.subheader("Model Diagnostics")
@@ -1106,11 +1218,21 @@ def render_model_diagnostics(
     with col2:
         st.markdown("**Survival model parameters**")
         param_rows = [
-            {"Parameter": "GTV midpoint", "Value": f"{gtv_mid:.1f} cc"},
-            {"Parameter": "GTV slope",    "Value": f"{gtv_slope:.4f}"},
-            {"Parameter": "MHD midpoint", "Value": f"{mhd_mid:.1f} Gy"},
-            {"Parameter": "MHD slope",    "Value": f"{mhd_slope:.4f}"},
+            {"Parameter": "GTV effect",       "Value": "Enabled" if use_gtv else "Disabled"},
+            {"Parameter": "GTV curve type",   "Value": gtv_curve_type},
+            {"Parameter": "GTV midpoint",     "Value": f"{gtv_mid:.1f} cc"},
+            {"Parameter": "GTV slope",        "Value": f"{gtv_slope:.4f}"},
+            {"Parameter": "MHD effect",       "Value": "Enabled" if use_mhd else "Disabled"},
+            {"Parameter": "MHD curve type",   "Value": mhd_curve_type},
+            {"Parameter": "MHD midpoint",     "Value": f"{mhd_mid:.1f} Gy"},
+            {"Parameter": "MHD slope",        "Value": f"{mhd_slope:.4f}"},
+            {"Parameter": "Combination mode", "Value": combination_mode},
         ]
+        if combination_mode == "Weighted blend":
+            param_rows += [
+                {"Parameter": "w_GTV", "Value": f"{w_gtv:.2f}"},
+                {"Parameter": "w_MHD", "Value": f"{w_mhd:.2f}"},
+            ]
         st.dataframe(pd.DataFrame(param_rows), hide_index=True, use_container_width=True)
 
 
@@ -1208,23 +1330,33 @@ def main():
     n_patients, seed, proton_mode, hist_mode, noise_enabled, noise_sd, \
         z_enabled, z_mean, z_sd, z_beta = render_sidebar()
 
-    gtv_mean      = float(st.session_state["gtv_mean"])
-    gtv_std       = float(st.session_state["gtv_std"])
-    mhd_mean      = float(st.session_state["mhd_mean"])
-    mhd_std       = float(st.session_state["mhd_std"])
-    gtv_mid       = float(st.session_state["gtv_mid"])
-    gtv_slope     = float(st.session_state["gtv_slope"])
-    mhd_mid       = float(st.session_state["mhd_mid"])
-    mhd_slope     = float(st.session_state["mhd_slope"])
-    proton_delta  = float(st.session_state["proton_delta"])
-    proton_factor = float(st.session_state["proton_factor"])
-    delta_thresh  = float(st.session_state["delta_thresh"])
+    gtv_mean         = float(st.session_state["gtv_mean"])
+    gtv_std          = float(st.session_state["gtv_std"])
+    mhd_mean         = float(st.session_state["mhd_mean"])
+    mhd_std          = float(st.session_state["mhd_std"])
+    gtv_mid          = float(st.session_state["gtv_mid"])
+    gtv_slope        = float(st.session_state["gtv_slope"])
+    mhd_mid          = float(st.session_state["mhd_mid"])
+    mhd_slope        = float(st.session_state["mhd_slope"])
+    proton_delta     = float(st.session_state["proton_delta"])
+    proton_factor    = float(st.session_state["proton_factor"])
+    delta_thresh     = float(st.session_state["delta_thresh"])
+    use_gtv          = bool(st.session_state["use_gtv"])
+    use_mhd          = bool(st.session_state["use_mhd"])
+    gtv_curve_type   = str(st.session_state["gtv_curve_type"])
+    mhd_curve_type   = str(st.session_state["mhd_curve_type"])
+    combination_mode = str(st.session_state["combination_mode"])
+    w_gtv            = float(st.session_state["w_gtv"])
+    w_mhd            = float(st.session_state["w_mhd"])
 
     # ── Truth-world generation ────────────────────────────────────────────────
     gtv, mhd, p_ph, p_pr, pred_delta, true_delta, out_ph_base, out_ph, z_vals = run_simulation(
         n_patients, seed,
         gtv_mean, gtv_std, mhd_mean, mhd_std,
-        gtv_mid, gtv_slope, mhd_mid, mhd_slope,
+        gtv_mid, gtv_slope, gtv_curve_type,
+        mhd_mid, mhd_slope, mhd_curve_type,
+        use_gtv, use_mhd, combination_mode,
+        w_gtv, w_mhd,
         proton_mode, proton_delta, proton_factor,
         noise_enabled, noise_sd,
         z_enabled, z_mean, z_sd, z_beta,
@@ -1301,6 +1433,10 @@ def main():
         p_ph, p_pr, out_ph_base, out_ph,
         noise_enabled, noise_sd,
         gtv_mid, gtv_slope, mhd_mid, mhd_slope,
+        use_gtv=use_gtv, use_mhd=use_mhd,
+        gtv_curve_type=gtv_curve_type, mhd_curve_type=mhd_curve_type,
+        combination_mode=combination_mode,
+        w_gtv=w_gtv, w_mhd=w_mhd,
         p_fit_ph=p_fit_ph,
     )
     render_extra_plots(gtv, mhd, p_ph, p_pr, mhd_pr)
