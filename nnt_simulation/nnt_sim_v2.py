@@ -126,6 +126,7 @@ def probability_component(values, midpoint, slope, curve_type="sigmoid"):
 
 
 def compute_survival_probability(gtv, mhd, params):
+    # Single source of truth — used by simulation, 1D plots, 2D surface, and diagnostics
     """Single source of truth for survival probability.
     Used by simulation, plots, and diagnostics.
     Returns p_base (clean, before noise/Z).
@@ -940,24 +941,24 @@ def render_fitted_model(
         # Comparison table
         comp_rows = [
             {
-                "Metric":          "Mean photon survival",
-                "Truth-generator": f"{p_ph.mean():.3f}",
-                "Fitted model":    f"{p_fit_ph.mean():.3f}",
+                "Metric":                    "Mean photon survival",
+                "Truth-generator probability": f"{p_ph.mean():.3f}",
+                "Fitted model probability":    f"{p_fit_ph.mean():.3f}",
             },
             {
-                "Metric":          "Mean proton survival",
-                "Truth-generator": f"{p_pr.mean():.3f}",
-                "Fitted model":    f"{p_fit_pr.mean():.3f}",
+                "Metric":                    "Mean proton survival",
+                "Truth-generator probability": f"{p_pr.mean():.3f}",
+                "Fitted model probability":    f"{p_fit_pr.mean():.3f}",
             },
             {
-                "Metric":          "Mean predicted Δ",
-                "Truth-generator": f"{pred_delta.mean():.4f}",
-                "Fitted model":    f"{fit_delta.mean():.4f}",
+                "Metric":                    "Mean predicted Δ",
+                "Truth-generator probability": f"{pred_delta.mean():.4f}",
+                "Fitted model probability":    f"{fit_delta.mean():.4f}",
             },
             {
-                "Metric":          "Mean true Δ (outcomes)",
-                "Truth-generator": f"{true_delta.mean():.4f}",
-                "Fitted model":    "—",
+                "Metric":                    "Mean true Δ (outcomes)",
+                "Truth-generator probability": f"{true_delta.mean():.4f}",
+                "Fitted model probability":    "—",
             },
         ]
         st.dataframe(pd.DataFrame(comp_rows), hide_index=True, use_container_width=True)
@@ -995,7 +996,7 @@ def render_fitted_model(
                 fig1.update_layout(
                     title=f"Fitted model: OS2y vs MHD (at median GTV = {gtv_med:.1f} cc)",
                     xaxis_title="MHD (Gy)",
-                    yaxis=dict(title="P(OS2y)", range=[0, 1]),
+                    yaxis=dict(title="P(2-year survival)", range=[0, 1]),
                     height=360,
                     margin=dict(t=55, b=50, l=60, r=20),
                     legend=dict(orientation="h", yanchor="bottom", y=1.02,
@@ -1028,7 +1029,7 @@ def render_fitted_model(
                 fig2.update_layout(
                     title=f"Fitted model: OS2y vs GTV (at median MHD = {mhd_med:.1f} Gy)",
                     xaxis_title="GTV (cc)",
-                    yaxis=dict(title="P(OS2y)", range=[0, 1]),
+                    yaxis=dict(title="P(2-year survival)", range=[0, 1]),
                     height=360,
                     margin=dict(t=55, b=50, l=60, r=20),
                     legend=dict(orientation="h", yanchor="bottom", y=1.02,
@@ -1150,8 +1151,64 @@ def render_model_diagnostics(
     combination_mode="Multiplicative",
     w_gtv=0.5, w_mhd=0.5,
     p_fit_ph=None,
+    gtv=None, mhd=None, sim_params=None,
+    z_enabled=False, z_vals=None, z_beta=0.5,
 ):
     st.subheader("Model Diagnostics")
+
+    # ── Survival model diagnostics ────────────────────────────────────────────
+    with st.expander("Survival model diagnostics", expanded=True):
+        if sim_params is not None and gtv is not None and mhd is not None:
+            p_gtv_arr = (
+                probability_component(
+                    gtv, sim_params["gtv_mid"], sim_params["gtv_slope"],
+                    sim_params["gtv_curve_type"],
+                )
+                if sim_params["use_gtv"] else np.ones(len(gtv))
+            )
+            p_mhd_arr = (
+                probability_component(
+                    mhd, sim_params["mhd_mid"], sim_params["mhd_slope"],
+                    sim_params["mhd_curve_type"],
+                )
+                if sim_params["use_mhd"] else np.ones(len(mhd))
+            )
+            p_base_arr = p_ph  # = compute_survival_probability output
+
+            if z_enabled and z_vals is not None:
+                p_final_arr   = apply_hidden_factor(p_base_arr, z_vals, z_beta)
+                p_final_label = "p_final (Z applied)"
+            else:
+                p_final_arr   = p_base_arr
+                p_final_label = "p_final"
+
+            diag_rows = [
+                {"Variable": "p_gtv",       "Min": f"{p_gtv_arr.min():.3f}",   "Mean": f"{p_gtv_arr.mean():.3f}",   "Max": f"{p_gtv_arr.max():.3f}"},
+                {"Variable": "p_mhd",       "Min": f"{p_mhd_arr.min():.3f}",   "Mean": f"{p_mhd_arr.mean():.3f}",   "Max": f"{p_mhd_arr.max():.3f}"},
+                {"Variable": "p_base",      "Min": f"{p_base_arr.min():.3f}",  "Mean": f"{p_base_arr.mean():.3f}",  "Max": f"{p_base_arr.max():.3f}"},
+                {"Variable": p_final_label, "Min": f"{p_final_arr.min():.3f}", "Mean": f"{p_final_arr.mean():.3f}", "Max": f"{p_final_arr.max():.3f}"},
+            ]
+            st.dataframe(pd.DataFrame(diag_rows), hide_index=True, use_container_width=True)
+
+            if noise_enabled:
+                st.caption("Noise adds individual-level variation to p_final not captured above.")
+
+            n_alive = int(out_ph.sum())
+            n_dead  = int(len(out_ph) - n_alive)
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("Alive (photon)", f"{n_alive:,}")
+            m2.metric("Dead (photon)",  f"{n_dead:,}")
+            m3.metric("Combination",    combination_mode)
+            m4.metric("GTV / MHD",     f"{'Yes' if use_gtv else 'No'} / {'Yes' if use_mhd else 'No'}")
+
+            ca, cb = st.columns(2)
+            ca.write(f"**GTV:** {'Enabled' if use_gtv else 'Disabled'}, curve: {gtv_curve_type}")
+            cb.write(f"**MHD:** {'Enabled' if use_mhd else 'Disabled'}, curve: {mhd_curve_type}")
+
+        st.caption(
+            "Each sigmoid is interpreted as the survival effect of that variable "
+            "assuming all others are optimal (contribution = 1.0)."
+        )
 
     # ── ROC curve — use fitted predictions when available ─────────────────────
     roc_scores = p_fit_ph if p_fit_ph is not None else p_ph
@@ -1464,7 +1521,7 @@ def render_extra_plots(gtv, mhd, p_ph, p_pr, mhd_pr):
         fig.update_layout(
             title="Mean survival probability vs MHD (10 equal-width bins)",
             xaxis_title="MHD bin centre (Gy)",
-            yaxis_title="Mean P(OS2y)",
+            yaxis_title="Mean P(2-year survival)",
             height=360,
             margin=dict(t=50, b=50, l=60, r=20),
             legend=dict(orientation="h", yanchor="bottom", y=1.02,
@@ -1622,6 +1679,8 @@ def main():
         combination_mode=combination_mode,
         w_gtv=w_gtv, w_mhd=w_mhd,
         p_fit_ph=p_fit_ph,
+        gtv=gtv, mhd=mhd, sim_params=sim_params,
+        z_enabled=z_enabled, z_vals=z_vals, z_beta=z_beta,
     )
     render_extra_plots(gtv, mhd, p_ph, p_pr, mhd_pr)
 
