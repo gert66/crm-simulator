@@ -46,6 +46,7 @@ _DEFAULTS = {
     "combination_mode": "Multiplicative",
     "w_gtv":             0.5,
     "w_mhd":             0.5,
+    "overlay_patients":  False,
 }
 
 # ── Math helpers ──────────────────────────────────────────────────────────────
@@ -1236,6 +1237,171 @@ def render_model_diagnostics(
         st.dataframe(pd.DataFrame(param_rows), hide_index=True, use_container_width=True)
 
 
+# ── 2D survival surface ───────────────────────────────────────────────────────
+
+def render_survival_surface(gtv, mhd, p_ph, params):
+    st.subheader("2D Survival Probability Surface")
+
+    gtv_max  = float(gtv.max())
+    mhd_max  = float(mhd.max())
+
+    gtv_grid = np.linspace(0, gtv_max, 100)
+    mhd_grid = np.linspace(0, mhd_max, 100)
+    GTV_2d, MHD_2d = np.meshgrid(gtv_grid, mhd_grid)
+    P_grid = compute_survival_probability(
+        GTV_2d.ravel(), MHD_2d.ravel(), params
+    ).reshape(100, 100)
+    # P_grid[i,j] = P(GTV=gtv_grid[j], MHD=mhd_grid[i]).
+    # Heatmap needs z[i,j] = P(GTV=gtv_grid[i], MHD=mhd_grid[j]) for x=MHD, y=GTV.
+    P_plot = P_grid.T
+
+    overlay = st.checkbox("Overlay sampled patients", key="overlay_patients")
+
+    fig = go.Figure()
+
+    fig.add_trace(go.Heatmap(
+        z=P_plot,
+        x=mhd_grid,
+        y=gtv_grid,
+        colorscale="RdYlGn",
+        zmin=0, zmax=1,
+        colorbar=dict(title="P(2-year survival)"),
+    ))
+
+    fig.add_trace(go.Contour(
+        z=P_plot,
+        x=mhd_grid,
+        y=gtv_grid,
+        contours=dict(
+            start=0.25, end=0.75, size=0.25,
+            coloring="none",
+            showlabels=True,
+            labelfont=dict(color="white", size=11),
+        ),
+        line=dict(color="white", width=1.5),
+        showscale=False,
+        name="Iso-probability",
+    ))
+
+    if overlay:
+        fig.add_trace(go.Scatter(
+            x=mhd, y=gtv,
+            mode="markers",
+            marker=dict(
+                color=p_ph,
+                colorscale="RdYlGn",
+                cmin=0, cmax=1,
+                size=3,
+                opacity=0.5,
+                line=dict(width=0),
+                showscale=False,
+            ),
+            name="Patients",
+        ))
+
+    fig.update_layout(
+        title="2D survival probability surface — truth-generator",
+        xaxis_title="MHD (Gy)",
+        yaxis_title="GTV (cc)",
+        height=520,
+        margin=dict(t=50, b=50, l=65, r=20),
+    )
+    st.plotly_chart(fig, use_container_width=True, config=_CHART_CFG)
+    st.caption(
+        "This shows the true survival function evaluated on a grid. "
+        "It is independent of sampled patients. Population distributions are shown separately above."
+    )
+
+
+# ── 1D survival cross-sections ────────────────────────────────────────────────
+
+def render_cross_sections(gtv, mhd, params, lr_model=None, lr_scaler=None):
+    st.subheader("Survival Probability Cross-Sections")
+
+    gtv_max    = float(gtv.max())
+    mhd_max    = float(mhd.max())
+    median_gtv = float(np.median(gtv))
+    median_mhd = float(np.median(mhd))
+
+    col1, col2 = st.columns(2)
+
+    # ── Plot 1: OS2y vs MHD at median GTV ────────────────────────────────────
+    with col1:
+        mhd_x   = np.linspace(0, mhd_max, 300)
+        gtv_rep = np.full_like(mhd_x, median_gtv)
+        p_truth = compute_survival_probability(gtv_rep, mhd_x, params)
+
+        fig1 = go.Figure()
+        fig1.add_trace(go.Scatter(
+            x=mhd_x, y=p_truth,
+            mode="lines", name="Truth-generator probability",
+            line=dict(width=2.5),
+        ))
+
+        if lr_model is not None and lr_scaler is not None:
+            X1     = lr_scaler.transform(np.column_stack([gtv_rep, mhd_x]))
+            p_fit1 = logit_to_prob(lr_model.intercept_[0] + X1 @ lr_model.coef_[0])
+            fig1.add_trace(go.Scatter(
+                x=mhd_x, y=p_fit1,
+                mode="lines", name="Fitted model probability",
+                line=dict(width=2.5, dash="dot"),
+            ))
+
+        fig1.add_vline(
+            x=median_mhd, line_dash="dash", line_color="grey",
+            annotation_text=f"Median {median_mhd:.1f} Gy",
+            annotation_position="top right",
+        )
+        fig1.update_layout(
+            title=f"OS2y vs MHD at median GTV ({median_gtv:.1f} cc)",
+            xaxis_title="MHD (Gy)",
+            yaxis=dict(title="P(2-year survival)", range=[0, 1]),
+            height=380,
+            margin=dict(t=55, b=50, l=60, r=20),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                        xanchor="right", x=1),
+        )
+        st.plotly_chart(fig1, use_container_width=True, config=_CHART_CFG)
+
+    # ── Plot 2: OS2y vs GTV at median MHD ────────────────────────────────────
+    with col2:
+        gtv_x   = np.linspace(0, gtv_max, 300)
+        mhd_rep = np.full_like(gtv_x, median_mhd)
+        p_truth = compute_survival_probability(gtv_x, mhd_rep, params)
+
+        fig2 = go.Figure()
+        fig2.add_trace(go.Scatter(
+            x=gtv_x, y=p_truth,
+            mode="lines", name="Truth-generator probability",
+            line=dict(width=2.5),
+        ))
+
+        if lr_model is not None and lr_scaler is not None:
+            X2     = lr_scaler.transform(np.column_stack([gtv_x, mhd_rep]))
+            p_fit2 = logit_to_prob(lr_model.intercept_[0] + X2 @ lr_model.coef_[0])
+            fig2.add_trace(go.Scatter(
+                x=gtv_x, y=p_fit2,
+                mode="lines", name="Fitted model probability",
+                line=dict(width=2.5, dash="dot"),
+            ))
+
+        fig2.add_vline(
+            x=median_gtv, line_dash="dash", line_color="grey",
+            annotation_text=f"Median {median_gtv:.1f} cc",
+            annotation_position="top right",
+        )
+        fig2.update_layout(
+            title=f"OS2y vs GTV at median MHD ({median_mhd:.1f} Gy)",
+            xaxis_title="GTV (cc)",
+            yaxis=dict(title="P(2-year survival)", range=[0, 1]),
+            height=380,
+            margin=dict(t=55, b=50, l=60, r=20),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                        xanchor="right", x=1),
+        )
+        st.plotly_chart(fig2, use_container_width=True, config=_CHART_CFG)
+
+
 # ── Extra exploration plots ───────────────────────────────────────────────────
 
 def render_extra_plots(gtv, mhd, p_ph, p_pr, mhd_pr):
@@ -1349,6 +1515,20 @@ def main():
     w_gtv            = float(st.session_state["w_gtv"])
     w_mhd            = float(st.session_state["w_mhd"])
 
+    sim_params = {
+        "gtv_mid":          gtv_mid,
+        "gtv_slope":        gtv_slope,
+        "gtv_curve_type":   gtv_curve_type,
+        "mhd_mid":          mhd_mid,
+        "mhd_slope":        mhd_slope,
+        "mhd_curve_type":   mhd_curve_type,
+        "use_gtv":          use_gtv,
+        "use_mhd":          use_mhd,
+        "combination_mode": combination_mode,
+        "w_gtv":            w_gtv,
+        "w_mhd":            w_mhd,
+    }
+
     # ── Truth-world generation ────────────────────────────────────────────────
     gtv, mhd, p_ph, p_pr, pred_delta, true_delta, out_ph_base, out_ph, z_vals = run_simulation(
         n_patients, seed,
@@ -1410,6 +1590,10 @@ def main():
     if z_enabled:
         st.divider()
         render_z_section(z_vals, z_mean, z_sd, z_beta)
+    st.divider()
+    render_survival_surface(gtv, mhd, p_ph, sim_params)
+    st.divider()
+    render_cross_sections(gtv, mhd, sim_params, lr_model=lr_model, lr_scaler=lr_scaler)
     st.divider()
     render_fitted_model(
         fit_error,
