@@ -24,7 +24,6 @@ _DEFAULTS = {
     "gtv_std":        20.0,
     "mhd_mean":       15.0,
     "mhd_std":         5.0,
-    "intercept":       0.5,
     "gtv_mid":        50.0,
     "gtv_slope":      -0.1,
     "mhd_mid":        15.0,
@@ -40,8 +39,6 @@ _DEFAULTS = {
     "z_mean":          0.0,
     "z_sd":            1.0,
     "z_beta":          0.5,
-    "w_gtv":           1.0,
-    "w_mhd":          -1.0,
 }
 
 # ── Math helpers ──────────────────────────────────────────────────────────────
@@ -52,15 +49,6 @@ def sigmoid(x, midpoint, slope):
 
 def logit_to_prob(logit):
     return 1.0 / (1.0 + np.exp(-logit))
-
-
-def survival_prob(gtv, mhd, intercept, gtv_mid, gtv_slope, mhd_mid, mhd_slope):
-    logit = (
-        intercept
-        + sigmoid(gtv, gtv_mid, gtv_slope)
-        + sigmoid(mhd, mhd_mid, mhd_slope)
-    )
-    return logit_to_prob(logit)
 
 
 def sample_truncnorm(rng, mean, std, n, lower=0.0):
@@ -248,29 +236,25 @@ def run_simulation(
     n, seed,
     gtv_mean, gtv_std,
     mhd_mean, mhd_std,
-    intercept, gtv_mid, gtv_slope, mhd_mid, mhd_slope,
+    gtv_mid, gtv_slope, mhd_mid, mhd_slope,
     proton_mode, proton_delta, proton_factor,
     noise_enabled=False, noise_sd=1.0,
     z_enabled=False, z_mean=0.0, z_sd=1.0, z_beta=0.5,
-    w_gtv=1.0, w_mhd=1.0,
 ):
     rng    = np.random.default_rng(seed)
     gtv    = sample_truncnorm(rng, gtv_mean, gtv_std, n)
     mhd    = sample_truncnorm(rng, mhd_mean, mhd_std, n)
     mhd_pr = apply_proton_mhd(mhd, proton_mode, proton_delta, proton_factor)
 
-    # ── Prediction-world: model sees only GTV and MHD ────────────────────────
-    # w_gtv / w_mhd scale each sigmoid contribution independently of its shape
-    logit_ph = (intercept
-                + w_gtv * sigmoid(gtv, gtv_mid, gtv_slope)
-                + w_mhd * sigmoid(mhd, mhd_mid, mhd_slope))
-    logit_pr = (intercept
-                + w_gtv * sigmoid(gtv, gtv_mid, gtv_slope)
-                + w_mhd * sigmoid(mhd_pr, mhd_mid, mhd_slope))
+    # ── Truth-world generation ────────────────────────────────────────────────
+    # Step 1: direct survival probability per variable
+    p_gtv    = sigmoid(gtv,    gtv_mid, gtv_slope)   # ranges 0–1
+    p_mhd_ph = sigmoid(mhd,    mhd_mid, mhd_slope)
+    p_mhd_pr = sigmoid(mhd_pr, mhd_mid, mhd_slope)
 
-    # Predicted probabilities — Z and noise are never seen by the model
-    p_ph = logit_to_prob(logit_ph)
-    p_pr = logit_to_prob(logit_pr)
+    # Step 2: combine multiplicatively
+    p_ph = p_gtv * p_mhd_ph
+    p_pr = p_gtv * p_mhd_pr
 
     # Noiseless, Z-free binary outcomes (AUC baseline reference)
     out_ph_base = (rng.random(n) < p_ph).astype(float)
@@ -278,40 +262,48 @@ def run_simulation(
 
     pred_delta = p_pr - p_ph  # always noiseless, always Z-free
 
-    # ── Truth-world: true logit includes hidden factor Z and/or noise ─────────
-    # Z is a patient-level characteristic; same value for both arms
+    # Step 3: hidden factor Z (only if enabled)
     if z_enabled:
-        z_rng  = np.random.default_rng(seed + 2000)
-        z_vals = z_rng.normal(z_mean, z_sd, n)
-        z_term = z_beta * z_vals
+        z_rng         = np.random.default_rng(seed + 2000)
+        z_vals        = z_rng.normal(z_mean, z_sd, n)
+        p_z           = sigmoid(z_vals, 0.0, z_beta)   # expit(beta_z * Z)
+        p_combined_ph = p_ph * p_z
+        p_combined_pr = p_pr * p_z
     else:
-        z_rng  = None
-        z_vals = None
-        z_term = 0.0  # broadcasts cleanly with NumPy arrays
+        z_rng         = None
+        z_vals        = None
+        p_combined_ph = p_ph
+        p_combined_pr = p_pr
 
-    # Additive noise — independent per patient, independent RNG stream
+    # Step 4: additive noise on logit (only if enabled)
     if noise_enabled:
-        noise_rng = np.random.default_rng(seed + 1000)
-        eps_ph    = noise_rng.normal(0.0, noise_sd, n)
-        eps_pr    = noise_rng.normal(0.0, noise_sd, n)
+        noise_rng    = np.random.default_rng(seed + 1000)
+        eps_ph       = noise_rng.normal(0.0, noise_sd, n)
+        eps_pr       = noise_rng.normal(0.0, noise_sd, n)
+        p_clip_ph    = np.clip(p_combined_ph, 1e-9, 1.0 - 1e-9)
+        p_clip_pr    = np.clip(p_combined_pr, 1e-9, 1.0 - 1e-9)
+        logit_ph     = np.log(p_clip_ph / (1.0 - p_clip_ph))
+        logit_pr     = np.log(p_clip_pr / (1.0 - p_clip_pr))
+        p_final_ph   = logit_to_prob(logit_ph + eps_ph)
+        p_final_pr   = logit_to_prob(logit_pr + eps_pr)
+        draw_rng     = noise_rng
     else:
         noise_rng    = None
-        eps_ph = eps_pr = 0.0
+        p_final_ph   = p_combined_ph
+        p_final_pr   = p_combined_pr
+        draw_rng     = np.random.default_rng(seed + 2001) if z_enabled else None
 
+    # Step 5: sample binary outcomes
     if z_enabled or noise_enabled:
-        p_true_ph  = logit_to_prob(logit_ph + z_term + eps_ph)
-        p_true_pr  = logit_to_prob(logit_pr + z_term + eps_pr)
-        # Binary draws use noise_rng when available, else z_rng
-        draw_rng   = noise_rng if noise_enabled else z_rng
-        out_ph     = (draw_rng.random(n) < p_true_ph).astype(float)
-        out_pr     = (draw_rng.random(n) < p_true_pr).astype(float)
+        out_ph     = (draw_rng.random(n) < p_final_ph).astype(float)
+        out_pr     = (draw_rng.random(n) < p_final_pr).astype(float)
         true_delta = out_pr - out_ph
     else:
         out_ph     = out_ph_base
         true_delta = out_pr_base - out_ph_base
 
     # out_ph_base: Z-free noiseless outcomes (AUC reference)
-    # out_ph:      outcomes from the full truth-world (Z + noise if enabled)
+    # out_ph:      outcomes from full truth-world (Z + noise if enabled)
     # z_vals:      sampled Z values (None when Z is disabled)
     return gtv, mhd, p_ph, p_pr, pred_delta, true_delta, out_ph_base, out_ph, z_vals
 
@@ -412,7 +404,7 @@ def make_combined_plot(
     fig.add_trace(go.Scatter(
         x=x_curve, y=sig_y, mode="lines",
         line=dict(color=color_sig, width=2.5),
-        name="σ (logit contrib.)", yaxis="y2",
+        name="P(2-year survival)", yaxis="y2",
     ))
 
     fig.update_layout(
@@ -423,7 +415,7 @@ def make_combined_plot(
             side="left",
         ),
         yaxis2=dict(
-            title="σ (logit contribution)", side="right", overlaying="y",
+            title="P(2-year survival)", side="right", overlaying="y",
             range=[0, 1], showgrid=False, tickformat=".1f",
         ),
         height=410,
@@ -535,18 +527,13 @@ def render_playground(proton_mode, hist_mode, gtv, mhd, mhd_pr):
         "Adjust any parameter with the slider for quick exploration or type an "
         "exact value in the box on the right. All plots update on every change."
     )
-    st.caption(
-        "Shape and importance are now separate: you can have a sharp sigmoid "
-        "that contributes little, or a shallow one that dominates."
-    )
-
     col_gtv, col_mhd = st.columns(2)
 
     with col_gtv:
         st.markdown("#### GTV")
         st.caption(
-            "Gross tumour volume contributes to survival through a sigmoid "
-            "on the logit scale."
+            "Gross tumour volume directly determines survival probability via a sigmoid. "
+            "The orange curve shows P(2-year survival) as a function of GTV."
         )
         gtv_mean  = float(st.session_state["gtv_mean"])
         gtv_std   = float(st.session_state["gtv_std"])
@@ -556,7 +543,7 @@ def render_playground(proton_mode, hist_mode, gtv, mhd, mhd_pr):
             make_combined_plot(
                 gtv, gtv_mean, gtv_std, gtv_mid, gtv_slope,
                 x_label="GTV (cc)",
-                title="GTV distribution & sigmoid contribution",
+                title="GTV distribution & survival probability",
                 color_a="#4C8BF5", color_sig="#E86510",
                 hist_mode=hist_mode,
             ),
@@ -572,15 +559,7 @@ def render_playground(proton_mode, hist_mode, gtv, mhd, mhd_pr):
             "Slope", "gtv_slope", -10.0, 10.0, 0.1, "%.3f",
             help_text="Negative → larger GTV reduces survival.",
         )
-        dual_param(
-            "Weight (w_GTV)", "w_gtv", -3.0, 8.0, 0.1, "%.1f",
-            help_text="Scales the GTV sigmoid contribution to the logit.",
-        )
-        st.caption(
-            "Midpoint controls where the transition happens. "
-            "Slope controls how sharp it is. "
-            "Weight controls how much GTV matters overall."
-        )
+        st.caption("Midpoint controls where the transition happens. Slope controls how sharp it is.")
 
     with col_mhd:
         st.markdown("#### MHD")
@@ -596,7 +575,7 @@ def render_playground(proton_mode, hist_mode, gtv, mhd, mhd_pr):
             make_combined_plot(
                 mhd, mhd_mean, mhd_std, mhd_mid, mhd_slope,
                 x_label="MHD (Gy)",
-                title="MHD distribution & sigmoid (photon + proton)",
+                title="MHD distribution & survival probability (photon + proton)",
                 data_b=mhd_pr,
                 label_a="Photon MHD", label_b="Proton MHD",
                 color_a="#E8543A", color_b="#00C9A7", color_sig="#7B61FF",
@@ -614,36 +593,18 @@ def render_playground(proton_mode, hist_mode, gtv, mhd, mhd_pr):
             "Slope", "mhd_slope", -10.0, 10.0, 0.1, "%.3f",
             help_text="Negative → higher MHD reduces survival.",
         )
+        st.caption("Midpoint controls where the transition happens. Slope controls how sharp it is.")
+
+    st.markdown("**Proton MHD reduction**")
+    if proton_mode == "Subtract fixed delta":
+        dual_param("Reduction (Gy)", "proton_delta", 0.0, 40.0, 0.5, "%.1f")
+    elif proton_mode == "Multiply by factor":
         dual_param(
-            "Weight (w_MHD)", "w_mhd", -3.0, 8.0, 0.1, "%.1f",
-            help_text="Scales the MHD sigmoid contribution to the logit.",
+            "Reduction factor", "proton_factor", 0.0, 1.0, 0.05, "%.2f",
+            help_text="0 = abolish MHD entirely; 1 = no change.",
         )
-        st.caption(
-            "Midpoint controls where the transition happens. "
-            "Slope controls how sharp it is. "
-            "Weight controls how much MHD matters overall."
-        )
-
-    c_left, c_right = st.columns(2)
-    with c_left:
-        st.markdown("**Baseline (intercept)**")
-        st.caption(
-            "Sets the log-odds of survival when both sigmoids are at their midpoints. "
-            "More negative means lower baseline survival."
-        )
-        dual_param("Intercept (logit scale)", "intercept", -6.0, 2.0, 0.05, "%.2f")
-
-    with c_right:
-        st.markdown("**Proton MHD reduction**")
-        if proton_mode == "Subtract fixed delta":
-            dual_param("Reduction (Gy)", "proton_delta", 0.0, 40.0, 0.5, "%.1f")
-        elif proton_mode == "Multiply by factor":
-            dual_param(
-                "Reduction factor", "proton_factor", 0.0, 1.0, 0.05, "%.2f",
-                help_text="0 = abolish MHD entirely; 1 = no change.",
-            )
-        else:
-            st.info("MHD is set to zero for all proton patients.")
+    else:
+        st.info("MHD is set to zero for all proton patients.")
 
 
 # ── Patient selection ─────────────────────────────────────────────────────────
@@ -1074,7 +1035,7 @@ def render_fitted_model(
 def render_model_diagnostics(
     p_ph, p_pr, out_ph_base, out_ph,
     noise_enabled, noise_sd,
-    intercept, gtv_mid, gtv_slope, mhd_mid, mhd_slope, w_gtv, w_mhd,
+    gtv_mid, gtv_slope, mhd_mid, mhd_slope,
     p_fit_ph=None,
 ):
     st.subheader("Model Diagnostics")
@@ -1145,13 +1106,10 @@ def render_model_diagnostics(
     with col2:
         st.markdown("**Survival model parameters**")
         param_rows = [
-            {"Parameter": "Intercept",    "Value": f"{intercept:.3f}"},
             {"Parameter": "GTV midpoint", "Value": f"{gtv_mid:.1f} cc"},
             {"Parameter": "GTV slope",    "Value": f"{gtv_slope:.4f}"},
-            {"Parameter": "GTV weight",   "Value": f"{w_gtv:.2f}"},
             {"Parameter": "MHD midpoint", "Value": f"{mhd_mid:.1f} Gy"},
             {"Parameter": "MHD slope",    "Value": f"{mhd_slope:.4f}"},
-            {"Parameter": "MHD weight",   "Value": f"{w_mhd:.2f}"},
         ]
         st.dataframe(pd.DataFrame(param_rows), hide_index=True, use_container_width=True)
 
@@ -1254,7 +1212,6 @@ def main():
     gtv_std       = float(st.session_state["gtv_std"])
     mhd_mean      = float(st.session_state["mhd_mean"])
     mhd_std       = float(st.session_state["mhd_std"])
-    intercept     = float(st.session_state["intercept"])
     gtv_mid       = float(st.session_state["gtv_mid"])
     gtv_slope     = float(st.session_state["gtv_slope"])
     mhd_mid       = float(st.session_state["mhd_mid"])
@@ -1262,18 +1219,15 @@ def main():
     proton_delta  = float(st.session_state["proton_delta"])
     proton_factor = float(st.session_state["proton_factor"])
     delta_thresh  = float(st.session_state["delta_thresh"])
-    w_gtv         = float(st.session_state["w_gtv"])
-    w_mhd         = float(st.session_state["w_mhd"])
 
     # ── Truth-world generation ────────────────────────────────────────────────
     gtv, mhd, p_ph, p_pr, pred_delta, true_delta, out_ph_base, out_ph, z_vals = run_simulation(
         n_patients, seed,
         gtv_mean, gtv_std, mhd_mean, mhd_std,
-        intercept, gtv_mid, gtv_slope, mhd_mid, mhd_slope,
+        gtv_mid, gtv_slope, mhd_mid, mhd_slope,
         proton_mode, proton_delta, proton_factor,
         noise_enabled, noise_sd,
         z_enabled, z_mean, z_sd, z_beta,
-        w_gtv, w_mhd,
     )
     mhd_pr   = apply_proton_mhd(mhd, proton_mode, proton_delta, proton_factor)
     selected = pred_delta >= delta_thresh
@@ -1346,7 +1300,7 @@ def main():
     render_model_diagnostics(
         p_ph, p_pr, out_ph_base, out_ph,
         noise_enabled, noise_sd,
-        intercept, gtv_mid, gtv_slope, mhd_mid, mhd_slope, w_gtv, w_mhd,
+        gtv_mid, gtv_slope, mhd_mid, mhd_slope,
         p_fit_ph=p_fit_ph,
     )
     render_extra_plots(gtv, mhd, p_ph, p_pr, mhd_pr)
