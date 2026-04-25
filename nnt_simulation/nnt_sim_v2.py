@@ -20,27 +20,27 @@ _CHART_CFG = {"displayModeBar": False}
 # ── Default values ────────────────────────────────────────────────────────────
 
 _DEFAULTS = {
-    "n_patients":     5_000,
-    "seed":           42,
-    "gtv_mean":       50.0,
-    "gtv_std":        20.0,
-    "mhd_mean":       15.0,
-    "mhd_std":         5.0,
-    "gtv_mid":        50.0,
-    "gtv_slope":      -0.1,
-    "mhd_mid":        15.0,
-    "mhd_slope":      -0.1,
-    "proton_mode":    "Multiply by factor",
-    "proton_delta":    5.0,
-    "proton_factor":   0.5,
-    "delta_thresh":    0.02,
-    "hist_mode":      "Histogram",
+    "n_patients":      5_000,
+    "seed":            42,
+    "gtv_mean":        50.0,
+    "gtv_std":         20.0,
+    "mhd_mean":        15.0,
+    "mhd_std":          5.0,
+    "gtv_mid":         50.0,
+    "gtv_slope":       -3.0,   # strong enough to show meaningful survival gradient
+    "mhd_mid":         15.0,
+    "mhd_slope":       -3.0,   # strong enough to show meaningful survival gradient
+    "proton_mode":     "Subtract fixed delta",
+    "proton_delta":     5.0,
+    "proton_factor":    0.5,
+    "delta_thresh":     0.02,
+    "hist_mode":       "Histogram",
     "noise_enabled":    False,
     "noise_sd":          1.0,
     "z_enabled":        False,
     "z_mean":            0.0,
     "z_sd":              1.0,
-    "z_beta":            0.5,
+    "z_beta":            1.0,
     "use_gtv":          True,
     "use_mhd":          True,
     "gtv_curve_type":   "Sigmoid",
@@ -49,6 +49,8 @@ _DEFAULTS = {
     "w_gtv":             0.5,
     "w_mhd":             0.5,
     "overlay_patients":  False,
+    "preset_selector":  "— select —",
+    "last_loaded":      "",
 }
 
 # ── Presets ───────────────────────────────────────────────────────────────────
@@ -664,24 +666,20 @@ def make_combined_plot(
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 
-def _on_preset_change():
-    name = st.session_state.get("_preset_sel", "— select —")
-    if name != "— select —":
-        _apply_preset(PRESETS[name])
-        st.session_state["_preset_sel"] = "— select —"
-        st.rerun()
-
-
 def render_sidebar():
     with st.sidebar:
         # ── Presets / export / import ─────────────────────────────────────────
-        st.selectbox(
+        selected_preset = st.selectbox(
             "Load preset",
             ["— select —"] + list(PRESETS.keys()),
-            key="_preset_sel",
-            on_change=_on_preset_change,
+            key="preset_selector",
             help="Instantly load a pre-configured scenario. The selector resets after loading so you can re-apply at any time.",
         )
+        if selected_preset != "— select —":
+            _apply_preset(PRESETS[selected_preset])
+            st.session_state["preset_selector"] = "— select —"
+            st.session_state["last_loaded"] = selected_preset
+            st.rerun()
 
         params_json = json.dumps(collect_params(st.session_state), indent=2)
         st.download_button(
@@ -702,6 +700,7 @@ def render_sidebar():
             try:
                 loaded = json.loads(uploaded.read())
                 _load_json_params(loaded)
+                st.session_state["last_loaded"] = uploaded.name
                 st.rerun()
             except Exception as e:
                 st.error(f"Could not load: {e}")
@@ -789,7 +788,7 @@ def render_sidebar():
                 help="Add patient-level noise on the logit scale. This reduces AUC and widens the gap between predicted and true NNT.",
             )
             if st.session_state.get("noise_enabled", False):
-                dual_param("Noise SD", "noise_sd", 0.1, 3.0, 0.1, "%.1f",
+                dual_param("Noise SD", "noise_sd", 0.1, 5.0, 0.1, "%.1f",
                            help_text="SD of logit-scale noise per patient. SD ≈ 1 causes a noticeable AUC drop; SD ≥ 2 approaches random.")
 
         with st.expander("Hidden prognostic factor Z", expanded=False):
@@ -802,7 +801,7 @@ def render_sidebar():
                            help_text="Mean of the hidden Z distribution. 0 = no average confounding across the population.")
                 dual_param("Z SD",    "z_sd",    0.1, 3.0, 0.1, "%.1f",
                            help_text="SD of the hidden Z distribution. Larger values create more between-patient heterogeneity.")
-                dual_param("β_Z",     "z_beta", -2.0, 2.0, 0.1, "%.1f",
+                dual_param("β_Z",     "z_beta", -5.0, 5.0, 0.1, "%.1f",
                            help_text="Effect size of Z on the logit scale. Positive = high Z improves survival.")
 
     return (
@@ -888,9 +887,9 @@ def render_playground(proton_mode, hist_mode, gtv, mhd, mhd_pr):
             config=_CHART_CFG,
         )
         st.markdown("**Distribution**")
-        dual_param("Mean (cc)",  "gtv_mean",  0.0, 200.0, 1.0,  "%.1f",
+        dual_param("Mean (cc)",  "gtv_mean",  5.0, 200.0, 5.0,  "%.1f",
                    help_text="Mean GTV of the simulated population. Shift to explore high- or low-tumour scenarios.")
-        dual_param("Std  (cc)",  "gtv_std",   0.5,  80.0, 0.5,  "%.1f",
+        dual_param("Std  (cc)",  "gtv_std",   1.0,  80.0, 1.0,  "%.1f",
                    help_text="Standard deviation of the GTV distribution. Larger values spread the population more.")
         st.markdown("**Survival curve**")
         dual_param("Midpoint (cc)", "gtv_mid",   0.0, 200.0, 1.0,  "%.1f",
@@ -930,12 +929,12 @@ def render_playground(proton_mode, hist_mode, gtv, mhd, mhd_pr):
             config=_CHART_CFG,
         )
         st.markdown("**Distribution**")
-        dual_param("Mean (Gy)", "mhd_mean",  0.0, 60.0, 0.5,  "%.1f",
+        dual_param("Mean (Gy)", "mhd_mean",  0.0, 40.0, 0.5,  "%.1f",
                    help_text="Mean photon MHD for the simulated population.")
-        dual_param("Std  (Gy)", "mhd_std",   0.5, 25.0, 0.5,  "%.1f",
+        dual_param("Std  (Gy)", "mhd_std",   0.5, 20.0, 0.5,  "%.1f",
                    help_text="Standard deviation of the MHD distribution.")
         st.markdown("**Survival curve**")
-        dual_param("Midpoint (Gy)", "mhd_mid",   0.0, 60.0,  0.5,  "%.1f",
+        dual_param("Midpoint (Gy)", "mhd_mid",   0.0, 50.0,  0.5,  "%.1f",
                    help_text="MHD value where P(OS2y) = 0.5 (sigmoid) or where survival steps to 0 (hard threshold).")
         dual_param(
             "Slope", "mhd_slope", -10.0, 10.0, 0.1, "%.3f",
@@ -948,7 +947,7 @@ def render_playground(proton_mode, hist_mode, gtv, mhd, mhd_pr):
 
     st.markdown("**Proton MHD reduction**")
     if proton_mode == "Subtract fixed delta":
-        dual_param("Reduction (Gy)", "proton_delta", 0.0, 40.0, 0.5, "%.1f",
+        dual_param("Reduction (Gy)", "proton_delta", 0.0, 20.0, 0.5, "%.1f",
                    help_text="Fixed Gy subtracted from each patient's photon MHD under proton therapy.")
     elif proton_mode == "Multiply by factor":
         dual_param(
@@ -971,7 +970,7 @@ def render_selection(pred_delta, true_delta, delta_thresh, selected, n_sel, nois
     dual_param(
         "Predicted Δ threshold",
         "delta_thresh",
-        lo=0.0, hi=0.50, step=0.005, fmt="%.3f",
+        lo=0.0, hi=0.30, step=0.005, fmt="%.3f",
         help_text="Patients with predicted benefit ≥ this threshold are selected for proton therapy.",
     )
 
@@ -1853,6 +1852,11 @@ def main():
         if _k not in st.session_state:
             st.session_state[_k] = _v
 
+    # Safety-net rerun flag (belt-and-suspenders for preset/import loading)
+    if st.session_state.get("_trigger_rerun", False):
+        st.session_state["_trigger_rerun"] = False
+        st.rerun()
+
     n_patients, seed, proton_mode, hist_mode, noise_enabled, noise_sd, \
         z_enabled, z_mean, z_sd, z_beta = render_sidebar()
 
@@ -1935,6 +1939,10 @@ def main():
         "**true NNT** (from Monte Carlo binary outcomes) when selecting patients "
         "for proton therapy. All parameters update instantly."
     )
+    if st.session_state.get("last_loaded"):
+        st.info(f"Loaded: {st.session_state['last_loaded']}")
+        st.session_state["last_loaded"] = ""
+
     with st.expander("How this simulator works", expanded=False):
         st.markdown(
             """
