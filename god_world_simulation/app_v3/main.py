@@ -4,7 +4,6 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-# Allow `streamlit run god_world_simulation/app_v3/main.py` from repo root
 _ROOT = Path(__file__).resolve().parents[2]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
@@ -13,54 +12,20 @@ import numpy as np
 import plotly.graph_objects as go
 import streamlit as st
 
-from god_world_simulation.simulation_engine.population import generate_population
-from god_world_simulation.simulation_engine.truth_model import compute_truth
-from god_world_simulation.simulation_engine.noise_model import add_noise, calibrate_noise
-from god_world_simulation.simulation_engine.fitting import fit_model
-from god_world_simulation.simulation_engine.evaluation import evaluate
-
-# ── Page config (must be first Streamlit call) ────────────────────────────────
+# ── Page config (must be the very first Streamlit call) ───────────────────────
 st.set_page_config(page_title="God-World NNT Simulator", layout="wide")
 
-
-# ── Cached pipeline ───────────────────────────────────────────────────────────
-@st.cache_data(show_spinner=False)
-def _run_pipeline(
-    n_patients: int,
-    dist: str,
-    seed: int,
-    pi_sensitive: float,
-    truth_mode: str,
-    proton_mode: str,
-    proton_reduction_pct: float,
-    proton_reduction_gy: int,
-    calibrate_auc_flag: bool,
-    target_auc: float,
-    manual_noise_sd: float,
-    beta_z: float,
-    threshold: float,
-):
-    """Full simulation pipeline; results are memoised by input hash."""
-    pop = generate_population(
-        n=n_patients,
-        pi_sensitive=pi_sensitive,
-        proton_mode=proton_mode,
-        proton_reduction_pct=proton_reduction_pct,
-        proton_reduction_gy=float(proton_reduction_gy),
-        dist=dist,
-        seed=seed,
-    )
-    truth = compute_truth(pop, truth_mode=truth_mode)
-
-    if calibrate_auc_flag:
-        noise_sd = calibrate_noise(pop, truth, target_auc=target_auc, beta_z=beta_z, seed=seed)
-    else:
-        noise_sd = manual_noise_sd
-
-    obs = add_noise(truth, noise_sd=noise_sd, beta_z=beta_z, seed=seed)
-    fitted = fit_model(pop, obs)
-    result = evaluate(truth, fitted, selection_threshold=threshold)
-    return pop, truth, fitted, result
+# ── Simulation-engine imports (guarded so sidebar still renders on error) ─────
+try:
+    from god_world_simulation.simulation_engine.population import generate_population
+    from god_world_simulation.simulation_engine.truth_model import compute_truth
+    from god_world_simulation.simulation_engine.noise_model import add_noise, calibrate_noise
+    from god_world_simulation.simulation_engine.fitting import fit_model
+    from god_world_simulation.simulation_engine.evaluation import evaluate
+    IMPORTS_OK = True
+except Exception as e:
+    IMPORTS_OK = False
+    import_error = str(e)
 
 
 # ── Plotly chart builders ─────────────────────────────────────────────────────
@@ -139,11 +104,7 @@ def _chart_calibration(truth, fitted) -> go.Figure:
     return fig
 
 
-# ── Title ─────────────────────────────────────────────────────────────────────
-st.title("God-World NNT Simulator")
-st.subheader("What does a 2% predicted benefit actually mean?")
-
-# ── Sidebar controls ──────────────────────────────────────────────────────────
+# ── Sidebar controls (always rendered, independent of import success) ─────────
 with st.sidebar:
     st.header("Controls")
 
@@ -183,28 +144,54 @@ with st.sidebar:
             0.01, 0.10, 0.02, step=0.005, format="%.3f",
         )
 
-# ── Run button ────────────────────────────────────────────────────────────────
+# ── Main panel ────────────────────────────────────────────────────────────────
+st.title("God-World NNT Simulator")
+st.subheader("What does a 2% predicted benefit actually mean?")
+
+# Surface import errors before the Run button so the cause is visible
+if not IMPORTS_OK:
+    st.error(f"Import failed: {import_error}")
+    st.stop()
+
+# ── Run button — all pipeline work happens here, no caching ──────────────────
 if st.button("▶  Run simulation", type="primary", use_container_width=True):
     with st.spinner("Running pipeline…"):
-        st.session_state["results"] = _run_pipeline(
-            n_patients=n_patients,
-            dist=dist,
-            seed=seed,
+        pop = generate_population(
+            n=n_patients,
             pi_sensitive=float(pi_sensitive),
-            truth_mode=truth_mode,
             proton_mode=proton_mode,
             proton_reduction_pct=float(proton_reduction_pct),
-            proton_reduction_gy=int(proton_reduction_gy),
-            calibrate_auc_flag=bool(calibrate_auc_flag),
-            target_auc=float(target_auc),
-            manual_noise_sd=float(manual_noise_sd),
-            beta_z=float(beta_z),
-            threshold=float(threshold),
+            proton_reduction_gy=float(proton_reduction_gy),
+            dist=dist,
+            seed=seed,
         )
+        truth = compute_truth(pop, truth_mode=truth_mode)
 
-# ── Results panel ─────────────────────────────────────────────────────────────
-if "results" in st.session_state:
-    pop, truth, fitted, result = st.session_state["results"]
+        if calibrate_auc_flag:
+            noise_sd = calibrate_noise(
+                pop, truth,
+                target_auc=float(target_auc),
+                beta_z=float(beta_z),
+                seed=seed,
+            )
+        else:
+            noise_sd = float(manual_noise_sd)
+
+        obs = add_noise(truth, noise_sd=noise_sd, beta_z=float(beta_z), seed=seed)
+        fitted = fit_model(pop, obs)
+        result = evaluate(truth, fitted, selection_threshold=float(threshold))
+
+    st.session_state["pop"] = pop
+    st.session_state["truth"] = truth
+    st.session_state["fitted"] = fitted
+    st.session_state["result"] = result
+
+# ── Results panel — only shown after at least one successful run ──────────────
+if "result" in st.session_state:
+    pop    = st.session_state["pop"]
+    truth  = st.session_state["truth"]
+    fitted = st.session_state["fitted"]
+    result = st.session_state["result"]
 
     # Metric cards
     c1, c2, c3, c4 = st.columns(4)
