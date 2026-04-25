@@ -4,40 +4,35 @@ from dataclasses import dataclass
 from typing import Literal
 
 import numpy as np
-from scipy.stats import truncnorm
 
 
 @dataclass
 class Population:
     n: int
-    gtv: np.ndarray        # gross tumour volume, cc
-    mhd_photon: np.ndarray  # mean heart dose with photons, Gy
-    mhd_proton: np.ndarray  # mean heart dose with protons, Gy
+    gtv: np.ndarray          # gross tumour volume, cc
+    mhd_photon: np.ndarray   # mean heart dose with photons, Gy
+    mhd_proton: np.ndarray   # mean heart dose with protons, Gy
     is_sensitive: np.ndarray  # latent sensitivity flag (bool); hidden from the model
 
 
 def _truncated_lognormal(
-    n: int,
-    median: float,
+    mu_log: float,
     sigma_log: float,
     low: float,
     high: float,
+    n: int,
     rng: np.random.Generator,
 ) -> np.ndarray:
     """Draw n samples from LogNormal(mu_log, sigma_log) truncated to [low, high].
 
-    Works on the log scale: Y ~ TruncNormal then X = exp(Y).
-    low=0 is handled by mapping to -inf (no effective lower truncation).
+    Uses rejection sampling with batches of 3n to minimise Python-loop iterations.
     """
-    mu_log = np.log(median)
-    low_log = np.log(low) if low > 0 else -np.inf
-    high_log = np.log(high)
-
-    a = (low_log - mu_log) / sigma_log
-    b = (high_log - mu_log) / sigma_log
-
-    y = truncnorm.rvs(a, b, loc=mu_log, scale=sigma_log, size=n, random_state=rng)
-    return np.exp(y)
+    out: list[float] = []
+    while len(out) < n:
+        batch = rng.lognormal(mu_log, sigma_log, n * 3)
+        batch = batch[(batch >= low) & (batch <= high)]
+        out.extend(batch.tolist())
+    return np.array(out[:n])
 
 
 def generate_population(
@@ -70,9 +65,9 @@ def generate_population(
     # --- covariate sampling ------------------------------------------------
     if dist == "clinical":
         # GTV:  median 70 cc,  range 0–1800 cc   (sigma_log chosen to give realistic spread)
-        gtv = _truncated_lognormal(n, median=70.0, sigma_log=1.2, low=1e-9, high=1800.0, rng=rng)
+        gtv = _truncated_lognormal(np.log(70.0), 1.2, low=1e-9, high=1800.0, n=n, rng=rng)
         # MHD:  median 11 Gy,  range 0.1–45 Gy
-        mhd_photon = _truncated_lognormal(n, median=11.0, sigma_log=0.8, low=0.1, high=45.0, rng=rng)
+        mhd_photon = _truncated_lognormal(np.log(11.0), 0.8, low=0.1, high=45.0, n=n, rng=rng)
     elif dist == "normal":
         gtv = np.clip(rng.normal(70.0, 30.0, size=n), 0.0, 1800.0)
         mhd_photon = np.clip(rng.normal(11.0, 5.0, size=n), 0.1, 45.0)
