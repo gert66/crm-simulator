@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 if TYPE_CHECKING:
+    from .population import Population
     from .truth_model import TruthResult
 
 
@@ -71,17 +72,69 @@ def add_noise(
     )
 
 
-if __name__ == "__main__":
-    # Smoke test with synthetic true probabilities (no truth_model.py needed)
-    from types import SimpleNamespace
+def calibrate_noise(
+    pop: Population,
+    truth: TruthResult,
+    target_auc: float = 0.64,
+    beta_z: float = 0.5,
+    seed: int = 42,
+    tol: float = 0.005,
+    max_iter: int = 40,
+) -> float:
+    """Binary-search for noise_sd so that a logistic model achieves target_auc.
 
-    rng = np.random.default_rng(0)
+    The logistic regression is fitted on [sqrt(GTV), sqrt(MHD_photon)] against
+    outcomes_photon. AUC decreases monotonically as noise_sd increases, so a
+    simple bisection is exact and guaranteed to converge.
+
+    Returns the calibrated noise_sd; prints final noise_sd and AUC.
+    """
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.metrics import roc_auc_score
+
+    X = np.column_stack([np.sqrt(pop.gtv), np.sqrt(pop.mhd_photon)])
+
+    lo, hi = 0.01, 5.0
+    noise_sd = (lo + hi) / 2.0
+    auc = float("nan")
+
+    for _ in range(max_iter):
+        noise_sd = (lo + hi) / 2.0
+        obs = add_noise(truth, noise_sd=noise_sd, beta_z=beta_z, seed=seed)
+
+        clf = LogisticRegression(max_iter=1000)
+        clf.fit(X, obs.outcomes_photon)
+        auc = roc_auc_score(obs.outcomes_photon, clf.predict_proba(X)[:, 1])
+
+        if abs(auc - target_auc) < tol:
+            break
+
+        # More noise → lower AUC; adjust bounds accordingly
+        if auc > target_auc:
+            lo = noise_sd
+        else:
+            hi = noise_sd
+
+    print(f"calibrate_noise: noise_sd={noise_sd:.4f}, AUC={auc:.4f} (target={target_auc})")
+    return noise_sd
+
+
+if __name__ == "__main__":
+    from types import SimpleNamespace
+    from god_world_simulation.simulation_engine.population import generate_population
+
     n = 2000
+    pop = generate_population(n=n, seed=0)
+
+    # True probabilities driven by covariates so calibrate_noise has signal to work with.
+    # logit(p) = intercept + coeff * sqrt(GTV) + coeff * sqrt(MHD)
+    logit_true = -2.0 + 0.25 * np.sqrt(pop.gtv) + 0.15 * np.sqrt(pop.mhd_photon)
     mock_truth = SimpleNamespace(
-        p_photon=rng.beta(2, 5, size=n),   # low baseline event rate
-        p_proton=rng.beta(2, 6, size=n),   # slightly lower with protons
+        p_photon=sigmoid(logit_true),
+        p_proton=sigmoid(logit_true - 0.5),  # protons reduce risk
     )
 
+    # --- add_noise smoke test --------------------------------------------
     obs = add_noise(mock_truth, noise_sd=1.0, beta_z=0.5, seed=42)
 
     print(f"n                       : {n}")
@@ -92,11 +145,24 @@ if __name__ == "__main__":
     print(f"noise_sd                : {obs.noise_sd}")
     print(f"beta_z                  : {obs.beta_z}")
 
-    # Observed rates should be in plausible range — not zero or one
     assert 0.0 < obs.outcomes_photon.mean() < 1.0
     assert 0.0 < obs.outcomes_proton.mean() < 1.0
-    # Proton arm should on average have lower event rate
     assert obs.outcomes_proton.mean() < obs.outcomes_photon.mean(), (
         "Expected proton arm to have lower mean outcome"
     )
+
+    # --- calibrate_noise smoke test ---------------------------------------
+    print("\n--- calibrate_noise ---")
+    target = 0.64
+    found_sd = calibrate_noise(pop, mock_truth, target_auc=target, seed=42)
+
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.metrics import roc_auc_score
+
+    X = np.column_stack([np.sqrt(pop.gtv), np.sqrt(pop.mhd_photon)])
+    final_obs = add_noise(mock_truth, noise_sd=found_sd, beta_z=0.5, seed=42)
+    clf = LogisticRegression(max_iter=1000).fit(X, final_obs.outcomes_photon)
+    final_auc = roc_auc_score(final_obs.outcomes_photon, clf.predict_proba(X)[:, 1])
+    assert abs(final_auc - target) < 0.02, f"AUC {final_auc:.4f} too far from target {target}"
+
     print("\nAll assertions passed.")
