@@ -1,4 +1,7 @@
-streamlit>=1.31
 numpy
+scipy
+pandas
+scikit-learn
+streamlit>=1.31
 matplotlib
 plotly
