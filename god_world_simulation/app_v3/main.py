@@ -198,6 +198,19 @@ truth_gw  = st.session_state["truth_gw"]
 truth_pub = st.session_state["truth_pub"]
 truth     = truth_gw if truth_mode == "god_world" else truth_pub
 
+# Stage 1b — AUC before noise (depends on pop + truth mode, not on noise params)
+truth_key = (pop_key, truth_mode)
+if st.session_state.get("truth_key") != truth_key:
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.metrics import roc_auc_score as _roc_auc
+    _X  = np.column_stack([np.sqrt(pop.gtv), np.sqrt(pop.mhd_photon)])
+    _y  = (truth.p_photon > np.median(truth.p_photon)).astype(int)
+    _pr = LogisticRegression(max_iter=1000).fit(_X, _y).predict_proba(_X)[:, 1]
+    st.session_state["auc_before"] = float(_roc_auc(_y, _pr))
+    st.session_state["truth_key"]  = truth_key
+
+auc_before = st.session_state["auc_before"]
+
 # Stage 2 — Noise calibration + model fit
 noise_key = (
     pop_key, truth_mode,
@@ -270,11 +283,18 @@ with st.expander("B · Truth Model Summary", expanded=True):
 
 # ── Section C: Noise & Calibration ───────────────────────────────────────────
 with st.expander("C · Noise & Calibration", expanded=True):
+    auc_col1, auc_col2 = st.columns(2)
+    auc_delta = fitted.auc - auc_before
+    auc_col1.metric("AUC (God-world, no noise)", f"{auc_before:.3f}")
+    auc_col2.metric(
+        "AUC (fitted model)", f"{fitted.auc:.3f}",
+        delta=f"{auc_delta:.3f}", delta_color="inverse",
+    )
+
     left, right = st.columns(2)
     with left:
-        st.metric("Target AUC",           f"{target_auc:.2f}" if calibrate_auc_flag else "Manual")
-        st.metric("Achieved AUC (fitted)", f"{fitted.auc:.3f}")
-        st.metric("Noise SD",              f"{noise_sd:.3f}")
+        st.metric("Target AUC", f"{target_auc:.2f}" if calibrate_auc_flag else "Manual")
+        st.metric("Noise SD",   f"{noise_sd:.3f}")
     with right:
         st.metric("N selected (Δ ≥ threshold)", result.n_selected)
         st.metric("Selection rate",             f"{result.selection_rate:.1%}")
