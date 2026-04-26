@@ -123,40 +123,141 @@ def _fig_mhd(pop) -> go.Figure:
 with st.sidebar:
     st.header("Controls")
 
+    st.info(
+        "**How this app works:**\n\n"
+        "1. A virtual patient population is generated\n"
+        "2. True survival probabilities are computed (God-world)\n"
+        "3. Noise is added until the model achieves target AUC\n"
+        "4. A logistic model is fitted on the noisy outcomes\n"
+        "5. Patients are selected based on predicted benefit\n"
+        "6. Predicted NNT is compared to true NNT\n\n"
+        "The gap between predicted and true NNT is the "
+        "**inflation factor** — what this app exists to quantify."
+    )
+
     with st.expander("1 · Population", expanded=True):
-        n_patients = st.slider("N patients", 200, 5000, 1000, step=100)
-        dist = st.selectbox("Distribution", ["clinical", "normal"])
-        seed = int(st.number_input("Seed", value=42, step=1, min_value=0))
+        n_patients = st.slider(
+            "N patients", 200, 5000, 1000, step=100,
+            help=(
+                "Number of virtual lung cancer patients to simulate. "
+                "Larger cohorts give more stable NNT estimates but run slower."
+            ),
+        )
+        dist = st.selectbox(
+            "Distribution", ["clinical", "normal"],
+            help=(
+                "Clinical: uses lognormal distributions calibrated to "
+                "Van Loon et al. 2026 (median GTV 70cc, median MHD 11Gy). "
+                "Normal: legacy symmetric distributions, less realistic."
+            ),
+        )
+        seed = int(st.number_input(
+            "Seed", value=42, step=1, min_value=0,
+            help=(
+                "Random seed for reproducibility. Change this to see "
+                "how results vary across different simulated cohorts."
+            ),
+        ))
 
     with st.expander("2 · Truth model (God-world)", expanded=True):
         pi_sensitive = st.slider(
-            "Fraction truly sensitive to MHD (π)", 0.0, 1.0, 0.7, step=0.05
+            "Fraction truly sensitive to MHD (π)", 0.0, 1.0, 0.7, step=0.05,
+            help=(
+                "Fraction of patients for whom heart dose truly affects "
+                "survival (π). The remaining (1-π) patients have zero cardiac "
+                "mortality pathway — protons give them no benefit regardless "
+                "of MHD reduction. This is hidden from the fitted model."
+            ),
         )
-        truth_mode = st.selectbox("Truth mode", ["god_world", "published"])
-        proton_mode = st.selectbox("Proton mode", ["percentage", "absolute", "proportional"])
+        truth_mode = st.selectbox(
+            "Truth mode", ["god_world", "published"],
+            help=(
+                "God-world: applies pi_sensitive so only a fraction of "
+                "patients truly benefit from MHD reduction. "
+                "Published: uses the Van Loon formula identically for all "
+                "patients, ignoring susceptibility heterogeneity."
+            ),
+        )
+        proton_mode = st.selectbox(
+            "Proton mode", ["percentage", "absolute", "proportional"],
+            help=(
+                "How proton MHD is derived from photon MHD per patient. "
+                "Percentage: MHD_proton = MHD_photon × (1 - reduction%). "
+                "Absolute: MHD_proton = MHD_photon - fixed Gy value. "
+                "Proportional: like percentage but with patient-level random "
+                "variation (±15% noise around the reduction)."
+            ),
+        )
         if proton_mode == "absolute":
-            proton_reduction_gy  = st.slider("Proton reduction (Gy)", 1, 15, 5)
+            proton_reduction_gy = st.slider(
+                "Proton reduction (Gy)", 1, 15, 5,
+                help=(
+                    "Absolute reduction in mean heart dose (Gy) achieved "
+                    "by proton therapy. Used only when proton mode is Absolute."
+                ),
+            )
             proton_reduction_pct = 0.50
         else:
             proton_reduction_pct = st.slider(
-                "Proton reduction (%)", 0.10, 0.90, 0.50, step=0.05
+                "Proton reduction (%)", 0.10, 0.90, 0.50, step=0.05,
+                help=(
+                    "Fractional reduction in mean heart dose achieved by "
+                    "proton therapy. 0.50 means protons deliver 50% less heart "
+                    "dose than photons. Typical clinical range is 30-70%."
+                ),
             )
             proton_reduction_gy = 5
 
     with st.expander("3 · Noise / Calibration", expanded=True):
-        calibrate_auc_flag = st.checkbox("Auto-calibrate noise to target AUC", value=True)
+        calibrate_auc_flag = st.checkbox(
+            "Auto-calibrate noise to target AUC", value=True,
+            help=(
+                "When checked, the simulation automatically finds the "
+                "noise level that makes the fitted model achieve exactly the "
+                "target AUC. This reproduces the real-world performance loss "
+                "seen in Van Loon et al. (AUC 0.64)."
+            ),
+        )
         if calibrate_auc_flag:
-            target_auc     = st.slider("Target AUC", 0.50, 0.80, 0.64, step=0.01)
+            target_auc = st.slider(
+                "Target AUC", 0.50, 0.80, 0.64, step=0.01,
+                help=(
+                    "The AUC the fitted model should achieve after noise "
+                    "is added. Set to 0.64 to match Van Loon et al. 2026. "
+                    "Lower values = more noise = more NNT inflation."
+                ),
+            )
             manual_noise_sd = 1.5
         else:
-            manual_noise_sd = st.slider("Manual noise SD", 0.1, 4.0, 1.5, step=0.1)
-            target_auc      = 0.64
-        beta_z = st.slider("Confounder loading (β_z)", 0.0, 2.0, 0.5, step=0.1)
+            manual_noise_sd = st.slider(
+                "Manual noise SD", 0.1, 4.0, 1.5, step=0.1,
+                help=(
+                    "Standard deviation of the noise added to the logit "
+                    "scale. Higher values corrupt the true probabilities more, "
+                    "reducing model discrimination and inflating NNT."
+                ),
+            )
+            target_auc = 0.64
+        beta_z = st.slider(
+            "Confounder loading (β_z)", 0.0, 2.0, 0.5, step=0.1,
+            help=(
+                "Strength of the unobserved confounder Z (e.g. "
+                "comorbidity, smoking history, performance status). "
+                "Z affects both photon and proton outcomes equally within "
+                "a patient, simulating shared unmeasured risk factors."
+            ),
+        )
 
     with st.expander("4 · Selection", expanded=True):
         threshold = st.slider(
             "Selection threshold Δ (e.g. 0.02 = 2%)",
             0.01, 0.10, 0.02, step=0.005, format="%.3f",
+            help=(
+                "The minimum predicted mortality reduction (Δ) required "
+                "to select a patient for proton therapy. The Dutch national "
+                "guideline uses 2% (0.02). Patients with predicted "
+                "Δ < threshold receive photons instead."
+            ),
         )
 
 
