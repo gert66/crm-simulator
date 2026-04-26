@@ -243,7 +243,7 @@ with st.expander("A · Population Summary", expanded=True):
         st.metric("Distribution",        dist)
         st.metric("Median MHD (photon)", f"{np.median(pop.mhd_photon):.1f} Gy")
         st.metric("Range MHD",           f"{pop.mhd_photon.min():.1f} – {pop.mhd_photon.max():.1f} Gy")
-    st.plotly_chart(_fig_gtv(pop), use_container_width=True)
+    st.plotly_chart(_fig_gtv(pop), use_container_width=True, key="chart_gtv_a")
 
 
 # ── Section B: Truth Model Summary ───────────────────────────────────────────
@@ -265,7 +265,7 @@ with st.expander("B · Truth Model Summary", expanded=True):
         st.metric("Mean true Δ (God-world)", f"{delta_gw.mean():.4f}")
         st.metric("Mean true Δ (published)", f"{delta_pub.mean():.4f}")
         st.metric("% with Δ > 2%",          f"{(delta_sel > 0.02).mean():.1%}")
-    st.plotly_chart(_fig_true_delta(truth), use_container_width=True)
+    st.plotly_chart(_fig_true_delta(truth), use_container_width=True, key="chart_true_delta")
 
 
 # ── Section C: Noise & Calibration ───────────────────────────────────────────
@@ -303,10 +303,10 @@ with st.expander("D · Final Results", expanded=True):
         "Calibration scatter",
     ])
     with tab1:
-        st.plotly_chart(_fig_nnt_bins(result), use_container_width=True)
+        st.plotly_chart(_fig_nnt_bins(result), use_container_width=True, key="chart_nnt")
     with tab2:
-        st.plotly_chart(_fig_delta_scatter(truth, fitted), use_container_width=True)
+        st.plotly_chart(_fig_delta_scatter(truth, fitted), use_container_width=True, key="chart_scatter")
     with tab3:
         col_gtv, col_mhd = st.columns(2)
-        col_gtv.plotly_chart(_fig_gtv(pop), use_container_width=True)
-        col_mhd.plotly_chart(_fig_mhd(pop), use_container_width=True)
+        col_gtv.plotly_chart(_fig_gtv(pop), use_container_width=True, key="chart_gtv_cal")
+        col_mhd.plotly_chart(_fig_mhd(pop), use_container_width=True, key="chart_mhd")
