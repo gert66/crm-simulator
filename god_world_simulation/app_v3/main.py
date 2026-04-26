@@ -369,12 +369,16 @@ truth     = truth_gw if truth_mode == "god_world" else truth_pub
 truth_key = (pop_key, truth_mode)
 if st.session_state.get("truth_key") != truth_key:
     from sklearn.linear_model import LogisticRegression
-    from sklearn.metrics import roc_auc_score as _roc_auc
-    _X  = np.column_stack([np.sqrt(pop.gtv), np.sqrt(pop.mhd_photon)])
-    _y  = (truth.p_photon > np.median(truth.p_photon)).astype(int)
-    _pr = LogisticRegression(max_iter=1000).fit(_X, _y).predict_proba(_X)[:, 1]
-    st.session_state["auc_before"] = float(_roc_auc(_y, _pr))
-    st.session_state["truth_key"]  = truth_key
+    from sklearn.metrics import roc_auc_score as _roc_auc, roc_curve as _roc_curve
+    _rng_gw = np.random.default_rng(seed)
+    _y_gw   = _rng_gw.binomial(n=1, p=truth.p_photon, size=pop.n)
+    _X_gw   = np.column_stack([np.sqrt(pop.gtv), np.sqrt(pop.mhd_photon)])
+    _pr_gw  = LogisticRegression(max_iter=1000).fit(_X_gw, _y_gw).predict_proba(_X_gw)[:, 1]
+    _fpr_gw, _tpr_gw, _ = _roc_curve(_y_gw, _pr_gw)
+    st.session_state["auc_before"]   = float(_roc_auc(_y_gw, _pr_gw))
+    st.session_state["fpr_gw"]       = _fpr_gw
+    st.session_state["tpr_gw"]       = _tpr_gw
+    st.session_state["truth_key"]    = truth_key
 
 auc_before = st.session_state["auc_before"]
 
@@ -523,23 +527,25 @@ with st.expander("C · Noise & Calibration", expanded=True):
     # ROC curves
     from sklearn.metrics import roc_curve, roc_auc_score as _roc_auc_score
 
-    _y_before  = (truth.p_photon > np.median(truth.p_photon)).astype(int)
-    _fpr_b, _tpr_b, _ = roc_curve(_y_before, truth.p_photon)
-    _auc_roc_b = float(_roc_auc_score(_y_before, truth.p_photon))
+    # Left: god-world binary outcomes → logistic fit (cached in Stage 1b)
+    _fpr_b    = st.session_state["fpr_gw"]
+    _tpr_b    = st.session_state["tpr_gw"]
+    _auc_roc_b = auc_before
 
+    # Right: fitted model predictions vs noisy observed outcomes
     _fpr_a, _tpr_a, _ = roc_curve(obs.outcomes_photon, fitted.predicted_photon)
     _auc_roc_a = float(_roc_auc_score(obs.outcomes_photon, fitted.predicted_photon))
 
     roc_col1, roc_col2 = st.columns(2)
     roc_col1.plotly_chart(
         _fig_roc(_fpr_b, _tpr_b, _auc_roc_b,
-                 f"ROC curve — God-world (no noise)  AUC={_auc_roc_b:.3f}",
+                 f"ROC — God-world outcomes  AUC={_auc_roc_b:.3f}",
                  "#4C78A8"),
         use_container_width=True, key="chart_roc_before",
     )
     roc_col2.plotly_chart(
         _fig_roc(_fpr_a, _tpr_a, _auc_roc_a,
-                 f"ROC curve — Fitted model (with noise)  AUC={_auc_roc_a:.3f}",
+                 f"ROC — Fitted model on noisy data  AUC={_auc_roc_a:.3f}",
                  "#F58518"),
         use_container_width=True, key="chart_roc_after",
     )
