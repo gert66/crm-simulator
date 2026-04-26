@@ -9,6 +9,7 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 import numpy as np
+import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
@@ -41,7 +42,7 @@ def _fig_gtv(pop) -> go.Figure:
 
 
 def _fig_true_delta(truth) -> go.Figure:
-    raw_delta = truth.p_photon - truth.p_proton  # 0 for non-sensitive by construction
+    raw_delta = truth.p_photon - truth.p_proton
     fig = go.Figure()
     fig.add_trace(go.Histogram(
         x=raw_delta[truth.is_sensitive], name="Sensitive",
@@ -78,7 +79,6 @@ def _fig_nnt_bins(result) -> go.Figure:
 
 
 def _fig_delta_scatter(truth, fitted) -> go.Figure:
-    """Predicted Δ (x) vs True Δ (y), coloured by latent sensitivity."""
     true_delta = (truth.p_photon - truth.p_proton) * truth.is_sensitive.astype(float)
     fig = go.Figure()
     for flag, color, name in [
@@ -119,21 +119,90 @@ def _fig_mhd(pop) -> go.Figure:
     return fig
 
 
+def _fig_roc(fpr, tpr, auc: float, title: str, color: str) -> go.Figure:
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=fpr, y=tpr, mode="lines", name=f"AUC = {auc:.3f}",
+        line=dict(color=color, width=2),
+    ))
+    fig.add_trace(go.Scatter(
+        x=[0, 1], y=[0, 1], mode="lines", name="Random",
+        line=dict(color="grey", dash="dash", width=1),
+    ))
+    fig.update_layout(
+        title_text=title,
+        xaxis_title="False positive rate", yaxis_title="True positive rate",
+        xaxis=dict(range=[0, 1]), yaxis=dict(range=[0, 1]),
+        legend=dict(orientation="h", y=-0.2),
+        margin=dict(t=40, b=60, l=40, r=10),
+    )
+    return fig
+
+
+def _fig_calibration_qc(truth_p: np.ndarray, fitted_p: np.ndarray) -> go.Figure:
+    _df = pd.DataFrame({"truth": truth_p, "fitted": fitted_p})
+    _df["decile"] = pd.qcut(truth_p, 10, labels=range(1, 11))
+    _grp = _df.groupby("decile")[["truth", "fitted"]].mean().reset_index()
+    fig = go.Figure([
+        go.Bar(name="God-world", x=_grp["decile"], y=_grp["truth"],
+               marker_color="#4C78A8", opacity=0.8),
+        go.Bar(name="Fitted model", x=_grp["decile"], y=_grp["fitted"],
+               marker_color="#F58518", opacity=0.8),
+    ])
+    fig.add_hline(y=0.51, line_dash="dash", line_color="red",
+                  annotation_text="Van Loon 51%", annotation_position="top right")
+    fig.update_layout(
+        barmode="group",
+        title_text="Mean mortality by risk decile",
+        xaxis_title="Risk decile (1 = lowest, 10 = highest)",
+        yaxis_title="Mean mortality",
+        legend=dict(orientation="h", y=1.1),
+    )
+    return fig
+
+
+def _fig_formula_comparison(truth, fitted) -> go.Figure:
+    fig = go.Figure()
+    for flag, color, name in [
+        (True,  "#4C78A8", "Sensitive"),
+        (False, "#E45756", "Non-sensitive"),
+    ]:
+        mask = truth.is_sensitive == flag
+        fig.add_trace(go.Scatter(
+            x=truth.p_photon[mask], y=fitted.predicted_photon[mask],
+            mode="markers", name=name,
+            marker=dict(color=color, size=3, opacity=0.4),
+        ))
+    lo = min(float(truth.p_photon.min()), float(fitted.predicted_photon.min()))
+    hi = max(float(truth.p_photon.max()), float(fitted.predicted_photon.max()))
+    fig.add_trace(go.Scatter(
+        x=[lo, hi], y=[lo, hi], mode="lines", name="Perfect calibration",
+        line=dict(color="black", dash="dash", width=1.5),
+    ))
+    fig.update_layout(
+        title_text="True vs predicted mortality per patient",
+        xaxis_title="True probability (God-world)",
+        yaxis_title="Predicted probability (fitted model)",
+        legend=dict(orientation="h", y=1.1),
+    )
+    return fig
+
+
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.header("Controls")
 
-    st.info(
-        "**How this app works:**\n\n"
-        "1. A virtual patient population is generated\n"
-        "2. True survival probabilities are computed (God-world)\n"
-        "3. Noise is added until the model achieves target AUC\n"
-        "4. A logistic model is fitted on the noisy outcomes\n"
-        "5. Patients are selected based on predicted benefit\n"
-        "6. Predicted NNT is compared to true NNT\n\n"
-        "The gap between predicted and true NNT is the "
-        "**inflation factor** — what this app exists to quantify."
-    )
+    with st.expander("ℹ️ How this app works", expanded=False):
+        st.markdown(
+            "1. A virtual patient population is generated\n\n"
+            "2. True survival probabilities are computed (God-world)\n\n"
+            "3. Noise is added until fitted model achieves target AUC\n\n"
+            "4. A logistic model is fitted on the noisy outcomes\n\n"
+            "5. Patients are selected based on predicted benefit\n\n"
+            "6. Predicted NNT is compared to true NNT\n\n"
+            "The gap between predicted and true NNT is the "
+            "**NNT inflation factor**."
+        )
 
     with st.expander("1 · Population", expanded=True):
         n_patients = st.slider(
@@ -271,11 +340,8 @@ if not IMPORTS_OK:
 
 
 # ── Reactive pipeline with incremental caching ────────────────────────────────
-#
-# Each stage is keyed on its direct inputs. A stage reruns only when its key
-# differs from the previous script execution stored in st.session_state.
 
-# Stage 1 — Population (+ both truth models, cheap to always pair together)
+# Stage 1 — Population (+ both truth models)
 pop_key = (
     n_patients, dist, seed,
     float(pi_sensitive), proton_mode,
@@ -334,9 +400,10 @@ if st.session_state.get("noise_key") != noise_key:
     st.session_state["noise_key"] = noise_key
 
 noise_sd = st.session_state["noise_sd"]
+obs      = st.session_state["observed"]
 fitted   = st.session_state["fitted"]
 
-# Stage 3 — Evaluation (cheap; reruns whenever threshold or upstream changes)
+# Stage 3 — Evaluation
 eval_key = (noise_key, float(threshold))
 if st.session_state.get("eval_key") != eval_key:
     result = evaluate(truth, fitted, selection_threshold=float(threshold))
@@ -372,14 +439,67 @@ with st.expander("B · Truth Model Summary", expanded=True):
 
     left, right = st.columns(2)
     with left:
-        st.metric("Proton mode",          proton_mode)
-        st.metric("Reduction amount",     reduction_str)
+        st.metric("Proton mode",            proton_mode)
+        st.metric("Reduction amount",       reduction_str)
         st.metric("π (sensitive fraction)", f"{pi_sensitive:.0%}")
     with right:
         st.metric("Mean true Δ (God-world)", f"{delta_gw.mean():.4f}")
         st.metric("Mean true Δ (published)", f"{delta_pub.mean():.4f}")
         st.metric("% with Δ > 2%",          f"{(delta_sel > 0.02).mean():.1%}")
     st.plotly_chart(_fig_true_delta(truth), use_container_width=True, key="chart_true_delta")
+
+
+# ── Section QC-1: Survival calibration ───────────────────────────────────────
+with st.expander("🔍 QC: Survival calibration", expanded=True):
+    _p_all_sensitive = 1.0 / (1.0 + np.exp(-np.clip(
+        -1.3409 + 0.0590 * np.sqrt(pop.gtv) + 0.2635 * np.sqrt(pop.mhd_photon),
+        -500, 500,
+    )))
+    mean_p_allsensitive = float(_p_all_sensitive.mean())
+    mean_p_current      = float(truth.p_photon.mean())
+
+    qc1, qc2, qc3 = st.columns(3)
+    qc1.metric(
+        "Van Loon et al. (published)", "51.0%",
+        help="Observed 2-year mortality in Van Loon 2026, n=1094",
+    )
+    qc2.metric(
+        "God-world (all sensitive, π=1.0)", f"{mean_p_allsensitive:.1%}",
+        help=(
+            "Mean predicted mortality using published formula applied to all "
+            "patients. Should be close to 51%."
+        ),
+    )
+    qc3.metric(
+        "God-world (mixed, current π)", f"{mean_p_current:.1%}",
+        help=(
+            "Mean predicted mortality after applying pi_sensitive split with "
+            "intercept recalibration. Should also be close to 51%."
+        ),
+    )
+    st.plotly_chart(
+        _fig_calibration_qc(truth.p_photon, fitted.predicted_photon),
+        use_container_width=True, key="chart_calibration_qc",
+    )
+
+
+# ── Section QC-2: Formula comparison ─────────────────────────────────────────
+with st.expander("🔍 QC: Formula comparison", expanded=True):
+    st.table(pd.DataFrame({
+        "Parameter":           ["Intercept", "β GTV (sqrt)", "β MHD (sqrt)"],
+        "Published (Van Loon)": [-1.3409, 0.0590, 0.2635],
+        "Fitted model":        [fitted.coef_intercept, fitted.coef_gtv, fitted.coef_mhd],
+    }))
+    st.plotly_chart(
+        _fig_formula_comparison(truth, fitted),
+        use_container_width=True, key="chart_formula_comparison",
+    )
+    st.caption(
+        "Points above the diagonal = model overestimates mortality. "
+        "Points below = underestimates. "
+        "Red points (non-sensitive) should scatter randomly around the diagonal "
+        "if the model is well calibrated."
+    )
 
 
 # ── Section C: Noise & Calibration ───────────────────────────────────────────
@@ -399,6 +519,30 @@ with st.expander("C · Noise & Calibration", expanded=True):
     with right:
         st.metric("N selected (Δ ≥ threshold)", result.n_selected)
         st.metric("Selection rate",             f"{result.selection_rate:.1%}")
+
+    # ROC curves
+    from sklearn.metrics import roc_curve, roc_auc_score as _roc_auc_score
+
+    _y_before  = (truth.p_photon > np.median(truth.p_photon)).astype(int)
+    _fpr_b, _tpr_b, _ = roc_curve(_y_before, truth.p_photon)
+    _auc_roc_b = float(_roc_auc_score(_y_before, truth.p_photon))
+
+    _fpr_a, _tpr_a, _ = roc_curve(obs.outcomes_photon, fitted.predicted_photon)
+    _auc_roc_a = float(_roc_auc_score(obs.outcomes_photon, fitted.predicted_photon))
+
+    roc_col1, roc_col2 = st.columns(2)
+    roc_col1.plotly_chart(
+        _fig_roc(_fpr_b, _tpr_b, _auc_roc_b,
+                 f"ROC curve — God-world (no noise)  AUC={_auc_roc_b:.3f}",
+                 "#4C78A8"),
+        use_container_width=True, key="chart_roc_before",
+    )
+    roc_col2.plotly_chart(
+        _fig_roc(_fpr_a, _tpr_a, _auc_roc_a,
+                 f"ROC curve — Fitted model (with noise)  AUC={_auc_roc_a:.3f}",
+                 "#F58518"),
+        use_container_width=True, key="chart_roc_after",
+    )
 
 
 # ── Section D: Final Results ──────────────────────────────────────────────────
