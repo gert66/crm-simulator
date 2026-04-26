@@ -1,4 +1,4 @@
-"""God-World NNT Simulator — Streamlit app."""
+"""God-World NNT Simulator — reactive Streamlit app (no Run button)."""
 from __future__ import annotations
 
 import sys
@@ -12,10 +12,9 @@ import numpy as np
 import plotly.graph_objects as go
 import streamlit as st
 
-# ── Page config (must be the very first Streamlit call) ───────────────────────
 st.set_page_config(page_title="God-World NNT Simulator", layout="wide")
 
-# ── Simulation-engine imports (guarded so sidebar still renders on error) ─────
+# ── Guarded imports (sidebar still renders if these fail) ─────────────────────
 try:
     from god_world_simulation.simulation_engine.population import generate_population
     from god_world_simulation.simulation_engine.truth_model import compute_truth
@@ -28,8 +27,39 @@ except Exception as e:
     import_error = str(e)
 
 
-# ── Plotly chart builders ─────────────────────────────────────────────────────
-def _chart_nnt_bins(result) -> go.Figure:
+# ── Chart builders ────────────────────────────────────────────────────────────
+
+def _fig_gtv(pop) -> go.Figure:
+    fig = go.Figure(go.Histogram(
+        x=pop.gtv, nbinsx=40, marker_color="#4C78A8", opacity=0.85,
+    ))
+    fig.update_layout(
+        height=220, margin=dict(t=30, b=30, l=40, r=10),
+        title_text="GTV distribution", xaxis_title="cc", yaxis_title="n",
+    )
+    return fig
+
+
+def _fig_true_delta(truth) -> go.Figure:
+    raw_delta = truth.p_photon - truth.p_proton  # 0 for non-sensitive by construction
+    fig = go.Figure()
+    fig.add_trace(go.Histogram(
+        x=raw_delta[truth.is_sensitive], name="Sensitive",
+        nbinsx=40, marker_color="#E45756", opacity=0.8,
+    ))
+    fig.add_trace(go.Histogram(
+        x=raw_delta[~truth.is_sensitive], name="Non-sensitive (Δ=0)",
+        nbinsx=5, marker_color="#4C78A8", opacity=0.6,
+    ))
+    fig.update_layout(
+        barmode="overlay", height=220, margin=dict(t=30, b=30, l=40, r=10),
+        title_text="True Δ by sensitivity", xaxis_title="True Δ", yaxis_title="n",
+        legend=dict(orientation="h", y=1.15, font_size=11),
+    )
+    return fig
+
+
+def _fig_nnt_bins(result) -> go.Figure:
     df = result.bins_df
     labels = [str(b) for b in df["predicted_delta_bin"]]
     fig = go.Figure([
@@ -40,40 +70,15 @@ def _chart_nnt_bins(result) -> go.Figure:
     ])
     fig.update_layout(
         barmode="group",
-        title="Predicted vs True NNT by Benefit Bin (selected patients)",
-        xaxis_title="Predicted Δ bin",
-        yaxis_title="NNT",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        title_text="Predicted vs True NNT by benefit bin (selected patients)",
+        xaxis_title="Predicted Δ bin", yaxis_title="NNT",
+        legend=dict(orientation="h", y=1.1),
     )
     return fig
 
 
-def _chart_gtv(pop) -> go.Figure:
-    fig = go.Figure(
-        go.Histogram(x=pop.gtv, nbinsx=40, marker_color="#4C78A8", opacity=0.85)
-    )
-    fig.update_layout(title="GTV Distribution", xaxis_title="GTV (cc)", yaxis_title="Count")
-    return fig
-
-
-def _chart_mhd(pop) -> go.Figure:
-    fig = go.Figure([
-        go.Histogram(x=pop.mhd_photon, nbinsx=40, name="Photon MHD",
-                     marker_color="#4C78A8", opacity=0.7),
-        go.Histogram(x=pop.mhd_proton, nbinsx=40, name="Proton MHD",
-                     marker_color="#F58518", opacity=0.7),
-    ])
-    fig.update_layout(
-        barmode="overlay",
-        title="MHD: Photon vs Proton",
-        xaxis_title="MHD (Gy)",
-        yaxis_title="Count",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-    )
-    return fig
-
-
-def _chart_calibration(truth, fitted) -> go.Figure:
+def _fig_delta_scatter(truth, fitted) -> go.Figure:
+    """Predicted Δ (x) vs True Δ (y), coloured by latent sensitivity."""
     true_delta = (truth.p_photon - truth.p_proton) * truth.is_sensitive.astype(float)
     fig = go.Figure()
     for flag, color, name in [
@@ -82,29 +87,39 @@ def _chart_calibration(truth, fitted) -> go.Figure:
     ]:
         mask = truth.is_sensitive == flag
         fig.add_trace(go.Scatter(
-            x=fitted.predicted_delta[mask],
-            y=true_delta[mask],
-            mode="markers",
+            x=fitted.predicted_delta[mask], y=true_delta[mask],
+            mode="markers", name=name,
             marker=dict(color=color, size=3, opacity=0.45),
-            name=name,
         ))
-    lo = float(fitted.predicted_delta.min())
-    hi = float(fitted.predicted_delta.max())
+    lo, hi = float(fitted.predicted_delta.min()), float(fitted.predicted_delta.max())
     fig.add_trace(go.Scatter(
-        x=[lo, hi], y=[lo, hi],
-        mode="lines", name="y = x",
+        x=[lo, hi], y=[lo, hi], mode="lines", name="y = x",
         line=dict(color="black", dash="dash", width=1.5),
     ))
     fig.update_layout(
-        title="Predicted Δ vs True Δ (god-world)",
-        xaxis_title="Predicted Δ (fitted model)",
-        yaxis_title="True Δ (god-world)",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        title_text="Predicted Δ vs True Δ (god-world)",
+        xaxis_title="Predicted Δ (model)", yaxis_title="True Δ (god-world)",
+        legend=dict(orientation="h", y=1.1),
     )
     return fig
 
 
-# ── Sidebar controls (always rendered, independent of import success) ─────────
+def _fig_mhd(pop) -> go.Figure:
+    fig = go.Figure([
+        go.Histogram(x=pop.mhd_photon, nbinsx=40, name="Photon MHD",
+                     marker_color="#4C78A8", opacity=0.7),
+        go.Histogram(x=pop.mhd_proton,  nbinsx=40, name="Proton MHD",
+                     marker_color="#F58518", opacity=0.7),
+    ])
+    fig.update_layout(
+        barmode="overlay", title_text="MHD: Photon vs Proton",
+        xaxis_title="Gy", yaxis_title="n",
+        legend=dict(orientation="h", y=1.1),
+    )
+    return fig
+
+
+# ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.header("Controls")
 
@@ -120,7 +135,7 @@ with st.sidebar:
         truth_mode = st.selectbox("Truth mode", ["god_world", "published"])
         proton_mode = st.selectbox("Proton mode", ["percentage", "absolute", "proportional"])
         if proton_mode == "absolute":
-            proton_reduction_gy = st.slider("Proton reduction (Gy)", 1, 15, 5)
+            proton_reduction_gy  = st.slider("Proton reduction (Gy)", 1, 15, 5)
             proton_reduction_pct = 0.50
         else:
             proton_reduction_pct = st.slider(
@@ -131,11 +146,11 @@ with st.sidebar:
     with st.expander("3 · Noise / Calibration", expanded=True):
         calibrate_auc_flag = st.checkbox("Auto-calibrate noise to target AUC", value=True)
         if calibrate_auc_flag:
-            target_auc = st.slider("Target AUC", 0.50, 0.80, 0.64, step=0.01)
+            target_auc     = st.slider("Target AUC", 0.50, 0.80, 0.64, step=0.01)
             manual_noise_sd = 1.5
         else:
             manual_noise_sd = st.slider("Manual noise SD", 0.1, 4.0, 1.5, step=0.1)
-            target_auc = 0.64
+            target_auc      = 0.64
         beta_z = st.slider("Confounder loading (β_z)", 0.0, 2.0, 0.5, step=0.1)
 
     with st.expander("4 · Selection", expanded=True):
@@ -144,91 +159,154 @@ with st.sidebar:
             0.01, 0.10, 0.02, step=0.005, format="%.3f",
         )
 
-# ── Main panel ────────────────────────────────────────────────────────────────
+
+# ── Title + import guard ──────────────────────────────────────────────────────
 st.title("God-World NNT Simulator")
 st.subheader("What does a 2% predicted benefit actually mean?")
 
-# Surface import errors before the Run button so the cause is visible
 if not IMPORTS_OK:
     st.error(f"Import failed: {import_error}")
     st.stop()
 
-# ── Run button — all pipeline work happens here, no caching ──────────────────
-if st.button("▶  Run simulation", type="primary", use_container_width=True):
-    with st.spinner("Running pipeline…"):
-        pop = generate_population(
-            n=n_patients,
-            pi_sensitive=float(pi_sensitive),
-            proton_mode=proton_mode,
-            proton_reduction_pct=float(proton_reduction_pct),
-            proton_reduction_gy=float(proton_reduction_gy),
-            dist=dist,
-            seed=seed,
+
+# ── Reactive pipeline with incremental caching ────────────────────────────────
+#
+# Each stage is keyed on its direct inputs. A stage reruns only when its key
+# differs from the previous script execution stored in st.session_state.
+
+# Stage 1 — Population (+ both truth models, cheap to always pair together)
+pop_key = (
+    n_patients, dist, seed,
+    float(pi_sensitive), proton_mode,
+    float(proton_reduction_pct), int(proton_reduction_gy),
+)
+if st.session_state.get("pop_key") != pop_key:
+    pop = generate_population(
+        n=n_patients, pi_sensitive=float(pi_sensitive),
+        proton_mode=proton_mode,
+        proton_reduction_pct=float(proton_reduction_pct),
+        proton_reduction_gy=float(proton_reduction_gy),
+        dist=dist, seed=seed,
+    )
+    st.session_state["pop"]       = pop
+    st.session_state["truth_gw"]  = compute_truth(pop, "god_world")
+    st.session_state["truth_pub"] = compute_truth(pop, "published")
+    st.session_state["pop_key"]   = pop_key
+
+pop       = st.session_state["pop"]
+truth_gw  = st.session_state["truth_gw"]
+truth_pub = st.session_state["truth_pub"]
+truth     = truth_gw if truth_mode == "god_world" else truth_pub
+
+# Stage 2 — Noise calibration + model fit
+noise_key = (
+    pop_key, truth_mode,
+    bool(calibrate_auc_flag), float(target_auc),
+    float(manual_noise_sd), float(beta_z), seed,
+)
+if st.session_state.get("noise_key") != noise_key:
+    if calibrate_auc_flag:
+        noise_sd = calibrate_noise(
+            pop, truth,
+            target_auc=float(target_auc), beta_z=float(beta_z), seed=seed,
         )
-        truth = compute_truth(pop, truth_mode=truth_mode)
+    else:
+        noise_sd = float(manual_noise_sd)
+    obs    = add_noise(truth, noise_sd=noise_sd, beta_z=float(beta_z), seed=seed)
+    fitted = fit_model(pop, obs)
+    st.session_state["noise_sd"]  = noise_sd
+    st.session_state["observed"]  = obs
+    st.session_state["fitted"]    = fitted
+    st.session_state["noise_key"] = noise_key
 
-        if calibrate_auc_flag:
-            noise_sd = calibrate_noise(
-                pop, truth,
-                target_auc=float(target_auc),
-                beta_z=float(beta_z),
-                seed=seed,
-            )
-        else:
-            noise_sd = float(manual_noise_sd)
+noise_sd = st.session_state["noise_sd"]
+fitted   = st.session_state["fitted"]
 
-        obs = add_noise(truth, noise_sd=noise_sd, beta_z=float(beta_z), seed=seed)
-        fitted = fit_model(pop, obs)
-        result = evaluate(truth, fitted, selection_threshold=float(threshold))
+# Stage 3 — Evaluation (cheap; reruns whenever threshold or upstream changes)
+eval_key = (noise_key, float(threshold))
+if st.session_state.get("eval_key") != eval_key:
+    result = evaluate(truth, fitted, selection_threshold=float(threshold))
+    st.session_state["result"]   = result
+    st.session_state["eval_key"] = eval_key
 
-    st.session_state["pop"] = pop
-    st.session_state["truth"] = truth
-    st.session_state["fitted"] = fitted
-    st.session_state["result"] = result
+result = st.session_state["result"]
 
-# ── Results panel — only shown after at least one successful run ──────────────
-if "result" in st.session_state:
-    pop    = st.session_state["pop"]
-    truth  = st.session_state["truth"]
-    fitted = st.session_state["fitted"]
-    result = st.session_state["result"]
 
-    # Metric cards
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("AUC", f"{fitted.auc:.3f}")
-    c2.metric("N Selected", result.n_selected)
-    c3.metric("Predicted NNT", f"{result.predicted_nnt:.1f}")
-    c4.metric("True NNT", f"{result.true_nnt:.1f}")
+# ── Section A: Population Summary ─────────────────────────────────────────────
+with st.expander("A · Population Summary", expanded=True):
+    left, right = st.columns(2)
+    with left:
+        st.metric("N patients",  n_patients)
+        st.metric("Median GTV",  f"{np.median(pop.gtv):.1f} cc")
+        st.metric("Range GTV",   f"{pop.gtv.min():.0f} – {pop.gtv.max():.0f} cc")
+    with right:
+        st.metric("Distribution",        dist)
+        st.metric("Median MHD (photon)", f"{np.median(pop.mhd_photon):.1f} Gy")
+        st.metric("Range MHD",           f"{pop.mhd_photon.min():.1f} – {pop.mhd_photon.max():.1f} Gy")
+    st.plotly_chart(_fig_gtv(pop), use_container_width=True)
 
-    st.markdown("---")
 
-    # NNT inflation box
-    infl = result.nnt_inflation
+# ── Section B: Truth Model Summary ───────────────────────────────────────────
+with st.expander("B · Truth Model Summary", expanded=True):
+    delta_gw  = (truth_gw.p_photon  - truth_gw.p_proton)  * truth_gw.is_sensitive.astype(float)
+    delta_pub = (truth_pub.p_photon - truth_pub.p_proton) * truth_pub.is_sensitive.astype(float)
+    delta_sel = delta_gw if truth_mode == "god_world" else delta_pub
+    reduction_str = (
+        f"{proton_reduction_gy} Gy" if proton_mode == "absolute"
+        else f"{proton_reduction_pct:.0%}"
+    )
+
+    left, right = st.columns(2)
+    with left:
+        st.metric("Proton mode",          proton_mode)
+        st.metric("Reduction amount",     reduction_str)
+        st.metric("π (sensitive fraction)", f"{pi_sensitive:.0%}")
+    with right:
+        st.metric("Mean true Δ (God-world)", f"{delta_gw.mean():.4f}")
+        st.metric("Mean true Δ (published)", f"{delta_pub.mean():.4f}")
+        st.metric("% with Δ > 2%",          f"{(delta_sel > 0.02).mean():.1%}")
+    st.plotly_chart(_fig_true_delta(truth), use_container_width=True)
+
+
+# ── Section C: Noise & Calibration ───────────────────────────────────────────
+with st.expander("C · Noise & Calibration", expanded=True):
+    left, right = st.columns(2)
+    with left:
+        st.metric("Target AUC",           f"{target_auc:.2f}" if calibrate_auc_flag else "Manual")
+        st.metric("Achieved AUC (fitted)", f"{fitted.auc:.3f}")
+        st.metric("Noise SD",              f"{noise_sd:.3f}")
+    with right:
+        st.metric("N selected (Δ ≥ threshold)", result.n_selected)
+        st.metric("Selection rate",             f"{result.selection_rate:.1%}")
+
+
+# ── Section D: Final Results ──────────────────────────────────────────────────
+with st.expander("D · Final Results", expanded=True):
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Predicted NNT", f"{result.predicted_nnt:.1f}")
+    c2.metric("True NNT",      f"{result.true_nnt:.1f}")
+    c3.metric("NNT Inflation", f"{result.nnt_inflation:.2f}×")
+
+    infl      = result.nnt_inflation
     box_color = "#d73027" if infl >= 2.0 else "#f46d43"
     st.markdown(
-        f'<div style="background:{box_color};padding:20px;border-radius:10px;'
+        f'<div style="background:{box_color};padding:16px;border-radius:8px;'
         f'text-align:center;margin:8px 0 16px 0;">'
-        f'<b style="color:white;font-size:1.8em;">NNT Inflation Factor: {infl:.1f}×</b>'
+        f'<b style="color:white;font-size:1.6em;">Inflation {infl:.1f}×</b>'
         f'</div>',
         unsafe_allow_html=True,
     )
 
-    st.markdown("---")
-
-    # Tabs
     tab1, tab2, tab3 = st.tabs([
-        "NNT by predicted benefit bin",
-        "Population distributions",
-        "Calibration detail",
+        "NNT by bin",
+        "Predicted vs True Δ",
+        "Calibration scatter",
     ])
-
     with tab1:
-        st.plotly_chart(_chart_nnt_bins(result), use_container_width=True)
-
+        st.plotly_chart(_fig_nnt_bins(result), use_container_width=True)
     with tab2:
-        col_gtv, col_mhd = st.columns(2)
-        col_gtv.plotly_chart(_chart_gtv(pop), use_container_width=True)
-        col_mhd.plotly_chart(_chart_mhd(pop), use_container_width=True)
-
+        st.plotly_chart(_fig_delta_scatter(truth, fitted), use_container_width=True)
     with tab3:
-        st.plotly_chart(_chart_calibration(truth, fitted), use_container_width=True)
+        col_gtv, col_mhd = st.columns(2)
+        col_gtv.plotly_chart(_fig_gtv(pop), use_container_width=True)
+        col_mhd.plotly_chart(_fig_mhd(pop), use_container_width=True)
