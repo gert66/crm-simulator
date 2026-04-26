@@ -581,3 +581,113 @@ with st.expander("D · Final Results", expanded=True):
         col_gtv, col_mhd = st.columns(2)
         col_gtv.plotly_chart(_fig_gtv(pop), use_container_width=True, key="chart_gtv_cal")
         col_mhd.plotly_chart(_fig_mhd(pop), use_container_width=True, key="chart_mhd")
+
+
+# ── Debug expander ────────────────────────────────────────────────────────────
+_true_delta = truth.p_photon - truth.p_proton
+
+with st.expander("🐛 Debug: Internal data inspection", expanded=False):
+
+    st.subheader("Population (first 10 patients)")
+    st.dataframe(pd.DataFrame({
+        "GTV (cc)":         pop.gtv[:10],
+        "MHD photon (Gy)":  pop.mhd_photon[:10],
+        "MHD proton (Gy)":  pop.mhd_proton[:10],
+        "Is sensitive":     pop.is_sensitive[:10],
+    }))
+
+    st.subheader("True probabilities (God-world)")
+    st.dataframe(pd.DataFrame({
+        "p_photon":     truth.p_photon[:10],
+        "p_proton":     truth.p_proton[:10],
+        "true_delta":   _true_delta[:10],
+        "is_sensitive": truth.is_sensitive[:10],
+    }))
+
+    st.subheader("Sampled binary outcomes")
+    st.dataframe(pd.DataFrame({
+        "p_photon (true)":           truth.p_photon[:10],
+        "outcome_photon (sampled)":  obs.outcomes_photon[:10],
+        "p > 0.5":                   (truth.p_photon[:10] > 0.5).astype(int),
+        "outcome matches p>0.5":     (
+            obs.outcomes_photon[:10] == (truth.p_photon[:10] > 0.5).astype(int)
+        ).astype(int),
+    }))
+
+    st.subheader("Fitted logistic regression coefficients")
+    st.dataframe(pd.DataFrame({
+        "Parameter":          ["Intercept", "β sqrt(GTV)", "β sqrt(MHD)"],
+        "Published (Van Loon)": [-1.3409, 0.0590, 0.2635],
+        "Fitted model":       [fitted.coef_intercept, fitted.coef_gtv, fitted.coef_mhd],
+        "Difference":         [
+            fitted.coef_intercept - (-1.3409),
+            fitted.coef_gtv - 0.0590,
+            fitted.coef_mhd - 0.2635,
+        ],
+    }))
+
+    st.subheader("Key diagnostic values")
+    col1, col2, col3 = st.columns(3)
+    col1.metric(
+        "Mean p_photon (God-world)", f"{truth.p_photon.mean():.3f}",
+        help="Should be close to 0.51 — the Van Loon mortality rate",
+    )
+    col2.metric(
+        "Mean outcome_photon (sampled)", f"{obs.outcomes_photon.mean():.3f}",
+        help="Should also be close to 0.51 — random variation expected",
+    )
+    col3.metric(
+        "Fraction sensitive", f"{pop.is_sensitive.mean():.3f}",
+        help="Should match pi_sensitive slider value",
+    )
+    col4, col5, col6 = st.columns(3)
+    col4.metric(
+        "Mean true_delta (all patients)", f"{_true_delta.mean():.4f}",
+        help="Mean true benefit of protons across entire population",
+    )
+    col5.metric(
+        "Mean true_delta (sensitive only)", f"{_true_delta[truth.is_sensitive].mean():.4f}",
+        help="Mean true benefit for truly sensitive patients only",
+    )
+    col6.metric(
+        "Mean true_delta (non-sensitive)", f"{_true_delta[~truth.is_sensitive].mean():.4f}",
+        help="Should be zero or very close to zero",
+    )
+
+    st.subheader("True probability distribution")
+    fig_debug = go.Figure()
+    fig_debug.add_trace(go.Histogram(
+        x=truth.p_photon[truth.is_sensitive],
+        name="Sensitive", opacity=0.6, nbinsx=30,
+    ))
+    fig_debug.add_trace(go.Histogram(
+        x=truth.p_photon[~truth.is_sensitive],
+        name="Non-sensitive", opacity=0.6, nbinsx=30,
+    ))
+    fig_debug.update_layout(
+        barmode="overlay",
+        title="Distribution of true p_photon by sensitivity group",
+        xaxis_title="True 2-year mortality probability",
+        yaxis_title="Count",
+    )
+    st.plotly_chart(fig_debug, use_container_width=True, key="chart_debug_hist")
+
+    st.subheader("True delta distribution")
+    fig_debug2 = go.Figure()
+    fig_debug2.add_trace(go.Histogram(
+        x=_true_delta[truth.is_sensitive],
+        name="Sensitive", opacity=0.6, nbinsx=30,
+    ))
+    fig_debug2.add_trace(go.Histogram(
+        x=_true_delta[~truth.is_sensitive],
+        name="Non-sensitive", opacity=0.6, nbinsx=30,
+    ))
+    fig_debug2.add_vline(x=0.02, line_dash="dash", line_color="red",
+                         annotation_text="2% threshold")
+    fig_debug2.update_layout(
+        barmode="overlay",
+        title="Distribution of true_delta by sensitivity group",
+        xaxis_title="True benefit of protons (Δ mortality)",
+        yaxis_title="Count",
+    )
+    st.plotly_chart(fig_debug2, use_container_width=True, key="chart_debug_delta")
