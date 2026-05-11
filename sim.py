@@ -3448,9 +3448,8 @@ if (view == "Playground"
             _dec      = _pt_to_dec.get(_i)
             _dec_day  = _dec["decision_day"] if _dec else None
             _w1v      = round(_w1(_pt, _dec_day), 2) if _dec_day is not None else "—"
-            _w2v      = _w2(_pt, _dec_day)
-            _w2v_str  = ("—" if _w2v is None else
-                         round(_w2v, 2) if _dec_day is not None else "—")
+            _w2v      = _w2(_pt, _dec_day) if _dec_day is not None else None
+            _w2v_str  = "—" if _w2v is None else round(_w2v, 2)
             _rows.append({
                 "Pt #":       _i + 1,
                 "Incl (day)": round(_pt["arrival"], 1),
