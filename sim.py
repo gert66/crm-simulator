@@ -3163,7 +3163,7 @@ if (view == "Playground"
     _n_full_ct = int((~_es_arr).sum())
 
     _lo   = max(1, (_n_early.min() if _es_arr.any() else 1))
-    _bins = np.arange(_lo - 0.5, _max_n_cfg + 0.5 + 1, 1)
+    _bins = np.arange(_lo, _max_n_cfg + 2, 1)   # integer edges: [lo, lo+1, …, max_n+1]
 
     _ns_h = len(_n_arr)
 
@@ -3211,7 +3211,7 @@ if (view == "Playground"
               bbox=dict(facecolor=_DARK_AX, edgecolor="#444466",
                         boxstyle="round,pad=0.4", alpha=0.9))
 
-    ax_h.set_xlim(left=max(0, _lo - 1), right=_max_n_cfg)
+    ax_h.set_xlim(left=_lo, right=_max_n_cfg + 1)   # fits all integer-edge bins exactly
     ax_h.set_xlabel("Patients enrolled at early stop", fontsize=9)
     ax_h.set_ylabel("Frequency (trials)", fontsize=9)
     ax_h.set_title("CRM early-stopping sample-size distribution", fontsize=10)
