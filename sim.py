@@ -1654,6 +1654,7 @@ _sync_tox2_win       = _make_sync("tox2_win",        int,   "wl_tox2_win")
 _sync_max_n_63       = _make_sync("max_n_63",        int,   "wl_max_n_63")
 _sync_max_n_crm      = _make_sync("max_n_crm",       int,   "wl_max_n_crm")
 _sync_cohort_size    = _make_sync("cohort_size",     int,   "wl_cohort_size")
+_sync_n_safe_d1      = _make_sync("n_safe_d1",       int,   "wl_n_safe_d1")
 # Essentials right column
 _sync_gh_n              = _make_sync("gh_n",              int,   "wl_gh_n")
 _sync_max_step          = _make_sync("max_step",          int,   "wl_max_step")
@@ -1832,6 +1833,7 @@ _CFG_ESSENTIALS_KEYS: list[tuple[str, type]] = [
     ("max_n_63",            int),
     ("max_n_crm",           int),
     ("cohort_size",         int),
+    ("n_safe_d1",           int),
     # CRM integration
     ("gh_n",                int),
     ("max_step",            int),
@@ -2262,6 +2264,21 @@ if view == "Essentials":
                    "cohort is fully enrolled, using TITE weights at that moment.")
         )
         st.session_state["cohort_size"] = st.session_state["wl_cohort_size"]
+
+        st.session_state["wl_n_safe_d1"] = int(_cfg("n_safe_d1"))
+        st.number_input(
+            "Pre-treated patients at dose level 1 (n_safe_d1)",
+            min_value=0, max_value=50, step=1, key="wl_n_safe_d1",
+            on_change=_sync_n_safe_d1,
+            help=h("n_safe_d1",
+                   "Number of patients already safely treated at dose level 1 "
+                   "(0 DLTs, complete follow-up) before the trial opens. These "
+                   "are pre-loaded into the CRM as fully-weighted observations "
+                   "at dose 0 with no toxicities. They count toward Max sample "
+                   "size (CRM) — increase that by this amount if you want the "
+                   "same number of newly enrolled patients.")
+        )
+        st.session_state["n_safe_d1"] = st.session_state["wl_n_safe_d1"]
 
     with _ec3:
         st.markdown("#### CRM integration")
