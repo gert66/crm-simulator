@@ -278,6 +278,20 @@ def crm_posterior_summaries(sigma, skeleton, n_per, dlt_per, target, gh_n=61):
     overdose_prob = (post_w[:, None] * (P > float(target))).sum(axis=0)
     return post_mean, overdose_prob
 
+def crm_stopping_prob(sigma, skel1, n1, y1, target1, rec_dose, gh_n=61):
+    """
+    Posterior probability that rec_dose minimises |P(tox1|d) - target1| over
+    all doses — i.e. P(rec_dose is the optimal MTD | current data).
+
+    Computed by integrating over the Gauss-Hermite quadrature posterior: for
+    each quadrature point the dose closest to target1 is identified, and the
+    weights for points where that dose equals rec_dose are summed.
+    """
+    post_w, P = posterior_via_gh(sigma, skel1, n1, y1, gh_n=gh_n)
+    dist = np.abs(P - float(target1))      # shape (n_quad, n_levels)
+    best = np.argmin(dist, axis=1)         # shape (n_quad,): best dose per point
+    return float(np.sum(post_w[best == int(rec_dose)]))
+
 def crm_choose_next(sigma, skel1, skel2,
                     n1, y1, n2, y2,
                     current_level, target1, target2,
@@ -385,6 +399,7 @@ def run_tite_crm(
     burn_in=True, rng=None,
     collect_trace=False,
     n_safe_d1=0,
+    p_stop=1.0,
 ):
     """
     TITE-CRM trial simulation.
@@ -409,9 +424,18 @@ def run_tite_crm(
       max_n new patients in addition to the pre-treated cohort, increase max_n
       by n_safe_d1.
 
-    Returns (selected_level, patients_list, study_days, trace).
+    p_stop: early-stopping threshold (0 < p_stop <= 1).  After each CRM cohort
+      decision (burn-in excluded), the posterior probability that the recommended
+      dose minimises |P(tox1|d) - target1| over all doses is computed via
+      crm_stopping_prob.  If this probability >= p_stop the trial stops early and
+      the current recommended dose is declared the MTD.  Set p_stop=1.0 (default)
+      to disable early stopping — a probability of exactly 1.0 is unreachable.
+
+    Returns (selected_level, patients_list, study_days, trace, stopped_early).
+      stopped_early is True when the p_stop rule fired before max_n was reached.
       trace is a list of dicts (one per cohort decision) when collect_trace=True,
-      otherwise an empty list.
+      otherwise an empty list.  Each trace dict includes 'p_stop_prob' — the
+      stopping probability computed at that step (0.0 during burn-in).
     """
     if rng is None:
         rng = np.random.default_rng()
@@ -428,6 +452,8 @@ def run_tite_crm(
     ewoc_eff      = float(ewoc_alpha) if ewoc_on else None
     trace         = []
     cohort_step   = 0
+    stopped_early = False
+    _p_stop       = float(p_stop)
 
     # Pre-populate with historically safe patients at dose level 0.
     # Arrivals are placed far enough before day 0 that every follow-up window —
@@ -505,6 +531,18 @@ def run_tite_crm(
                 enforce_guardrail=enforce_guardrail,
                 highest_tried=highest_tried, n_levels=n_levels,
             )
+
+        # ── Early-stopping check (CRM phase only) ────────────────────────────
+        # Compute P(next_level is the optimal MTD | current data) and stop if
+        # it meets the threshold.  Skipped during burn-in (posterior not yet
+        # guiding dose selection) and when p_stop is effectively disabled (>=1).
+        if not burn_was_active and _p_stop < 1.0:
+            _stop_prob = crm_stopping_prob(
+                sigma, skel1, n1, y1, target1, next_level, gh_n=gh_n)
+            if _stop_prob >= _p_stop:
+                stopped_early = True
+        else:
+            _stop_prob = 0.0
 
         # ── Collect trace for this decision (first trial only) ────────────────
         if collect_trace:
@@ -591,10 +629,15 @@ def run_tite_crm(
                 "n1_sum":        float(n1.sum()),
                 "n2_sum":        float(n2.sum()),
                 "cohort_pts":    list(range(cohort_start, len(patients))),
+                "p_stop_prob":   round(_stop_prob, 4),
+                "stopped_early": stopped_early,
             })
 
         cohort_step += 1
         level = next_level
+
+        if stopped_early:
+            break
 
     # Final MTD selection using full follow-up weights
     if patients:
@@ -612,7 +655,7 @@ def run_tite_crm(
         ewoc_alpha=ewoc_eff, gh_n=gh_n,
         restrict_to_tried=restrict_final_to_tried,
     )
-    return int(selected), patients, float(study_days), trace
+    return int(selected), patients, float(study_days), trace, stopped_early
 
 # ==============================================================================
 # 6+3 TITE runner with lower-dose bridging
@@ -1289,6 +1332,9 @@ R_DEFAULTS = {
     "burn_in":            True,
     "ewoc_on":            True,
     "ewoc_alpha":         0.25,
+    # Early stopping
+    "early_stop_on":      False,
+    "p_stop":             0.80,
     # CRM integration
     "gh_n":               61,
     "max_step":           1,
@@ -1664,6 +1710,8 @@ _sync_restrict_final_mtd= _make_sync("restrict_final_mtd",bool,  "wl_restrict_fi
 _sync_burn_in           = _make_sync("burn_in",           bool,  "wl_burn_in")
 _sync_ewoc_on           = _make_sync("ewoc_on",           bool,  "wl_ewoc_on")
 _sync_ewoc_alpha        = _make_sync("ewoc_alpha",        float, "wl_ewoc_alpha")
+_sync_early_stop_on     = _make_sync("early_stop_on",     bool,  "wl_early_stop_on")
+_sync_p_stop            = _make_sync("p_stop",            float, "wl_p_stop")
 _sync_show_crm_trace    = _make_sync("show_crm_trace",    bool,  "wl_show_crm_trace")
 # 6+3 thresholds
 _sync_a6_esc_max  = _make_sync("a6_esc_max",  int, "wl_a6_esc_max")
@@ -1845,6 +1893,8 @@ _CFG_ESSENTIALS_KEYS: list[tuple[str, type]] = [
     ("burn_in",             bool),
     ("ewoc_on",             bool),
     ("ewoc_alpha",          float),
+    ("early_stop_on",       bool),
+    ("p_stop",              float),
     # CRM decision trace
     ("show_crm_trace",      bool),
     # 6+3 stopping rules
@@ -2381,6 +2431,32 @@ if view == "Essentials":
         )
         st.session_state["ewoc_alpha"] = st.session_state["wl_ewoc_alpha"]
 
+        # ── early_stop_on ─────────────────────────────────────────────────────
+        st.session_state["wl_early_stop_on"] = bool(_cfg("early_stop_on"))
+        st.toggle(
+            "Enable early stopping",
+            key="wl_early_stop_on",
+            on_change=_sync_early_stop_on,
+            help=h("early_stop_on",
+                   "Stop enrolling as soon as the posterior probability that the "
+                   "recommended dose is the optimal MTD exceeds the threshold below.")
+        )
+        st.session_state["early_stop_on"] = st.session_state["wl_early_stop_on"]
+
+        # ── p_stop ────────────────────────────────────────────────────────────
+        st.session_state["wl_p_stop"] = float(_cfg("p_stop"))
+        st.number_input(
+            "Early-stopping threshold (p_stop)",
+            min_value=0.50, max_value=0.99, step=0.01, key="wl_p_stop",
+            on_change=_sync_p_stop,
+            disabled=(not bool(_cfg("early_stop_on"))),
+            help=h("p_stop",
+                   "Stop the trial when P(recommended dose is the MTD | data) "
+                   "≥ this value. Active only when early stopping is enabled.",
+                   r_name="p.stop")
+        )
+        st.session_state["p_stop"] = st.session_state["wl_p_stop"]
+
         st.markdown("#### CRM decision trace")
 
         # ── show_crm_trace ────────────────────────────────────────────────
@@ -2810,6 +2886,8 @@ elif view == "Playground":
         dur_63  = np.zeros(ns)
         dur_crm = np.zeros(ns)
         nbridg  = np.zeros(ns, dtype=int)
+        early_stop_crm  = np.zeros(ns, dtype=bool)
+        n_at_stop_crm   = np.zeros(ns, dtype=int)
 
         # tox1_win is derived: extends from RT start all the way to surgery
         # = RT duration + (RT end → surgery) — no separate UI input needed
@@ -2853,7 +2931,7 @@ elif view == "Playground":
 
             # ── TITE-CRM ─────────────────────────────────────────────────────
             rng_s2 = np.random.default_rng(rng_master.integers(0, 2**31))
-            selc, ptsc, sdc, trace_s = run_tite_crm(
+            selc, ptsc, sdc, trace_s, _stopped_c = run_tite_crm(
                 true_t1=true_t1, p_surgery=p_surg_val, true_t2=true_t2,
                 target1=target_t1_val, target2=target_t2_val,
                 skel1=skel_t1, skel2=skel_t2,
@@ -2869,9 +2947,13 @@ elif view == "Playground":
                 ewoc_alpha   = float(_cfg("ewoc_alpha")),
                 burn_in      = bool(_cfg("burn_in")),
                 n_safe_d1    = int(_cfg("n_safe_d1")),
+                p_stop       = (float(_cfg("p_stop"))
+                                if bool(_cfg("early_stop_on")) else 1.0),
                 rng=rng_s2, **timing_kw,
                 collect_trace=(s == 0),   # record full trace for first trial only
             )
+            early_stop_crm[s] = _stopped_c
+            n_at_stop_crm[s]  = len(ptsc)
             # Save first-trial trace for the decision walkthrough display
             if s == 0:
                 _crm_trace_first = {
@@ -2929,6 +3011,13 @@ elif view == "Playground":
             "seed": int(_cfg("seed")),
             "p_surgery": p_surg_val,
             "crm_trace": _crm_trace_first,   # first-trial trace for walkthrough
+            "early_stop_on":    bool(_cfg("early_stop_on")),
+            "p_stop":           float(_cfg("p_stop")),
+            "crm_early_stop_pct": float(early_stop_crm.mean()),
+            "crm_early_stop_n_mean": (
+                float(n_at_stop_crm[early_stop_crm].mean())
+                if early_stop_crm.any() else None
+            ),
         }
 
 # ==============================================================================
@@ -3021,6 +3110,22 @@ if view == "Playground" and "_tite_results" in st.session_state:
                   f"{res['avg_bridging']:.1f}",
                   help="Average number of patients treated at a lower bridging dose "
                        "per trial while the 6+3 arm awaited full evaluability.")
+
+        if res["early_stop_on"]:
+            _es_pct = res["crm_early_stop_pct"]
+            _es_n   = res["crm_early_stop_n_mean"]
+            st.metric(
+                "CRM early-stop rate",
+                f"{_es_pct:.1%}",
+                help=f"Proportion of CRM trials that stopped early "
+                     f"(p_stop threshold = {res['p_stop']:.2f}).",
+            )
+            st.metric(
+                "CRM avg N at early stop",
+                f"{_es_n:.1f}" if _es_n is not None else "—",
+                help="Mean number of patients enrolled in trials that triggered "
+                     "early stopping.",
+            )
 
         st.caption(
             f"Surgery rate: 6+3={res['surg_rate_63']:.3f}  "
@@ -3794,8 +3899,8 @@ def _true_optimal(true_t1, true_t2, target1, target2):
 
 # ------------------------------------------------------------------------------
 # Parameter sweep runner (adapted from design_exploration.py)
-# Note: run_tite_crm in this file returns (selected, patients, study_days,
-# trace); the call below unpacks only the first element accordingly.
+# Note: run_tite_crm returns (selected, patients, study_days, trace,
+# stopped_early); the calls below use sel, *_ to discard unused values.
 # ------------------------------------------------------------------------------
 
 def run_parameter_sweep(param_name, param_values, base_ss,
@@ -3857,6 +3962,7 @@ def run_parameter_sweep(param_name, param_values, base_ss,
         ewoc_on=bool(base_ss["ewoc_on"]),
         ewoc_alpha=float(base_ss["ewoc_alpha"]),
         n_safe_d1=int(base_ss.get("n_safe_d1", 0)),
+        p_stop=float(base_ss.get("p_stop", 1.0)),
     )
 
     rows = []
@@ -3915,7 +4021,7 @@ def run_parameter_sweep(param_name, param_values, base_ss,
         rng = np.random.default_rng(int(seed) + idx * 1000)
         scores, correct, overdosed = [], [], []
         for _ in range(int(n_sim)):
-            # run_tite_crm returns (selected, patients, study_days, trace)
+            # run_tite_crm returns (selected, patients, study_days, trace, stopped_early)
             sel, *_ = run_tite_crm(**kw, rng=rng)
             scores.append(_quality_score(sel, true_t1, true_t2, t1, t2))
             correct.append(int(sel == optimal))
