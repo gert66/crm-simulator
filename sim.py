@@ -3162,12 +3162,8 @@ if (view == "Playground"
     _n_early   = _n_arr[_es_arr]
     _n_full_ct = int((~_es_arr).sum())
 
-    _cohort = max(1, int(st.session_state.get("cohort_size",
-                                               _hres.get("cohort_size", 3))))
-    _lo   = max(1, (_n_early.min() if _es_arr.any() else _cohort) - _cohort)
-    _bins = np.arange(_lo, _max_n_cfg + _cohort, _cohort)
-    if len(_bins) < 3:
-        _bins = np.linspace(_lo, _max_n_cfg, 12)
+    _lo   = max(1, (_n_early.min() if _es_arr.any() else 1))
+    _bins = np.arange(_lo - 0.5, _max_n_cfg + 0.5 + 1, 1)
 
     _ns_h = len(_n_arr)
 
