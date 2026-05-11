@@ -384,6 +384,7 @@ def run_tite_crm(
     ewoc_on=True, ewoc_alpha=0.25,
     burn_in=True, rng=None,
     collect_trace=False,
+    n_safe_d1=0,
 ):
     """
     TITE-CRM trial simulation.
@@ -399,6 +400,14 @@ def run_tite_crm(
     collect_trace: when True, record a decision-level trace dict for every
       cohort update (posteriors, weights, allowed doses, decision reason).
       Adds negligible runtime; used only for the first simulated trial.
+
+    n_safe_d1: number of patients already safely treated at dose level 0 with
+      complete follow-up before the trial opens (day 0).  Their records are
+      pre-loaded into the patient list so the CRM sees them as fully-weighted
+      observations at dose 0 with no DLTs.  Surgery status for these patients
+      is drawn from p_surgery.  These patients count toward max_n — if you want
+      max_n new patients in addition to the pre-treated cohort, increase max_n
+      by n_safe_d1.
 
     Returns (selected_level, patients_list, study_days, trace).
       trace is a list of dicts (one per cohort decision) when collect_trace=True,
@@ -419,6 +428,36 @@ def run_tite_crm(
     ewoc_eff      = float(ewoc_alpha) if ewoc_on else None
     trace         = []
     cohort_step   = 0
+
+    # Pre-populate with historically safe patients at dose level 0.
+    # Arrivals are placed far enough before day 0 that every follow-up window —
+    # including the tox2 window for surgery patients — is already closed.
+    if n_safe_d1 > 0:
+        _total_fu = (float(incl_to_rt) + float(rt_dur)
+                     + float(rt_to_surg) + float(tox2_win))
+        for _i in range(int(n_safe_d1)):
+            _arr      = -(_total_fu + 1.0 + _i)
+            _rt_start = _arr + float(incl_to_rt)
+            _rt_end   = _rt_start + float(rt_dur)
+            _t1w_end  = _rt_start + float(tox1_win)
+            _has_surg = bool(rng.random() < float(p_surgery))
+            _surg_day = float(_rt_end + float(rt_to_surg)) if _has_surg else None
+            _t2w_end  = float(_surg_day + float(tox2_win)) if _has_surg else None
+            patients.append({
+                "dose":         0,
+                "arrival":      float(_arr),
+                "rt_start":     _rt_start,
+                "tox1_win_end": _t1w_end,
+                "has_tox1":     False,
+                "tox1_day":     None,
+                "has_surgery":  _has_surg,
+                "surgery_day":  _surg_day,
+                "tox2_win_end": _t2w_end,
+                "has_tox2":     False,
+                "tox2_day":     None,
+                "is_bridging":  False,
+            })
+        highest_tried = 0
 
     while len(patients) < int(max_n):
         n_add        = min(int(cohort_size), int(max_n) - len(patients))
@@ -1232,6 +1271,8 @@ R_DEFAULTS = {
     "max_n_63":           27,
     "max_n_crm":          27,
     "cohort_size":        3,
+    # Pre-treated patients at dose level 1 (0-indexed: level 0)
+    "n_safe_d1":          0,
     # Priors — shared model
     "prior_model":        "empiric",
     "logistic_intcpt":    3.0,
@@ -2810,6 +2851,7 @@ elif view == "Playground":
                 ewoc_on      = bool(_cfg("ewoc_on")),
                 ewoc_alpha   = float(_cfg("ewoc_alpha")),
                 burn_in      = bool(_cfg("burn_in")),
+                n_safe_d1    = int(_cfg("n_safe_d1")),
                 rng=rng_s2, **timing_kw,
                 collect_trace=(s == 0),   # record full trace for first trial only
             )
@@ -3798,6 +3840,7 @@ def run_parameter_sweep(param_name, param_values, base_ss,
         restrict_final_to_tried=bool(base_ss["restrict_final_to_tried"]),
         ewoc_on=bool(base_ss["ewoc_on"]),
         ewoc_alpha=float(base_ss["ewoc_alpha"]),
+        n_safe_d1=int(base_ss.get("n_safe_d1", 0)),
     )
 
     rows = []
