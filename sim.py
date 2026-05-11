@@ -3142,7 +3142,9 @@ if view == "Playground" and "_tite_results" in st.session_state:
 # CRM sample-size distribution histogram
 # ==============================================================================
 
-if view == "Playground" and "_tite_results" in st.session_state:
+if (view == "Playground"
+        and "_tite_results" in st.session_state
+        and st.session_state["_tite_results"].get("early_stop_on", False)):
     _hres        = st.session_state["_tite_results"]
     _n_arr       = np.array(_hres["n_per_trial_crm"], dtype=int)
     _es_arr      = np.array(_hres["early_stop_arr"],  dtype=bool)
