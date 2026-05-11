@@ -2446,7 +2446,7 @@ if view == "Essentials":
         # ── p_stop ────────────────────────────────────────────────────────────
         st.session_state["wl_p_stop"] = float(_cfg("p_stop"))
         st.number_input(
-            "Early-stopping threshold (p_stop)",
+            "Early stopping confidence threshold (p_stop)",
             min_value=0.50, max_value=0.99, step=0.01, key="wl_p_stop",
             on_change=_sync_p_stop,
             disabled=(not bool(_cfg("early_stop_on"))),
@@ -3018,6 +3018,8 @@ elif view == "Playground":
                 float(n_at_stop_crm[early_stop_crm].mean())
                 if early_stop_crm.any() else None
             ),
+            "n_per_trial_crm":  n_at_stop_crm.tolist(),
+            "early_stop_arr":   early_stop_crm.tolist(),
         }
 
 # ==============================================================================
@@ -3135,6 +3137,90 @@ if view == "Playground" and "_tite_results" in st.session_state:
             f"n_sims={res['ns']} | seed={res['seed']}"
             + (f" | True safe=L{ts}" if ts is not None else " | No jointly safe dose")
         )
+
+# ==============================================================================
+# CRM sample-size distribution histogram
+# ==============================================================================
+
+if view == "Playground" and "_tite_results" in st.session_state:
+    _hres        = st.session_state["_tite_results"]
+    _n_arr       = np.array(_hres["n_per_trial_crm"], dtype=int)
+    _es_arr      = np.array(_hres["early_stop_arr"],  dtype=bool)
+    _max_n_cfg   = int(_n_arr.max()) if len(_n_arr) else 0
+
+    st.markdown("---")
+    st.subheader("CRM trial sample-size distribution")
+    st.caption(
+        "Distribution of patients enrolled across all simulated CRM trials. "
+        "Trials coloured **orange** triggered early stopping; **blue** ran to "
+        "the maximum sample size. Dashed lines mark the mean (white) and "
+        "median (green)."
+    )
+
+    _n_early = _n_arr[_es_arr]
+    _n_full  = _n_arr[~_es_arr]
+
+    _cohort  = max(1, int(st.session_state.get("cohort_size",
+                                                _hres.get("cohort_size", 3))))
+    _lo = max(1,          _n_arr.min() - _cohort)
+    _hi = _max_n_cfg + _cohort
+    _bins = np.arange(_lo, _hi + _cohort, _cohort)
+    if len(_bins) < 3:
+        _bins = np.linspace(_lo, _hi, 12)
+
+    _mean   = float(_n_arr.mean())
+    _median = float(np.median(_n_arr))
+    _ns_h   = len(_n_arr)
+
+    fig_h, ax_h = plt.subplots(figsize=(9.0, 3.2), dpi=RESULT_DPI)
+    _apply_dark_fig(fig_h, ax_h)
+
+    if _es_arr.any() and (~_es_arr).any():
+        ax_h.hist([_n_early, _n_full], bins=_bins, stacked=True,
+                  color=["#ffaa44", "#4a9eff"],
+                  label=["Early stopped", f"Ran to max N={_max_n_cfg}"],
+                  edgecolor="#2a2a4a", linewidth=0.6)
+    elif _es_arr.any():
+        ax_h.hist(_n_early, bins=_bins, color="#ffaa44",
+                  label="Early stopped",
+                  edgecolor="#2a2a4a", linewidth=0.6)
+    else:
+        ax_h.hist(_n_full, bins=_bins, color="#4a9eff",
+                  label=f"Ran to max N={_max_n_cfg}",
+                  edgecolor="#2a2a4a", linewidth=0.6)
+
+    _ymax = ax_h.get_ylim()[1]
+    ax_h.axvline(_mean,   color="#ffffff", lw=1.4, ls="--",
+                 label=f"Mean {_mean:.1f}")
+    ax_h.axvline(_median, color="#80ff80", lw=1.4, ls="--",
+                 label=f"Median {_median:.0f}")
+
+    # Summary stats text box
+    _stats_lines = [
+        f"n sims : {_ns_h}",
+        f"mean   : {_mean:.1f}",
+        f"median : {_median:.0f}",
+        f"range  : {_n_arr.min()}–{_n_arr.max()}",
+    ]
+    if _hres["early_stop_on"]:
+        _stats_lines.append(
+            f"early stop : {_hres['crm_early_stop_pct']:.1%} "
+            f"(p_stop={_hres['p_stop']:.2f})"
+        )
+    ax_h.text(0.985, 0.97, "\n".join(_stats_lines),
+              transform=ax_h.transAxes, fontsize=7.5,
+              verticalalignment="top", horizontalalignment="right",
+              color=_DARK_FG,
+              bbox=dict(facecolor=_DARK_AX, edgecolor="#444466",
+                        boxstyle="round,pad=0.4", alpha=0.9))
+
+    ax_h.set_xlabel("Patients enrolled", fontsize=9)
+    ax_h.set_ylabel("Frequency (trials)", fontsize=9)
+    ax_h.set_title("CRM enrolled-N distribution", fontsize=10)
+    compact_style(ax_h)
+    ax_h.legend(fontsize=8, frameon=False, labelcolor=_DARK_FG)
+    fig_h.tight_layout(pad=0.4)
+    st.image(fig_to_png_bytes(fig_h), use_container_width=True)
 
 # ==============================================================================
 # Posterior Tracking — first simulated trial
