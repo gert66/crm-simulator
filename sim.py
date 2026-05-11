@@ -3145,80 +3145,80 @@ if view == "Playground" and "_tite_results" in st.session_state:
 if (view == "Playground"
         and "_tite_results" in st.session_state
         and st.session_state["_tite_results"].get("early_stop_on", False)):
-    _hres        = st.session_state["_tite_results"]
-    _n_arr       = np.array(_hres["n_per_trial_crm"], dtype=int)
-    _es_arr      = np.array(_hres["early_stop_arr"],  dtype=bool)
-    _max_n_cfg   = int(_n_arr.max()) if len(_n_arr) else 0
+    _hres      = st.session_state["_tite_results"]
+    _n_arr     = np.array(_hres["n_per_trial_crm"], dtype=int)
+    _es_arr    = np.array(_hres["early_stop_arr"],  dtype=bool)
+    _max_n_cfg = int(_n_arr.max()) if len(_n_arr) else 0   # equals max_n_crm
 
     st.markdown("---")
     st.subheader("CRM trial sample-size distribution")
     st.caption(
-        "Distribution of patients enrolled across all simulated CRM trials. "
-        "Trials coloured **orange** triggered early stopping; **blue** ran to "
-        "the maximum sample size. Dashed lines mark the mean (white) and "
-        "median (green)."
+        "Distribution of patients enrolled in simulated CRM trials that "
+        "triggered early stopping (orange). Trials that ran to the maximum "
+        "sample size are noted separately. Dashed lines mark the mean "
+        "(white) and median (green) of early-stopped trials."
     )
 
-    _n_early = _n_arr[_es_arr]
-    _n_full  = _n_arr[~_es_arr]
+    _n_early   = _n_arr[_es_arr]
+    _n_full_ct = int((~_es_arr).sum())
 
-    _cohort  = max(1, int(st.session_state.get("cohort_size",
-                                                _hres.get("cohort_size", 3))))
-    _lo = max(1,          _n_arr.min() - _cohort)
-    _hi = _max_n_cfg + _cohort
-    _bins = np.arange(_lo, _hi + _cohort, _cohort)
+    _cohort = max(1, int(st.session_state.get("cohort_size",
+                                               _hres.get("cohort_size", 3))))
+    _lo   = max(1, (_n_early.min() if _es_arr.any() else _cohort) - _cohort)
+    _bins = np.arange(_lo, _max_n_cfg + _cohort, _cohort)
     if len(_bins) < 3:
-        _bins = np.linspace(_lo, _hi, 12)
+        _bins = np.linspace(_lo, _max_n_cfg, 12)
 
-    _mean   = float(_n_arr.mean())
-    _median = float(np.median(_n_arr))
-    _ns_h   = len(_n_arr)
+    _ns_h = len(_n_arr)
 
     fig_h, ax_h = plt.subplots(figsize=(9.0, 3.2), dpi=RESULT_DPI)
     _apply_dark_fig(fig_h, ax_h)
 
-    if _es_arr.any() and (~_es_arr).any():
-        ax_h.hist([_n_early, _n_full], bins=_bins, stacked=True,
-                  color=["#ffaa44", "#4a9eff"],
-                  label=["Early stopped", f"Ran to max N={_max_n_cfg}"],
-                  edgecolor="#2a2a4a", linewidth=0.6)
-    elif _es_arr.any():
+    if _es_arr.any():
         ax_h.hist(_n_early, bins=_bins, color="#ffaa44",
-                  label="Early stopped",
+                  label=f"Early stopped ({_es_arr.sum()} trials)",
                   edgecolor="#2a2a4a", linewidth=0.6)
+        _mean_e   = float(_n_early.mean())
+        _median_e = float(np.median(_n_early))
+        ax_h.axvline(_mean_e,   color="#ffffff", lw=1.4, ls="--",
+                     label=f"Mean {_mean_e:.1f}")
+        ax_h.axvline(_median_e, color="#80ff80", lw=1.4, ls="--",
+                     label=f"Median {_median_e:.0f}")
+        _stats_lines = [
+            f"early-stopped trials",
+            f"n       : {_es_arr.sum()} / {_ns_h} "
+            f"({_hres['crm_early_stop_pct']:.1%})",
+            f"mean N  : {_mean_e:.1f}",
+            f"median N: {_median_e:.0f}",
+            f"range   : {_n_early.min()}–{_n_early.max()}",
+            f"p_stop  : {_hres['p_stop']:.2f}",
+        ]
     else:
-        ax_h.hist(_n_full, bins=_bins, color="#4a9eff",
-                  label=f"Ran to max N={_max_n_cfg}",
-                  edgecolor="#2a2a4a", linewidth=0.6)
+        _stats_lines = [f"No early stops in {_ns_h} trials",
+                        f"p_stop={_hres['p_stop']:.2f}"]
 
-    _ymax = ax_h.get_ylim()[1]
-    ax_h.axvline(_mean,   color="#ffffff", lw=1.4, ls="--",
-                 label=f"Mean {_mean:.1f}")
-    ax_h.axvline(_median, color="#80ff80", lw=1.4, ls="--",
-                 label=f"Median {_median:.0f}")
-
-    # Summary stats text box
-    _stats_lines = [
-        f"n sims : {_ns_h}",
-        f"mean   : {_mean:.1f}",
-        f"median : {_median:.0f}",
-        f"range  : {_n_arr.min()}–{_n_arr.max()}",
-    ]
-    if _hres["early_stop_on"]:
-        _stats_lines.append(
-            f"early stop : {_hres['crm_early_stop_pct']:.1%} "
-            f"(p_stop={_hres['p_stop']:.2f})"
+    # Annotate full-length trials as a text note at the right edge
+    if _n_full_ct > 0:
+        _ymax = ax_h.get_ylim()[1] if ax_h.get_ylim()[1] > 0 else _ns_h
+        ax_h.annotate(
+            f"{_n_full_ct} trial{'s' if _n_full_ct != 1 else ''}\nran to max N",
+            xy=(_max_n_cfg, 0), xycoords="data",
+            xytext=(-6, 6), textcoords="offset points",
+            ha="right", va="bottom", fontsize=7.5, color="#8888bb",
+            arrowprops=None,
         )
-    ax_h.text(0.985, 0.97, "\n".join(_stats_lines),
+
+    ax_h.text(0.015, 0.97, "\n".join(_stats_lines),
               transform=ax_h.transAxes, fontsize=7.5,
-              verticalalignment="top", horizontalalignment="right",
+              verticalalignment="top", horizontalalignment="left",
               color=_DARK_FG,
               bbox=dict(facecolor=_DARK_AX, edgecolor="#444466",
                         boxstyle="round,pad=0.4", alpha=0.9))
 
-    ax_h.set_xlabel("Patients enrolled", fontsize=9)
+    ax_h.set_xlim(left=max(0, _lo - 1), right=_max_n_cfg)
+    ax_h.set_xlabel("Patients enrolled at early stop", fontsize=9)
     ax_h.set_ylabel("Frequency (trials)", fontsize=9)
-    ax_h.set_title("CRM enrolled-N distribution", fontsize=10)
+    ax_h.set_title("CRM early-stopping sample-size distribution", fontsize=10)
     compact_style(ax_h)
     ax_h.legend(fontsize=8, frameon=False, labelcolor=_DARK_FG)
     fig_h.tight_layout(pad=0.4)
