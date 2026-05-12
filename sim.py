@@ -1722,6 +1722,29 @@ _sync_s6_stop_min = _make_sync("s6_stop_min", int, "wl_s6_stop_min")
 _sync_s9_esc_max  = _make_sync("s9_esc_max",  int, "wl_s9_esc_max")
 _sync_s9_stop_min = _make_sync("s9_stop_min", int, "wl_s9_stop_min")
 _sync_prior_scenario = _make_sync("prior_scenario", str, "wl_prior_scenario")
+# Playground widget sync callbacks — mirror the Essentials wl_/canonical pattern so
+# that navigating away from Playground and returning preserves user-entered values.
+# Streamlit ≥1.28 deletes widget-backed session_state keys when their widgets are
+# not rendered, so every Playground widget that must survive navigation needs its own
+# non-widget canonical key (set via on_change, not by the widget directly).
+_sync_prior_model  = _make_sync("prior_model",   str, "wl_prior_model")
+_sync_prior_ep_tab = _make_sync("prior_ep_tab",  str, "wl_prior_ep_tab")
+
+
+def _make_true_t_sync(canon_key: str, wl_key: str):
+    """Return an on_change callback that commits wl_key → canon_key (float)."""
+    def _cb():
+        st.session_state[canon_key] = float(st.session_state.get(wl_key, 0.0))
+    _cb.__name__ = f"_sync_{canon_key}"
+    return _cb
+
+
+_sync_true_t1 = [
+    _make_true_t_sync(TRUE_T1_KEYS[i], f"wl_{TRUE_T1_KEYS[i]}") for i in range(5)
+]
+_sync_true_t2 = [
+    _make_true_t_sync(TRUE_T2_KEYS[i], f"wl_{TRUE_T2_KEYS[i]}") for i in range(5)
+]
 
 
 def _apply_prior_scenario() -> None:
@@ -2602,26 +2625,40 @@ elif view == "Playground":
                     f"<div style='font-size:0.83rem;padding-top:0.25rem;'>L{i} {lab}</div>",
                     unsafe_allow_html=True)
             with rT1:
-                # value= seeds session_state on first render (safe because
-                # TRUE_T1_KEYS are NOT pre-seeded by init_state()).
+                # Pre-write from canonical key so the widget restores the user's
+                # value after navigating away and back (Streamlit ≥1.28 clears
+                # widget-backed keys when those widgets are not rendered).
+                # TRUE_T1_KEYS[i] is the canonical (non-widget) key; its
+                # value persists because it is written by the on_change callback,
+                # not directly by the widget.
+                _wk1 = f"wl_{TRUE_T1_KEYS[i]}"
+                st.session_state[_wk1] = float(
+                    st.session_state.get(TRUE_T1_KEYS[i], DEFAULT_TRUE_T1[i])
+                )
                 v1 = st.number_input(
                     f"T1 L{i}",
                     min_value=0.0, max_value=1.0, step=0.01,
-                    value=DEFAULT_TRUE_T1[i],
-                    key=TRUE_T1_KEYS[i],
+                    key=_wk1,
+                    on_change=_sync_true_t1[i],
                     label_visibility="collapsed",
                     help=f"True probability of acute toxicity at dose L{i}.",
                 )
+                st.session_state[TRUE_T1_KEYS[i]] = float(st.session_state[_wk1])
                 true_t1.append(float(v1))
             with rT2:
+                _wk2 = f"wl_{TRUE_T2_KEYS[i]}"
+                st.session_state[_wk2] = float(
+                    st.session_state.get(TRUE_T2_KEYS[i], DEFAULT_TRUE_T2[i])
+                )
                 v2 = st.number_input(
                     f"T2 L{i}",
                     min_value=0.0, max_value=1.0, step=0.01,
-                    value=DEFAULT_TRUE_T2[i],
-                    key=TRUE_T2_KEYS[i],
+                    key=_wk2,
+                    on_change=_sync_true_t2[i],
                     label_visibility="collapsed",
                     help=f"True probability of subacute toxicity given surgery at L{i}.",
                 )
+                st.session_state[TRUE_T2_KEYS[i]] = float(st.session_state[_wk2])
                 true_t2.append(float(v2))
 
         target_t1_val = float(_cfg("target_t1"))
@@ -2640,12 +2677,15 @@ elif view == "Playground":
         st.markdown("#### Priors")
 
         # ── Skeleton model ────────────────────────────────────────────────
+        st.session_state["wl_prior_model"] = str(_cfg("prior_model"))
         st.radio(
             "Skeleton model",
             options=["empiric", "logistic"],
-            horizontal=True, key="prior_model",
+            horizontal=True, key="wl_prior_model",
+            on_change=_sync_prior_model,
             help=h("prior_model", "Skeleton generation method, shared for both endpoints.")
         )
+        st.session_state["prior_model"] = st.session_state["wl_prior_model"]
         prior_model_val = str(_cfg("prior_model"))
         intcpt_val      = float(_cfg("logistic_intcpt"))
 
@@ -2672,12 +2712,15 @@ elif view == "Playground":
         # ── Scenario content ──────────────────────────────────────────────
         if _scen_val == "Custom":
             # Show the Endpoint tab and raw editable sliders
+            st.session_state["wl_prior_ep_tab"] = str(_cfg("prior_ep_tab"))
             ep_tab = st.radio(
                 "Endpoint",
                 options=["Tox1 (acute)", "Tox2 (subacute | surgery)"],
-                horizontal=True, key="prior_ep_tab",
+                horizontal=True, key="wl_prior_ep_tab",
+                on_change=_sync_prior_ep_tab,
                 help="Switch between tox1 and tox2 prior parameter sets.",
             )
+            st.session_state["prior_ep_tab"] = st.session_state["wl_prior_ep_tab"]
 
             if ep_tab == "Tox1 (acute)":
                 # ── Prior target ──────────────────────────────────────────
