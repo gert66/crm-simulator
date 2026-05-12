@@ -2072,7 +2072,7 @@ if view == "Essentials":
     with _ec1:
         st.markdown("#### Study endpoints")
 
-        st.session_state["wl_target_t1"] = float(_cfg("target_t1"))
+        st.session_state.setdefault("wl_target_t1", float(_cfg("target_t1")))
         st.number_input(
             "Target tox1 (acute) rate",
             min_value=0.05, max_value=0.50, step=0.01, key="wl_target_t1",
@@ -2081,7 +2081,7 @@ if view == "Essentials":
         )
         st.session_state["target_t1"] = st.session_state["wl_target_t1"]
 
-        st.session_state["wl_target_t2"] = float(_cfg("target_t2"))
+        st.session_state.setdefault("wl_target_t2", float(_cfg("target_t2")))
         st.number_input(
             "Target tox2 (subacute | surgery) rate",
             min_value=0.05, max_value=0.50, step=0.01, key="wl_target_t2",
@@ -2092,7 +2092,7 @@ if view == "Essentials":
         )
         st.session_state["target_t2"] = st.session_state["wl_target_t2"]
 
-        st.session_state["wl_p_surgery"] = float(_cfg("p_surgery"))
+        st.session_state.setdefault("wl_p_surgery", float(_cfg("p_surgery")))
         st.number_input(
             "Probability of surgery",
             min_value=0.0, max_value=1.0, step=0.01, key="wl_p_surgery",
@@ -2103,7 +2103,7 @@ if view == "Essentials":
         )
         st.session_state["p_surgery"] = st.session_state["wl_p_surgery"]
 
-        st.session_state["wl_start_level_1b"] = int(_cfg("start_level_1b"))
+        st.session_state.setdefault("wl_start_level_1b", int(_cfg("start_level_1b")))
         st.number_input(
             "Start dose level (1-based)",
             min_value=1, max_value=5, step=1, key="wl_start_level_1b",
@@ -2114,7 +2114,7 @@ if view == "Essentials":
 
         st.markdown("#### Simulation")
 
-        st.session_state["wl_n_sims"] = int(_cfg("n_sims"))
+        st.session_state.setdefault("wl_n_sims", int(_cfg("n_sims")))
         st.number_input(
             "Number of simulated trials",
             min_value=50, max_value=5000, step=50, key="wl_n_sims",
@@ -2123,7 +2123,7 @@ if view == "Essentials":
         )
         st.session_state["n_sims"] = st.session_state["wl_n_sims"]
 
-        st.session_state["wl_seed"] = int(_cfg("seed"))
+        st.session_state.setdefault("wl_seed", int(_cfg("seed")))
         st.number_input(
             "Random seed",
             min_value=1, max_value=10_000_000, step=1, key="wl_seed",
@@ -2132,7 +2132,7 @@ if view == "Essentials":
         )
         st.session_state["seed"] = st.session_state["wl_seed"]
 
-        st.session_state["wl_accrual_per_month"] = float(_cfg("accrual_per_month"))
+        st.session_state.setdefault("wl_accrual_per_month", float(_cfg("accrual_per_month")))
         st.number_input(
             "Avg patients per month",
             min_value=0.1, max_value=20.0, step=0.1, key="wl_accrual_per_month",
@@ -2146,7 +2146,7 @@ if view == "Essentials":
     with _ec2:
         st.markdown("#### Timing (days)")
 
-        st.session_state["wl_incl_to_rt"] = int(_cfg("incl_to_rt"))
+        st.session_state.setdefault("wl_incl_to_rt", int(_cfg("incl_to_rt")))
         st.number_input(
             "Inclusion to RT start",
             min_value=0, max_value=180, step=1, key="wl_incl_to_rt",
@@ -2157,7 +2157,7 @@ if view == "Essentials":
         )
         st.session_state["incl_to_rt"] = st.session_state["wl_incl_to_rt"]
 
-        st.session_state["wl_rt_dur"] = int(_cfg("rt_dur"))
+        st.session_state.setdefault("wl_rt_dur", int(_cfg("rt_dur")))
         st.number_input(
             "Radiotherapy duration",
             min_value=1, max_value=60, step=1, key="wl_rt_dur",
@@ -2167,7 +2167,7 @@ if view == "Essentials":
         )
         st.session_state["rt_dur"] = st.session_state["wl_rt_dur"]
 
-        st.session_state["wl_rt_to_surg"] = int(_cfg("rt_to_surg"))
+        st.session_state.setdefault("wl_rt_to_surg", int(_cfg("rt_to_surg")))
         st.number_input(
             "RT end to surgery",
             min_value=1, max_value=365, step=1, key="wl_rt_to_surg",
@@ -2179,7 +2179,7 @@ if view == "Essentials":
         )
         st.session_state["rt_to_surg"] = st.session_state["wl_rt_to_surg"]
 
-        st.session_state["wl_tox2_win"] = int(_cfg("tox2_win"))
+        st.session_state.setdefault("wl_tox2_win", int(_cfg("tox2_win")))
         st.number_input(
             "Tox2 follow-up window (days)",
             min_value=7, max_value=180, step=1, key="wl_tox2_win",
@@ -2191,7 +2191,7 @@ if view == "Essentials":
 
         st.markdown("#### Sample size")
 
-        st.session_state["wl_max_n_63"] = int(_cfg("max_n_63"))
+        st.session_state.setdefault("wl_max_n_63", int(_cfg("max_n_63")))
         st.number_input(
             "Max sample size (6+3)",
             min_value=6, max_value=200, step=3, key="wl_max_n_63",
@@ -2202,7 +2202,7 @@ if view == "Essentials":
         )
         st.session_state["max_n_63"] = st.session_state["wl_max_n_63"]
 
-        st.session_state["wl_max_n_crm"] = int(_cfg("max_n_crm"))
+        st.session_state.setdefault("wl_max_n_crm", int(_cfg("max_n_crm")))
         st.number_input(
             "Max sample size (CRM)",
             min_value=6, max_value=200, step=3, key="wl_max_n_crm",
@@ -2211,7 +2211,7 @@ if view == "Essentials":
         )
         st.session_state["max_n_crm"] = st.session_state["wl_max_n_crm"]
 
-        st.session_state["wl_cohort_size"] = int(_cfg("cohort_size"))
+        st.session_state.setdefault("wl_cohort_size", int(_cfg("cohort_size")))
         st.number_input(
             "Cohort size (CRM)",
             min_value=1, max_value=12, step=1, key="wl_cohort_size",
@@ -2228,7 +2228,7 @@ if view == "Essentials":
         # ── gh_n ──────────────────────────────────────────────────────────
         # Pre-write canonical → widget so the selectbox always shows the
         # correct value even after a simulation rerun with Essentials absent.
-        st.session_state["wl_gh_n"] = int(_cfg("gh_n"))
+        st.session_state.setdefault("wl_gh_n", int(_cfg("gh_n")))
         st.selectbox(
             "Gauss–Hermite points",
             options=[31, 41, 61, 81], key="wl_gh_n",
@@ -2239,7 +2239,7 @@ if view == "Essentials":
         st.session_state["gh_n"] = st.session_state["wl_gh_n"]
 
         # ── max_step ──────────────────────────────────────────────────────
-        st.session_state["wl_max_step"] = int(_cfg("max_step"))
+        st.session_state.setdefault("wl_max_step", int(_cfg("max_step")))
         st.selectbox(
             "Max dose step per update",
             options=[1, 2], key="wl_max_step",
@@ -2250,7 +2250,7 @@ if view == "Essentials":
         st.session_state["max_step"] = st.session_state["wl_max_step"]
 
         # ── sigma ─────────────────────────────────────────────────────────
-        st.session_state["sl_sigma"] = float(_cfg("sigma"))
+        st.session_state.setdefault("sl_sigma", float(_cfg("sigma")))
         st.slider(
             "Prior sigma on theta",
             min_value=0.2, max_value=5.0, step=0.1, key="sl_sigma",
@@ -2265,7 +2265,7 @@ if view == "Essentials":
         st.markdown("#### CRM safety / selection")
 
         # ── enforce_guardrail ─────────────────────────────────────────────
-        st.session_state["wl_enforce_guardrail"] = bool(_cfg("enforce_guardrail"))
+        st.session_state.setdefault("wl_enforce_guardrail", bool(_cfg("enforce_guardrail")))
         st.toggle(
             "Guardrail: next dose ≤ highest tried + 1",
             key="wl_enforce_guardrail",
@@ -2275,7 +2275,7 @@ if view == "Essentials":
         st.session_state["enforce_guardrail"] = st.session_state["wl_enforce_guardrail"]
 
         # ── restrict_final_mtd ────────────────────────────────────────────
-        st.session_state["wl_restrict_final_mtd"] = bool(_cfg("restrict_final_mtd"))
+        st.session_state.setdefault("wl_restrict_final_mtd", bool(_cfg("restrict_final_mtd")))
         st.toggle(
             "Final MTD must be among tried doses",
             key="wl_restrict_final_mtd",
@@ -2288,7 +2288,7 @@ if view == "Essentials":
         st.markdown("#### CRM behaviour")
 
         # ── burn_in ───────────────────────────────────────────────────────
-        st.session_state["wl_burn_in"] = bool(_cfg("burn_in"))
+        st.session_state.setdefault("wl_burn_in", bool(_cfg("burn_in")))
         st.toggle(
             "Burn-in until first tox1 DLT",
             key="wl_burn_in",
@@ -2300,7 +2300,7 @@ if view == "Essentials":
         st.session_state["burn_in"] = st.session_state["wl_burn_in"]
 
         # ── ewoc_on ───────────────────────────────────────────────────────
-        st.session_state["wl_ewoc_on"] = bool(_cfg("ewoc_on"))
+        st.session_state.setdefault("wl_ewoc_on", bool(_cfg("ewoc_on")))
         st.toggle(
             "Enable EWOC joint overdose control",
             key="wl_ewoc_on",
@@ -2312,7 +2312,7 @@ if view == "Essentials":
         st.session_state["ewoc_on"] = st.session_state["wl_ewoc_on"]
 
         # ── ewoc_alpha ────────────────────────────────────────────────────
-        st.session_state["wl_ewoc_alpha"] = float(_cfg("ewoc_alpha"))
+        st.session_state.setdefault("wl_ewoc_alpha", float(_cfg("ewoc_alpha")))
         st.number_input(
             "EWOC alpha",
             min_value=0.01, max_value=0.99, step=0.01, key="wl_ewoc_alpha",
@@ -2326,7 +2326,7 @@ if view == "Essentials":
         st.markdown("#### CRM decision trace")
 
         # ── show_crm_trace ────────────────────────────────────────────────
-        st.session_state["wl_show_crm_trace"] = bool(_cfg("show_crm_trace"))
+        st.session_state.setdefault("wl_show_crm_trace", bool(_cfg("show_crm_trace")))
         st.toggle(
             "Explain first CRM trial",
             key="wl_show_crm_trace",
@@ -2375,19 +2375,19 @@ if view == "Essentials":
     )
     _ar1, _ar2, _ar3 = st.columns(3, gap="small")
     with _ar1:
-        st.session_state["wl_a6_esc_max"] = int(_cfg("a6_esc_max"))
+        st.session_state.setdefault("wl_a6_esc_max", int(_cfg("a6_esc_max")))
         st.number_input("≥6 — esc if tox1 ≤", min_value=0, max_value=5,
                         step=1, key="wl_a6_esc_max", on_change=_sync_a6_esc_max,
                         help=h("a6_esc_max", "Phase 1 acute escalation threshold."))
         st.session_state["a6_esc_max"] = st.session_state["wl_a6_esc_max"]
     with _ar2:
-        st.session_state["wl_a6_stop_min"] = int(_cfg("a6_stop_min"))
+        st.session_state.setdefault("wl_a6_stop_min", int(_cfg("a6_stop_min")))
         st.number_input("≥6 — stop if tox1 ≥", min_value=1, max_value=6,
                         step=1, key="wl_a6_stop_min", on_change=_sync_a6_stop_min,
                         help=h("a6_stop_min", "Phase 1 acute stopping threshold."))
         st.session_state["a6_stop_min"] = st.session_state["wl_a6_stop_min"]
     with _ar3:
-        st.session_state["wl_a9_esc_max"] = int(_cfg("a9_esc_max"))
+        st.session_state.setdefault("wl_a9_esc_max", int(_cfg("a9_esc_max")))
         st.number_input("≥9 — esc if tox1 ≤", min_value=0, max_value=8,
                         step=1, key="wl_a9_esc_max", on_change=_sync_a9_esc_max,
                         help=h("a9_esc_max", "Phase 2 acute escalation threshold."))
@@ -2400,25 +2400,25 @@ if view == "Essentials":
     )
     _sr1, _sr2, _sr3, _sr4 = st.columns(4, gap="small")
     with _sr1:
-        st.session_state["wl_s6_esc_max"] = int(_cfg("s6_esc_max"))
+        st.session_state.setdefault("wl_s6_esc_max", int(_cfg("s6_esc_max")))
         st.number_input("≥6 surg — esc if tox2 ≤", min_value=0, max_value=6,
                         step=1, key="wl_s6_esc_max", on_change=_sync_s6_esc_max,
                         help=h("s6_esc_max", "Phase 1 subacute escalation threshold."))
         st.session_state["s6_esc_max"] = st.session_state["wl_s6_esc_max"]
     with _sr2:
-        st.session_state["wl_s6_stop_min"] = int(_cfg("s6_stop_min"))
+        st.session_state.setdefault("wl_s6_stop_min", int(_cfg("s6_stop_min")))
         st.number_input("≥6 surg — stop if tox2 ≥", min_value=1, max_value=6,
                         step=1, key="wl_s6_stop_min", on_change=_sync_s6_stop_min,
                         help=h("s6_stop_min", "Phase 1 subacute stopping threshold."))
         st.session_state["s6_stop_min"] = st.session_state["wl_s6_stop_min"]
     with _sr3:
-        st.session_state["wl_s9_esc_max"] = int(_cfg("s9_esc_max"))
+        st.session_state.setdefault("wl_s9_esc_max", int(_cfg("s9_esc_max")))
         st.number_input("≥9 surg — esc if tox2 ≤", min_value=0, max_value=9,
                         step=1, key="wl_s9_esc_max", on_change=_sync_s9_esc_max,
                         help=h("s9_esc_max", "Phase 2 subacute escalation threshold."))
         st.session_state["s9_esc_max"] = st.session_state["wl_s9_esc_max"]
     with _sr4:
-        st.session_state["wl_s9_stop_min"] = int(_cfg("s9_stop_min"))
+        st.session_state.setdefault("wl_s9_stop_min", int(_cfg("s9_stop_min")))
         st.number_input("≥9 surg — stop if tox2 ≥", min_value=1, max_value=9,
                         step=1, key="wl_s9_stop_min", on_change=_sync_s9_stop_min,
                         help=h("s9_stop_min", "Phase 2 subacute stopping threshold."))
@@ -2516,7 +2516,7 @@ elif view == "Playground":
         intcpt_val      = float(_cfg("logistic_intcpt"))
 
         # ── Prior scenario selector ───────────────────────────────────────
-        st.session_state["wl_prior_scenario"] = str(_cfg("prior_scenario"))
+        st.session_state.setdefault("wl_prior_scenario", str(_cfg("prior_scenario")))
         st.selectbox(
             "Prior scenario",
             options=list(_PRIOR_SCENARIOS.keys()),
@@ -2547,7 +2547,7 @@ elif view == "Playground":
 
             if ep_tab == "Tox1 (acute)":
                 # ── Prior target ──────────────────────────────────────────
-                st.session_state["sl_prior_target_t1"] = float(_cfg("prior_target_t1"))
+                st.session_state.setdefault("sl_prior_target_t1", float(_cfg("prior_target_t1")))
                 st.slider("Prior target (tox1)", 0.05, 0.50, step=0.01,
                           key="sl_prior_target_t1",
                           on_change=_clamp_halfwidth_t1,
@@ -2572,7 +2572,7 @@ elif view == "Playground":
                 st.session_state["halfwidth_t1"] = st.session_state["sl_halfwidth_t1"]
 
                 # ── Prior MTD level ────────────────────────────────────────
-                st.session_state["sl_prior_nu_t1"] = int(_cfg("prior_nu_t1"))
+                st.session_state.setdefault("sl_prior_nu_t1", int(_cfg("prior_nu_t1")))
                 st.slider("Prior MTD level (tox1, 1-based)", 1, 5, step=1,
                           key="sl_prior_nu_t1",
                           on_change=_sync_prior_nu_t1,
@@ -2583,7 +2583,7 @@ elif view == "Playground":
 
             else:
                 # ── Prior target (tox2) ────────────────────────────────────
-                st.session_state["sl_prior_target_t2"] = float(_cfg("prior_target_t2"))
+                st.session_state.setdefault("sl_prior_target_t2", float(_cfg("prior_target_t2")))
                 st.slider("Prior target (tox2)", 0.05, 0.50, step=0.01,
                           key="sl_prior_target_t2",
                           on_change=_clamp_halfwidth_t2,
@@ -2606,7 +2606,7 @@ elif view == "Playground":
                 st.session_state["halfwidth_t2"] = st.session_state["sl_halfwidth_t2"]
 
                 # ── Prior MTD level (tox2) ─────────────────────────────────
-                st.session_state["sl_prior_nu_t2"] = int(_cfg("prior_nu_t2"))
+                st.session_state.setdefault("sl_prior_nu_t2", int(_cfg("prior_nu_t2")))
                 st.slider("Prior MTD level (tox2, 1-based)", 1, 5, step=1,
                           key="sl_prior_nu_t2",
                           on_change=_sync_prior_nu_t2,
