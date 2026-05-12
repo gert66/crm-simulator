@@ -2561,7 +2561,11 @@ elif view == "Playground":
 
                 # ── Halfwidth ──────────────────────────────────────────────
                 _hw1_clamped = min(float(_cfg("halfwidth_t1")), _max_hw1)
-                st.session_state["sl_halfwidth_t1"] = _hw1_clamped
+                # Only push into widget state when needed (first load or clamp).
+                if "sl_halfwidth_t1" not in st.session_state:
+                    st.session_state["sl_halfwidth_t1"] = _hw1_clamped
+                elif float(st.session_state["sl_halfwidth_t1"]) > _max_hw1:
+                    st.session_state["sl_halfwidth_t1"] = _hw1_clamped
                 st.slider("Halfwidth (tox1)", 0.01, float(_max_hw1), step=0.01,
                           key="sl_halfwidth_t1",
                           on_change=_sync_halfwidth_t1,
@@ -2596,7 +2600,11 @@ elif view == "Playground":
 
                 # ── Halfwidth (tox2) ───────────────────────────────────────
                 _hw2_clamped = min(float(_cfg("halfwidth_t2")), _max_hw2)
-                st.session_state["sl_halfwidth_t2"] = _hw2_clamped
+                # Only push into widget state when needed (first load or clamp).
+                if "sl_halfwidth_t2" not in st.session_state:
+                    st.session_state["sl_halfwidth_t2"] = _hw2_clamped
+                elif float(st.session_state["sl_halfwidth_t2"]) > _max_hw2:
+                    st.session_state["sl_halfwidth_t2"] = _hw2_clamped
                 st.slider("Halfwidth (tox2)", 0.01, float(_max_hw2), step=0.01,
                           key="sl_halfwidth_t2",
                           on_change=_sync_halfwidth_t2,
