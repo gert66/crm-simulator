@@ -4929,6 +4929,69 @@ def _plot_stress_selection(df, dose_labels_list):
     return fig
 
 
+def _plot_stress_truth_curves(scenarios, baseline_t1, baseline_t2,
+                              dose_labels_list, title="", light=False):
+    """Two-panel line plot: tox1 (left) and tox2 (right) true-probability curves.
+
+    Baseline is drawn as a dashed grey line; each scenario is a solid colored
+    line.  Shows the actual five dose-level probabilities passed to the
+    simulator — no smoothing.
+
+    Parameters
+    ----------
+    scenarios        : list of (label, t1, t2) — may be a single-element list
+    baseline_t1/t2   : list[float] — Playground baseline probabilities
+    dose_labels_list : list[str]   — x-axis tick labels (e.g. ['L0'…'L4'])
+    title            : str         — optional suptitle
+    light            : bool        — True → white bg for HTML export
+    """
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 3.2))
+    if light:
+        fig.patch.set_facecolor("white")
+        ax1.set_facecolor("white")
+        ax2.set_facecolor("white")
+        fg = "#444444"
+    else:
+        _apply_dark_fig(fig, ax1, ax2)
+        fg = _DARK_FG
+
+    x = np.arange(len(dose_labels_list))
+    _SC_COLORS = ["#4a9eff", "#44dd88", "#ffaa44", "#ff6666", "#cc66ff",
+                  "#ff99cc", "#aaddff", "#ccff99", "#ffdd88", "#88ffee"]
+
+    for ax in (ax1, ax2):
+        ax.plot(x, [], color="#888888", linestyle="--", linewidth=1.5,
+                marker="o", markersize=4, label="Baseline")  # legend entry
+
+    # Baseline dashed
+    ax1.plot(x, list(baseline_t1), color="#888888", linestyle="--",
+             linewidth=1.5, marker="o", markersize=4, zorder=5)
+    ax2.plot(x, list(baseline_t2), color="#888888", linestyle="--",
+             linewidth=1.5, marker="o", markersize=4, zorder=5)
+
+    for si, (label, t1, t2) in enumerate(scenarios):
+        c = _SC_COLORS[si % len(_SC_COLORS)]
+        ax1.plot(x, list(t1), color=c, linewidth=1.8, marker="o", markersize=4,
+                 label=label)
+        ax2.plot(x, list(t2), color=c, linewidth=1.8, marker="o", markersize=4,
+                 label=label)
+
+    for ax, ep_title in [(ax1, "Tox1 (acute)"), (ax2, "Tox2 (subacute)")]:
+        ax.set_xticks(x)
+        ax.set_xticklabels(dose_labels_list, fontsize=8)
+        ax.set_ylabel("True tox probability", color=fg, fontsize=8)
+        ax.set_ylim(0.0, 1.05)
+        ax.set_title(ep_title, fontsize=9, color=fg)
+        ax.tick_params(colors=fg, labelsize=7)
+        ax.legend(fontsize=7, framealpha=0.3)
+        compact_style(ax)
+
+    if title:
+        fig.suptitle(title, fontsize=9, color=fg, y=1.02)
+    fig.tight_layout(pad=1.5)
+    return fig
+
+
 def _plot_prior_mtd_context(true_tox, pv_list, tox_label, title,
                             prior_target, prior_halfwidth,
                             model="empiric", intcpt=3.0, light=False):
@@ -5655,6 +5718,39 @@ if view == "Design Exploration":
             help="Run TITE-CRM simulations for each stress scenario.",
         )
 
+        # ── Live truth-curve preview ──────────────────────────────────────
+        if _de_skel_ok and _de_st_values:
+            _prev_sc = build_truth_scenarios(
+                _de_t1, _de_t2,
+                method=_de_st_method,
+                mode=_de_st_mode,
+                values=_de_st_values,
+            )
+            _PREV_DOSE_LBLS = [f"L{i}" for i in range(5)]
+            _MAX_SC_COMPACT  = 8
+            with st.expander("📈 Truth curve preview", expanded=True):
+                if len(_prev_sc) <= _MAX_SC_COMPACT:
+                    _prev_fig = _plot_stress_truth_curves(
+                        _prev_sc, _de_t1, _de_t2, _PREV_DOSE_LBLS,
+                    )
+                    st.image(fig_to_png_bytes(_prev_fig), use_container_width=True)
+                    plt.close(_prev_fig)
+                else:
+                    _prev_sc_labels = [sc[0] for sc in _prev_sc]
+                    _prev_chosen = st.selectbox(
+                        "Scenario to preview",
+                        options=_prev_sc_labels,
+                        key="wl_de_st_preview_sel",
+                        help="Select a scenario to preview its truth curves.",
+                    )
+                    _prev_one = [sc for sc in _prev_sc if sc[0] == _prev_chosen]
+                    _prev_fig = _plot_stress_truth_curves(
+                        _prev_one, _de_t1, _de_t2, _PREV_DOSE_LBLS,
+                        title=f"Scenario: {_prev_chosen}",
+                    )
+                    st.image(fig_to_png_bytes(_prev_fig), use_container_width=True)
+                    plt.close(_prev_fig)
+
     # ── Execute sweep ─────────────────────────────────────────────────────
     if _de_run_btn and _de_skel_ok and len(_de_pv_eff) > 0:
         _de_base_ss = dict(
@@ -6015,6 +6111,42 @@ if view == "Design Exploration":
             _st_disp.style.format({c: "{:.3f}" for c in _st_disp.columns if c.startswith("T")}),
             hide_index=True, use_container_width=True,
         )
+
+        # Truth curve chart — reconstruct scenarios from stored DataFrame
+        _st_scenarios_from_df = [
+            (
+                row["scenario"],
+                [row[f"true_t1_L{i}"] for i in range(5)],
+                [row[f"true_t2_L{i}"] for i in range(5)],
+            )
+            for _, row in _st_df.iterrows()
+        ]
+        _RES_DOSE_LBLS = [f"L{i}" for i in range(5)]
+        _MAX_RES_COMPACT = 8
+        if len(_st_scenarios_from_df) <= _MAX_RES_COMPACT:
+            _res_curve_fig = _plot_stress_truth_curves(
+                _st_scenarios_from_df, _de_t1, _de_t2, _RES_DOSE_LBLS,
+            )
+            st.image(fig_to_png_bytes(_res_curve_fig), use_container_width=True)
+            plt.close(_res_curve_fig)
+        else:
+            _res_sc_labels = [sc[0] for sc in _st_scenarios_from_df]
+            _res_chosen = st.selectbox(
+                "Scenario curves to display",
+                options=["All"] + _res_sc_labels,
+                key="wl_de_st_res_curve_sel",
+                help="Show all scenarios or zoom into one.",
+            )
+            if _res_chosen == "All":
+                _res_subset = _st_scenarios_from_df
+            else:
+                _res_subset = [sc for sc in _st_scenarios_from_df if sc[0] == _res_chosen]
+            _res_curve_fig = _plot_stress_truth_curves(
+                _res_subset, _de_t1, _de_t2, _RES_DOSE_LBLS,
+                title=("" if _res_chosen == "All" else f"Scenario: {_res_chosen}"),
+            )
+            st.image(fig_to_png_bytes(_res_curve_fig), use_container_width=True)
+            plt.close(_res_curve_fig)
 
         st.markdown("#### Metrics by scenario")
         _metric_cols = ["scenario", "quality_score", "pct_correct_selection",
