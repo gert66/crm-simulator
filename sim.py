@@ -1367,8 +1367,8 @@ R_DEFAULTS = {
     "de_st_n_scenarios": 5,
     "de_st_scale_spread": 0.5,
     "de_st_shift_spread": 1.0,
-    "de_st_scale_str":   "0.5, 0.75, 1.0, 1.25, 1.5, 2.0",
-    "de_st_shift_str":   "-1.0, -0.5, 0.0, 0.5, 1.0",
+    "de_st_scale_str":   "",
+    "de_st_shift_str":   "",
     "de_st_n_sim":       200,
     "de_st_seed":        42,
 }
@@ -1463,7 +1463,7 @@ _PRIOR_SCENARIOS: dict = {
 # Single-source-of-truth state management
 # ==============================================================================
 
-_STATE_VERSION = "2026-03-26a"
+_STATE_VERSION = "2026-05-13a"
 
 def init_state() -> None:
     """Seed EVERY canonical config key exactly once per session.
@@ -1981,8 +1981,8 @@ _CFG_DE_DEFAULTS: dict = {
     "de_st_n_scenarios":  5,
     "de_st_scale_spread": 0.5,
     "de_st_shift_spread": 1.0,
-    "de_st_scale_str":    "0.5, 0.75, 1.0, 1.25, 1.5, 2.0",
-    "de_st_shift_str":    "-1.0, -0.5, 0.0, 0.5, 1.0",
+    "de_st_scale_str":    "",
+    "de_st_shift_str":    "",
     "de_st_n_sim":        200,
     "de_st_seed":         42,
 }
