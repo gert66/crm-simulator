@@ -1361,13 +1361,16 @@ R_DEFAULTS = {
     # Playground prior scenario selector
     "prior_scenario":     "Custom",
     # Design Exploration — stress test settings
-    "de_expl_type":    "Design parameter sweep",
-    "de_st_method":    "Scale probabilities",
-    "de_st_mode":      "Both endpoints",
-    "de_st_scale_str": "0.5, 0.75, 1.0, 1.25, 1.5, 2.0",
-    "de_st_shift_str": "-1.0, -0.5, 0.0, 0.5, 1.0",
-    "de_st_n_sim":     200,
-    "de_st_seed":      42,
+    "de_expl_type":      "Design parameter sweep",
+    "de_st_method":      "Scale probabilities",
+    "de_st_mode":        "Both endpoints",
+    "de_st_n_scenarios": 5,
+    "de_st_scale_spread": 0.5,
+    "de_st_shift_spread": 1.0,
+    "de_st_scale_str":   "0.5, 0.75, 1.0, 1.25, 1.5, 2.0",
+    "de_st_shift_str":   "-1.0, -0.5, 0.0, 0.5, 1.0",
+    "de_st_n_sim":       200,
+    "de_st_seed":        42,
 }
 
 TRUE_T1_KEYS  = [f"true_t1_L{i}"  for i in range(5)]
@@ -1943,13 +1946,16 @@ _CFG_DE_KEYS: list[tuple[str, type]] = [
     ("de_n_sim",        int),
     ("de_seed",         int),
     ("de_speed_mode",   bool),
-    ("de_expl_type",    str),
-    ("de_st_method",    str),
-    ("de_st_mode",      str),
-    ("de_st_scale_str", str),
-    ("de_st_shift_str", str),
-    ("de_st_n_sim",     int),
-    ("de_st_seed",      int),
+    ("de_expl_type",       str),
+    ("de_st_method",       str),
+    ("de_st_mode",         str),
+    ("de_st_n_scenarios",  int),
+    ("de_st_scale_spread", float),
+    ("de_st_shift_spread", float),
+    ("de_st_scale_str",    str),
+    ("de_st_shift_str",    str),
+    ("de_st_n_sim",        int),
+    ("de_st_seed",         int),
 ]
 
 # Default values used when a DE key is absent from session state at export time.
@@ -1969,13 +1975,16 @@ _CFG_DE_DEFAULTS: dict = {
     "de_n_sim":       200,
     "de_seed":        42,
     "de_speed_mode":  False,
-    "de_expl_type":    "Design parameter sweep",
-    "de_st_method":    "Scale probabilities",
-    "de_st_mode":      "Both endpoints",
-    "de_st_scale_str": "0.5, 0.75, 1.0, 1.25, 1.5, 2.0",
-    "de_st_shift_str": "-1.0, -0.5, 0.0, 0.5, 1.0",
-    "de_st_n_sim":     200,
-    "de_st_seed":      42,
+    "de_expl_type":       "Design parameter sweep",
+    "de_st_method":       "Scale probabilities",
+    "de_st_mode":         "Both endpoints",
+    "de_st_n_scenarios":  5,
+    "de_st_scale_spread": 0.5,
+    "de_st_shift_spread": 1.0,
+    "de_st_scale_str":    "0.5, 0.75, 1.0, 1.25, 1.5, 2.0",
+    "de_st_shift_str":    "-1.0, -0.5, 0.0, 0.5, 1.0",
+    "de_st_n_sim":        200,
+    "de_st_seed":         42,
 }
 
 _CFG_SCHEMA_VERSION = 1
@@ -4007,6 +4016,28 @@ def _true_optimal(true_t1, true_t2, target1, target2):
 # True-probability stress-test helpers
 # ------------------------------------------------------------------------------
 
+def generate_symmetric_values(center, spread, n, min_value=None, max_value=None):
+    """Generate *n* evenly-spaced values symmetric around *center*.
+
+    Parameters
+    ----------
+    center    : float — midpoint (1.0 for scaling, 0.0 for shifts)
+    spread    : float — half-range; produces [center-spread … center+spread]
+    n         : int   — number of points (odd → centre is exactly *center*)
+    min_value : float | None — optional lower clip bound
+    max_value : float | None — optional upper clip bound
+
+    Returns
+    -------
+    list[float]
+    """
+    values = np.linspace(float(center) - float(spread),
+                         float(center) + float(spread), int(n))
+    lo = -np.inf if min_value is None else float(min_value)
+    hi =  np.inf if max_value is None else float(max_value)
+    return [float(v) for v in np.clip(values, lo, hi)]
+
+
 def make_scaled_truth(true_probs, factor):
     """Return true_probs element-wise multiplied by *factor*, clipped to [0, 1]."""
     return [float(np.clip(p * factor, 0.0, 1.0)) for p in true_probs]
@@ -5647,9 +5678,9 @@ if view == "Design Exploration":
                 key="wl_de_st_method",
                 on_change=_make_sync("de_st_method", str, "wl_de_st_method"),
                 help=(
-                    "**Scale probabilities**: multiply each true toxicity probability by a factor.  \n"
+                    "**Scale probabilities**: multiply each true probability by a factor.  \n"
                     "**Curve shift**: fit a logistic curve and shift it horizontally — "
-                    "positive shift = more toxic (toxicity appears at lower dose levels)."
+                    "positive = more toxic (toxicity appears at lower dose levels)."
                 ),
             )
             st.session_state["de_st_method"] = st.session_state["wl_de_st_method"]
@@ -5664,48 +5695,140 @@ if view == "Design Exploration":
             )
             st.session_state["de_st_mode"] = st.session_state["wl_de_st_mode"]
 
+        # ── Slider-based scenario generation ─────────────────────────────────
+        _st_sl_c1, _st_sl_c2 = st.columns([3, 1])
+        _n_sc_stored = int(get_config_value("de_st_n_scenarios"))
+        _n_sc_stored = _n_sc_stored if _n_sc_stored in [3, 5, 7] else 5
         if _de_st_method == "Scale probabilities":
-            _st_val_label = "Scale factors (comma-separated)"
-            _st_val_default_key = "de_st_scale_str"
-            _st_val_help = "Multipliers applied to the baseline true probabilities.  1.0 = baseline."
-        else:
-            _st_val_label = "Shift amounts (comma-separated)"
-            _st_val_default_key = "de_st_shift_str"
-            _st_val_help = (
-                "Horizontal shift applied to the fitted logistic curve.  "
-                "0.0 = baseline.  Positive = more toxic (curve moves left)."
+            with _st_sl_c1:
+                _spread_val = float(np.clip(get_config_value("de_st_scale_spread"), 0.0, 1.0))
+                st.session_state["wl_de_st_scale_spread"] = _spread_val
+                _de_st_spread = st.slider(
+                    "Scaling spread",
+                    min_value=0.0, max_value=1.0, step=0.05,
+                    key="wl_de_st_scale_spread",
+                    on_change=_make_sync("de_st_scale_spread", float, "wl_de_st_scale_spread"),
+                    help=(
+                        "Half-range around baseline (1.0).  "
+                        "Spread 0.5 → scale factors from 0.5 to 1.5."
+                    ),
+                )
+                st.session_state["de_st_scale_spread"] = float(
+                    st.session_state.get("wl_de_st_scale_spread", _de_st_spread)
+                )
+            with _st_sl_c2:
+                st.session_state["wl_de_st_n_scenarios"] = _n_sc_stored
+                _de_st_n_sc = st.selectbox(
+                    "Scenarios",
+                    options=[3, 5, 7],
+                    key="wl_de_st_n_scenarios",
+                    on_change=_make_sync("de_st_n_scenarios", int, "wl_de_st_n_scenarios"),
+                    help="Number of stress scenarios (always includes the baseline).",
+                )
+                st.session_state["de_st_n_scenarios"] = int(
+                    st.session_state.get("wl_de_st_n_scenarios", _de_st_n_sc)
+                )
+            _de_st_values = generate_symmetric_values(
+                center=1.0, spread=_de_st_spread, n=_de_st_n_sc,
+                min_value=0.05, max_value=2.0,
+            )
+            st.caption(
+                "Generated scale factors: "
+                + ", ".join(f"{v:.2f}" for v in _de_st_values)
+            )
+        else:  # Curve shift
+            with _st_sl_c1:
+                _spread_val = float(np.clip(get_config_value("de_st_shift_spread"), 0.0, 2.0))
+                st.session_state["wl_de_st_shift_spread"] = _spread_val
+                _de_st_spread = st.slider(
+                    "Curve shift spread",
+                    min_value=0.0, max_value=2.0, step=0.1,
+                    key="wl_de_st_shift_spread",
+                    on_change=_make_sync("de_st_shift_spread", float, "wl_de_st_shift_spread"),
+                    help=(
+                        "Half-range around baseline (0.0) in dose levels.  "
+                        "Spread 1.0 → shifts from −1.0 to +1.0.  "
+                        "Positive shift = more toxic."
+                    ),
+                )
+                st.session_state["de_st_shift_spread"] = float(
+                    st.session_state.get("wl_de_st_shift_spread", _de_st_spread)
+                )
+            with _st_sl_c2:
+                st.session_state["wl_de_st_n_scenarios"] = _n_sc_stored
+                _de_st_n_sc = st.selectbox(
+                    "Scenarios",
+                    options=[3, 5, 7],
+                    key="wl_de_st_n_scenarios",
+                    on_change=_make_sync("de_st_n_scenarios", int, "wl_de_st_n_scenarios"),
+                    help="Number of stress scenarios (always includes the baseline).",
+                )
+                st.session_state["de_st_n_scenarios"] = int(
+                    st.session_state.get("wl_de_st_n_scenarios", _de_st_n_sc)
+                )
+            _de_st_values = generate_symmetric_values(
+                center=0.0, spread=_de_st_spread, n=_de_st_n_sc,
+                min_value=-2.0, max_value=2.0,
+            )
+            st.caption(
+                "Generated curve shifts: "
+                + ", ".join(f"{v:.2f}" for v in _de_st_values)
             )
 
-        _st_v_c1, _st_v_c2, _st_v_c3 = st.columns([3, 1, 1])
-        with _st_v_c1:
-            _st_val_raw = st.text_input(
-                _st_val_label,
-                value=str(get_config_value(_st_val_default_key)),
-                key=f"wl_{_st_val_default_key}",
-                help=_st_val_help,
-            )
-            st.session_state[_st_val_default_key] = _st_val_raw
-            try:
-                _de_st_values = [float(v.strip()) for v in _st_val_raw.split(",") if v.strip()]
-            except ValueError:
-                _de_st_values = []
-                st.warning("Could not parse values — enter comma-separated numbers.")
-        with _st_v_c2:
+        # Advanced: custom scenario values (hidden by default)
+        with st.expander("Advanced: custom scenario values", expanded=False):
+            if _de_st_method == "Scale probabilities":
+                _st_custom_raw = st.text_input(
+                    "Custom scale factors (comma-separated)",
+                    value=str(get_config_value("de_st_scale_str")),
+                    key="wl_de_st_scale_str",
+                    help="If non-empty, overrides the slider-generated values.",
+                )
+                st.session_state["de_st_scale_str"] = _st_custom_raw
+            else:
+                _st_custom_raw = st.text_input(
+                    "Custom shift amounts (comma-separated)",
+                    value=str(get_config_value("de_st_shift_str")),
+                    key="wl_de_st_shift_str",
+                    help="If non-empty, overrides the slider-generated values.",
+                )
+                st.session_state["de_st_shift_str"] = _st_custom_raw
+            if _st_custom_raw.strip():
+                try:
+                    _custom_vals = [
+                        float(v.strip()) for v in _st_custom_raw.split(",") if v.strip()
+                    ]
+                    if _custom_vals:
+                        _de_st_values = _custom_vals
+                        st.caption(
+                            "Using custom values: "
+                            + ", ".join(f"{v:.3g}" for v in _de_st_values)
+                        )
+                except ValueError:
+                    st.warning("Could not parse custom values — using slider-generated values.")
+
+        # ── Simulations / seed ────────────────────────────────────────────────
+        _st_sim_c1, _st_sim_c2 = st.columns(2)
+        with _st_sim_c1:
             _de_st_n_sim = st.number_input(
                 "Simulations", min_value=10, max_value=5000,
                 value=int(get_config_value("de_st_n_sim")),
                 step=50, key="wl_de_st_n_sim",
                 on_change=_make_sync("de_st_n_sim", int, "wl_de_st_n_sim"),
             )
-            st.session_state["de_st_n_sim"] = int(st.session_state.get("wl_de_st_n_sim", _de_st_n_sim))
-        with _st_v_c3:
+            st.session_state["de_st_n_sim"] = int(
+                st.session_state.get("wl_de_st_n_sim", _de_st_n_sim)
+            )
+        with _st_sim_c2:
             _de_st_seed = st.number_input(
                 "Seed", min_value=0, max_value=99999,
                 value=int(get_config_value("de_st_seed")),
                 step=1, key="wl_de_st_seed",
                 on_change=_make_sync("de_st_seed", int, "wl_de_st_seed"),
             )
-            st.session_state["de_st_seed"] = int(st.session_state.get("wl_de_st_seed", _de_st_seed))
+            st.session_state["de_st_seed"] = int(
+                st.session_state.get("wl_de_st_seed", _de_st_seed)
+            )
 
         _de_st_run_btn = st.button(
             "Run stress test",
@@ -5714,7 +5837,7 @@ if view == "Design Exploration":
             help="Run TITE-CRM simulations for each stress scenario.",
         )
 
-        # ── Live truth-curve preview ──────────────────────────────────────
+        # ── Live truth-curve preview ──────────────────────────────────────────
         if _de_skel_ok and _de_st_values:
             _prev_sc = build_truth_scenarios(
                 _de_t1, _de_t2,
@@ -5723,9 +5846,8 @@ if view == "Design Exploration":
                 values=_de_st_values,
             )
             _PREV_DOSE_LBLS = [f"L{i}" for i in range(5)]
-            _MAX_SC_COMPACT  = 8
             with st.expander("📈 Truth curve preview", expanded=True):
-                if len(_prev_sc) <= _MAX_SC_COMPACT:
+                if len(_prev_sc) <= 8:
                     _prev_fig = _plot_stress_truth_curves(
                         _prev_sc, _de_t1, _de_t2, _PREV_DOSE_LBLS,
                     )
