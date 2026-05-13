@@ -3185,6 +3185,372 @@ if view == "Playground" and "_tite_results" in st.session_state:
         )
 
 # ==============================================================================
+# CRM dichotomy diagnostic helpers
+# ==============================================================================
+
+def _crm_bimodality(pcrm):
+    """Detect peaks and valleys in CRM selection-probability distribution.
+
+    Returns
+    -------
+    dict with keys:
+      peaks             : list[(dose_idx, prob)] sorted by prob desc
+      valleys           : list[(dose_idx, prob)]
+      second_peak_prob  : float  — probability of 2nd highest peak (0 if <2 peaks)
+      valley_depth      : float  — (p2 − min_between) / p2, 0 if no valley between peaks
+      peak_gap          : int    — |dose_idx_1 − dose_idx_2| for two highest peaks
+    """
+    n = len(pcrm)
+    peaks, valleys = [], []
+    for i in range(n):
+        lv = pcrm[i - 1] if i > 0 else -1.0
+        rv = pcrm[i + 1] if i < n - 1 else -1.0
+        if pcrm[i] >= lv and pcrm[i] >= rv:
+            peaks.append((i, float(pcrm[i])))
+        if i > 0 and i < n - 1 and pcrm[i] <= lv and pcrm[i] <= rv:
+            valleys.append((i, float(pcrm[i])))
+    peaks.sort(key=lambda t: -t[1])
+
+    second_peak_prob = 0.0
+    valley_depth     = 0.0
+    peak_gap         = 0
+    if len(peaks) >= 2:
+        p1_idx = peaks[0][0]
+        p2_idx = peaks[1][0]
+        p2_val = peaks[1][1]
+        second_peak_prob = p2_val
+        peak_gap = abs(p1_idx - p2_idx)
+        lo, hi = sorted([p1_idx, p2_idx])
+        min_between = float(min(pcrm[lo:hi + 1]))
+        valley_depth = (p2_val - min_between) / p2_val if p2_val > 1e-9 else 0.0
+
+    return {
+        "peaks":            peaks,
+        "valleys":          valleys,
+        "second_peak_prob": second_peak_prob,
+        "valley_depth":     valley_depth,
+        "peak_gap":         peak_gap,
+    }
+
+
+def _plot_dichotomy_selection(pcrm, bim, dose_labels_list):
+    """Annotated bar chart of CRM selection probabilities.
+
+    Peaks coloured green, identified valleys red, others orange.
+    """
+    fig, ax = plt.subplots(figsize=(7, 3.0))
+    _apply_dark_fig(fig, ax)
+    x = np.arange(len(pcrm))
+    peak_idxs   = {t[0] for t in bim["peaks"]}
+    valley_idxs = {t[0] for t in bim["valleys"]}
+    colors = [
+        "#44dd88" if i in peak_idxs else "#ff6666" if i in valley_idxs else "#ffaa44"
+        for i in range(len(pcrm))
+    ]
+    ax.bar(x, pcrm, color=colors, width=0.6)
+    for i, p in enumerate(pcrm):
+        if p > 0.005:
+            ax.text(i, p + 0.012, f"{p:.0%}", ha="center", fontsize=8,
+                    color=_DARK_FG, fontweight="bold")
+    ax.set_xticks(x)
+    ax.set_xticklabels(dose_labels_list, fontsize=9)
+    ax.set_ylabel("Selection probability", color=_DARK_FG, fontsize=8)
+    ax.set_ylim(0, min(1.0, max(pcrm) * 1.25 + 0.08))
+    ax.set_title("CRM dose selection", fontsize=9, color=_DARK_FG)
+    ax.tick_params(colors=_DARK_FG, labelsize=8)
+    compact_style(ax)
+    fig.tight_layout(pad=1.0)
+    return fig
+
+
+def _plot_pathway_bars(groups, metric_label, values_by_group, colors_by_group):
+    """Horizontal bar chart comparing a metric across Low/Middle/High pathways."""
+    fig, ax = plt.subplots(figsize=(7, 2.4))
+    _apply_dark_fig(fig, ax)
+    y = np.arange(len(groups))
+    bars = ax.barh(y, values_by_group, color=colors_by_group, height=0.5)
+    ax.set_yticks(y)
+    ax.set_yticklabels(groups, fontsize=8)
+    ax.set_xlabel(metric_label, color=_DARK_FG, fontsize=8)
+    ax.tick_params(colors=_DARK_FG, labelsize=8)
+    for bar, val in zip(bars, values_by_group):
+        if val > 0:
+            ax.text(bar.get_width() + 0.02 * max(values_by_group),
+                    bar.get_y() + bar.get_height() / 2,
+                    f"{val:.2f}", va="center", fontsize=8, color=_DARK_FG)
+    compact_style(ax)
+    fig.tight_layout(pad=1.0)
+    return fig
+
+
+def _quality_score(selected, true_t1, true_t2, target1, target2):
+    """Asymmetric exponential loss: penalises overdose more than underdose."""
+    d1 = float(true_t1[selected]) - float(target1)
+    d2 = float(true_t2[selected]) - float(target2)
+    bd = max(d1, d2)
+    w  = 1.8 if bd > 0 else 1.0
+    return float(np.exp(-6.0 * w * abs(bd)))
+
+
+def _true_optimal(true_t1, true_t2, target1, target2):
+    """Dose with highest quality score under the same asymmetric loss."""
+    scores = [_quality_score(d, true_t1, true_t2, target1, target2)
+              for d in range(len(true_t1))]
+    return int(np.argmax(scores))
+
+
+# ==============================================================================
+# CRM Dichotomy Diagnostic
+# ==============================================================================
+
+if view == "Playground" and "_tite_results" in st.session_state and "sel_crm_per_trial" in st.session_state["_tite_results"]:
+    _dd = st.session_state["_tite_results"]
+    _dd_pcrm  = np.array(_dd["pcrm"])
+    _dd_ns    = int(_dd["ns"])
+    _dd_sel   = np.array(_dd["sel_crm_per_trial"], dtype=int)
+    _dd_ya    = np.array(_dd["yacrm_raw"])
+    _dd_ys    = np.array(_dd["yscrm_raw"])
+    _dd_dur   = np.array(_dd["dur_crm_raw"])
+    _dd_n     = np.array(_dd["n_per_trial_crm"], dtype=int)
+    _dd_ed6   = np.array(_dd["early_dlt1_6"])
+    _dd_ed9   = np.array(_dd["early_dlt1_9"])
+    _dd_ed12  = np.array(_dd["early_dlt1_12"])
+    _dd_nmat  = np.array(_dd["nmat_crm_raw"])          # shape (ns, 5)
+    _dd_dl    = dose_labels                             # ["5×4 Gy", …]
+    _dd_bim   = _crm_bimodality(_dd_pcrm)
+
+    st.markdown("---")
+    st.subheader("CRM Dichotomy Diagnostic")
+    st.caption(
+        "Two peaks can occur when simulated trials split into different paths. "
+        "Some trials see early toxicity and the model selects a lower dose; "
+        "others see little or late toxicity and keep higher doses admissible. "
+        "EWOC may amplify this pattern when the final rule selects the highest "
+        "admissible dose."
+    )
+
+    # ── 1. Bimodality metrics ─────────────────────────────────────────────────
+    _bm_c1, _bm_c2, _bm_c3, _bm_c4 = st.columns(4)
+    _bm_c1.metric(
+        "Peaks detected",
+        str(len(_dd_bim["peaks"])),
+        help="Number of local maxima in the CRM selection-probability distribution.",
+    )
+    _bm_c2.metric(
+        "2nd peak probability",
+        f"{_dd_bim['second_peak_prob']:.1%}",
+        help="Selection probability at the second-largest peak (0 % if only one peak).",
+    )
+    _bm_c3.metric(
+        "Valley depth",
+        f"{_dd_bim['valley_depth']:.1%}",
+        help=(
+            "How deep the dip is between the two highest peaks, relative to the "
+            "smaller peak: (p2 − min_between) / p2.  "
+            "0 % = no valley; 100 % = valley drops to zero."
+        ),
+    )
+    _bm_c4.metric(
+        "Peak gap (dose levels)",
+        str(_dd_bim["peak_gap"]),
+        help="Distance in dose levels between the two highest peaks.",
+    )
+
+    _bm_fig = _plot_dichotomy_selection(_dd_pcrm, _dd_bim, _dd_dl)
+    st.image(fig_to_png_bytes(_bm_fig), use_container_width=False, width=560)
+    plt.close(_bm_fig)
+
+    # ── 2. Trial stratification by final selected MTD ─────────────────────────
+    st.markdown("#### Trial stratification by final selected MTD")
+    _strat_rows = []
+    for _di in range(5):
+        _mask = _dd_sel == _di
+        _cnt  = int(_mask.sum())
+        if _cnt == 0:
+            continue
+        _strat_rows.append({
+            "MTD selected":        _dd_dl[_di],
+            "Trials (n)":          _cnt,
+            "Trials (%)":          f"{100 * _cnt / _dd_ns:.1f}",
+            "Mean tox1 DLTs":      f"{_dd_ya[_mask].mean():.2f}",
+            "Mean tox2 DLTs":      f"{_dd_ys[_mask].mean():.2f}",
+            "Mean N enrolled":     f"{_dd_n[_mask].mean():.1f}",
+            "Mean duration (mo)":  f"{(_dd_dur[_mask].mean() / MONTH):.1f}",
+            "Early tox1 DLTs (6)": f"{_dd_ed6[_mask].mean():.2f}",
+            "Early tox1 DLTs (9)": f"{_dd_ed9[_mask].mean():.2f}",
+            "Early tox1 DLTs(12)": f"{_dd_ed12[_mask].mean():.2f}",
+        })
+    if _strat_rows:
+        st.dataframe(pd.DataFrame(_strat_rows), hide_index=True,
+                     use_container_width=True)
+
+    # ── 3. Low / Middle / High pathway grouping ───────────────────────────────
+    st.markdown("#### Low / Middle / High pathway grouping")
+    st.caption("Low = MTD ≤ L2 (1-indexed) · Middle = L3 · High = MTD ≥ L4")
+    _pw_groups  = ["Low (≤L2)", "Middle (L3)", "High (≥L4)"]
+    _pw_masks   = [_dd_sel <= 1, _dd_sel == 2, _dd_sel >= 3]
+    _pw_colors  = ["#4a9eff", "#ffaa44", "#ff6666"]
+    _pw_rows = []
+    for _pg, _pm in zip(_pw_groups, _pw_masks):
+        _pc = int(_pm.sum())
+        if _pc == 0:
+            _pw_rows.append({"Pathway": _pg, "Trials (n)": 0,
+                             "Trials (%)": "0.0",
+                             "Mean tox1 DLTs": "—",
+                             "Mean early tox1 (6)": "—",
+                             "Mean N enrolled": "—",
+                             "Mean duration (mo)": "—"})
+        else:
+            _pw_rows.append({
+                "Pathway":            _pg,
+                "Trials (n)":         _pc,
+                "Trials (%)":         f"{100 * _pc / _dd_ns:.1f}",
+                "Mean tox1 DLTs":     f"{_dd_ya[_pm].mean():.2f}",
+                "Mean early tox1 (6)": f"{_dd_ed6[_pm].mean():.2f}",
+                "Mean N enrolled":    f"{_dd_n[_pm].mean():.1f}",
+                "Mean duration (mo)": f"{(_dd_dur[_pm].mean() / MONTH):.1f}",
+            })
+    st.dataframe(pd.DataFrame(_pw_rows), hide_index=True, use_container_width=True)
+
+    _pw_counts = [int(m.sum()) for m in _pw_masks]
+    _pw_fig = _plot_pathway_bars(
+        _pw_groups, "Mean early tox1 DLTs (first 6 patients)",
+        [(_dd_ed6[m].mean() if m.sum() > 0 else 0.0) for m in _pw_masks],
+        _pw_colors,
+    )
+    st.image(fig_to_png_bytes(_pw_fig), use_container_width=False, width=560)
+    plt.close(_pw_fig)
+
+    # ── 4. EWOC sensitivity check ─────────────────────────────────────────────
+    st.markdown("#### EWOC sensitivity check")
+    _ewoc_btn = st.button(
+        "Compare EWOC ON vs OFF for this scenario",
+        key="pg_ewoc_compare_btn",
+        help=(
+            "Reruns the same CRM scenario with EWOC ON (current α) and EWOC OFF. "
+            "All other settings stay fixed."
+        ),
+    )
+    if _ewoc_btn or "_ewoc_compare" in st.session_state:
+        if _ewoc_btn:
+            _ew_ns    = min(int(_cfg("n_sims")), 500)   # cap at 500 for speed
+            _ew_seed  = int(_cfg("seed")) + 9999
+            _ew_t1    = list(true_t1)
+            _ew_t2    = list(true_t2)
+            _ew_base  = dict(
+                target_tox1=float(get_config_value("target_t1")),
+                target_tox2=float(get_config_value("target_t2")),
+                p_surgery=float(_cfg("p_surgery")),
+                sigma=float(_cfg("sigma")),
+                ewoc_on=True,
+                ewoc_alpha=float(_cfg("ewoc_alpha")),
+                max_n=int(_cfg("max_n_crm")),
+                cohort_size=int(_cfg("cohort_size")),
+                start_level=int(_cfg("start_level_1b")) - 1,
+                accrual_per_month=float(_cfg("accrual_per_month")),
+                incl_to_rt=int(_cfg("incl_to_rt")),
+                rt_dur=int(_cfg("rt_dur")),
+                rt_to_surg=int(_cfg("rt_to_surg")),
+                tox1_win=int(_cfg("rt_dur")) + int(_cfg("rt_to_surg")),
+                tox2_win=int(_cfg("tox2_win")),
+                max_step=int(_cfg("max_step")),
+                gh_n=int(_cfg("gh_n")),
+                burn_in=bool(_cfg("burn_in")),
+                enforce_guardrail=bool(_cfg("enforce_guardrail")),
+                restrict_final_to_tried=bool(_cfg("restrict_final_mtd")),
+                n_safe_d1=int(_cfg("n_safe_d1")),
+                p_stop=1.0,
+            )
+            _ew_skel1 = list(skel_t1)
+            _ew_skel2 = list(skel_t2)
+            _ew_target1 = float(get_config_value("target_t1"))
+            _ew_target2 = float(get_config_value("target_t2"))
+            _ew_optimal = _true_optimal(
+                np.array(_ew_t1), np.array(_ew_t2), _ew_target1, _ew_target2
+            )
+
+            def _run_ewoc_arm(ewoc_on_flag, arm_seed):
+                rng = np.random.default_rng(arm_seed)
+                sel_counts = np.zeros(5, dtype=int)
+                qs_list, od_list, th_list = [], [], []
+                kw = dict(_ew_base)
+                kw["ewoc_on"] = ewoc_on_flag
+                for _ in range(_ew_ns):
+                    _s, *_ = run_tite_crm(
+                        true_t1=np.array(_ew_t1), true_t2=np.array(_ew_t2),
+                        skel1=_ew_skel1, skel2=_ew_skel2,
+                        rng=rng, collect_trace=False, **kw,
+                    )
+                    sel_counts[_s] += 1
+                    qs_list.append(_quality_score(_s, np.array(_ew_t1), np.array(_ew_t2),
+                                                  _ew_target1, _ew_target2))
+                    od_list.append(int(max(float(_ew_t1[_s]) - _ew_target1,
+                                          float(_ew_t2[_s]) - _ew_target2) > 0))
+                    th_list.append(int(_s > _ew_optimal))
+                psel = sel_counts / _ew_ns
+                bim  = _crm_bimodality(psel)
+                return {
+                    "psel": psel,
+                    "bim":  bim,
+                    "quality_score":      float(np.mean(qs_list)),
+                    "pct_correct":        100.0 * sel_counts[_ew_optimal] / _ew_ns,
+                    "overdose_rate":      100.0 * float(np.mean(od_list)),
+                    "too_high_rate":      100.0 * float(np.mean(th_list)),
+                }
+
+            with st.spinner(f"Running EWOC ON vs OFF ({_ew_ns} sims each)…"):
+                _ew_on  = _run_ewoc_arm(True,  _ew_seed)
+                _ew_off = _run_ewoc_arm(False, _ew_seed + 1)
+            st.session_state["_ewoc_compare"] = {
+                "on": _ew_on, "off": _ew_off,
+                "alpha": float(_cfg("ewoc_alpha")),
+                "ns": _ew_ns,
+            }
+
+        if "_ewoc_compare" in st.session_state:
+            _ec   = st.session_state["_ewoc_compare"]
+            _ec_on  = _ec["on"]
+            _ec_off = _ec["off"]
+            _ec_alpha = _ec["alpha"]
+            _ec_ns    = _ec["ns"]
+
+            st.caption(
+                f"Each arm: {_ec_ns} simulations · EWOC ON uses α = {_ec_alpha:.2f}"
+            )
+
+            # Side-by-side metrics
+            _ew_mc1, _ew_mc2 = st.columns(2)
+            with _ew_mc1:
+                st.markdown(f"**EWOC ON (α = {_ec_alpha:.2f})**")
+                st.metric("Quality score",      f"{_ec_on['quality_score']:.3f}")
+                st.metric("Correct selection",  f"{_ec_on['pct_correct']:.1f}%")
+                st.metric("Overdose rate",      f"{_ec_on['overdose_rate']:.1f}%")
+                st.metric("Too-high selection", f"{_ec_on['too_high_rate']:.1f}%")
+                st.metric("2nd peak prob",      f"{_ec_on['bim']['second_peak_prob']:.1%}")
+                st.metric("Valley depth",       f"{_ec_on['bim']['valley_depth']:.1%}")
+            with _ew_mc2:
+                st.markdown("**EWOC OFF**")
+                st.metric("Quality score",      f"{_ec_off['quality_score']:.3f}")
+                st.metric("Correct selection",  f"{_ec_off['pct_correct']:.1f}%")
+                st.metric("Overdose rate",      f"{_ec_off['overdose_rate']:.1f}%")
+                st.metric("Too-high selection", f"{_ec_off['too_high_rate']:.1f}%")
+                st.metric("2nd peak prob",      f"{_ec_off['bim']['second_peak_prob']:.1%}")
+                st.metric("Valley depth",       f"{_ec_off['bim']['valley_depth']:.1%}")
+
+            # Side-by-side selection charts
+            _ew_fc1, _ew_fc2 = st.columns(2)
+            with _ew_fc1:
+                _ew_fig_on = _plot_dichotomy_selection(
+                    _ec_on["psel"], _ec_on["bim"], _dd_dl)
+                st.image(fig_to_png_bytes(_ew_fig_on), use_container_width=True)
+                plt.close(_ew_fig_on)
+            with _ew_fc2:
+                _ew_fig_off = _plot_dichotomy_selection(
+                    _ec_off["psel"], _ec_off["bim"], _dd_dl)
+                st.image(fig_to_png_bytes(_ew_fig_off), use_container_width=True)
+                plt.close(_ew_fig_off)
+
+# ==============================================================================
 # CRM sample-size distribution histogram
 # ==============================================================================
 
