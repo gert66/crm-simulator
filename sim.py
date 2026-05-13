@@ -1375,18 +1375,22 @@ R_DEFAULTS = {
 
 TRUE_T1_KEYS  = [f"true_t1_L{i}"  for i in range(5)]
 TRUE_T2_KEYS  = [f"true_t2_L{i}"  for i in range(5)]
+# Widget-layer keys for the true-tox number_inputs (wl_ prefix = never canonical)
+WL_TRUE_T1_KEYS = [f"wl_true_t1_L{i}" for i in range(5)]
+WL_TRUE_T2_KEYS = [f"wl_true_t2_L{i}" for i in range(5)]
 
 # Single merged defaults registry — the ONE source of all default values.
-# true_t1/t2 are intentionally EXCLUDED: those number_input widgets supply
-# value=DEFAULT_TRUE_T* so Streamlit seeds session_state on first render.
-# Pre-seeding them here via init_state() causes Streamlit ≥1.31 to reset
-# the displayed value to min_value (0.0) instead of the intended default.
+# true_t1/t2 ARE included here so init_state() seeds the canonical keys and
+# navigation no longer resets them.  Widgets use WL_TRUE_T*_KEYS (wl_ prefix)
+# as their key= argument so there is no Streamlit ≥1.31 session_state + value=
+# conflict.  Pre-writes read from the canonical keys; value= is not used.
 _ALL_DEFAULTS: dict = {
     **R_DEFAULTS,
+    **{TRUE_T1_KEYS[i]: DEFAULT_TRUE_T1[i] for i in range(5)},
+    **{TRUE_T2_KEYS[i]: DEFAULT_TRUE_T2[i] for i in range(5)},
 }
 
-# Separate read-only fallback for true-tox keys, used only by get_config_value
-# so Design Exploration works even before Playground has been visited once.
+# Kept for backward-compatibility (get_config_value fallback chain).
 _TRUE_DEFAULTS: dict = {
     **{TRUE_T1_KEYS[i]: DEFAULT_TRUE_T1[i] for i in range(5)},
     **{TRUE_T2_KEYS[i]: DEFAULT_TRUE_T2[i] for i in range(5)},
@@ -1463,7 +1467,7 @@ _PRIOR_SCENARIOS: dict = {
 # Single-source-of-truth state management
 # ==============================================================================
 
-_STATE_VERSION = "2026-05-13a"
+_STATE_VERSION = "2026-05-13b"
 
 def init_state() -> None:
     """Seed EVERY canonical config key exactly once per session.
@@ -1689,7 +1693,7 @@ def _make_sync(canonical_key: str, type_fn, wl_key: str):
     """Return an on_change callback that commits wl_key → canonical_key."""
     def _cb():
         st.session_state[canonical_key] = type_fn(
-            st.session_state.get(wl_key, R_DEFAULTS[canonical_key])
+            st.session_state.get(wl_key, _ALL_DEFAULTS.get(canonical_key))
         )
     _cb.__name__ = f"_sync_{canonical_key}"
     return _cb
@@ -1733,6 +1737,12 @@ _sync_s6_stop_min = _make_sync("s6_stop_min", int, "wl_s6_stop_min")
 _sync_s9_esc_max  = _make_sync("s9_esc_max",  int, "wl_s9_esc_max")
 _sync_s9_stop_min = _make_sync("s9_stop_min", int, "wl_s9_stop_min")
 _sync_prior_scenario = _make_sync("prior_scenario", str, "wl_prior_scenario")
+# Playground true-tox probabilities
+_sync_true_t1 = [_make_sync(TRUE_T1_KEYS[i], float, WL_TRUE_T1_KEYS[i]) for i in range(5)]
+_sync_true_t2 = [_make_sync(TRUE_T2_KEYS[i], float, WL_TRUE_T2_KEYS[i]) for i in range(5)]
+# Playground skeleton model and prior endpoint tab
+_sync_prior_model   = _make_sync("prior_model",   str, "wl_prior_model")
+_sync_prior_ep_tab  = _make_sync("prior_ep_tab",  str, "wl_prior_ep_tab")
 
 
 def _apply_prior_scenario() -> None:
@@ -2633,26 +2643,28 @@ elif view == "Playground":
                     f"<div style='font-size:0.83rem;padding-top:0.25rem;'>L{i} {lab}</div>",
                     unsafe_allow_html=True)
             with rT1:
-                # value= seeds session_state on first render (safe because
-                # TRUE_T1_KEYS are NOT pre-seeded by init_state()).
+                st.session_state[WL_TRUE_T1_KEYS[i]] = float(_cfg(TRUE_T1_KEYS[i]))
                 v1 = st.number_input(
                     f"T1 L{i}",
                     min_value=0.0, max_value=1.0, step=0.01,
-                    value=DEFAULT_TRUE_T1[i],
-                    key=TRUE_T1_KEYS[i],
+                    key=WL_TRUE_T1_KEYS[i],
+                    on_change=_sync_true_t1[i],
                     label_visibility="collapsed",
                     help=f"True probability of acute toxicity at dose L{i}.",
                 )
+                st.session_state[TRUE_T1_KEYS[i]] = float(st.session_state[WL_TRUE_T1_KEYS[i]])
                 true_t1.append(float(v1))
             with rT2:
+                st.session_state[WL_TRUE_T2_KEYS[i]] = float(_cfg(TRUE_T2_KEYS[i]))
                 v2 = st.number_input(
                     f"T2 L{i}",
                     min_value=0.0, max_value=1.0, step=0.01,
-                    value=DEFAULT_TRUE_T2[i],
-                    key=TRUE_T2_KEYS[i],
+                    key=WL_TRUE_T2_KEYS[i],
+                    on_change=_sync_true_t2[i],
                     label_visibility="collapsed",
                     help=f"True probability of subacute toxicity given surgery at L{i}.",
                 )
+                st.session_state[TRUE_T2_KEYS[i]] = float(st.session_state[WL_TRUE_T2_KEYS[i]])
                 true_t2.append(float(v2))
 
         target_t1_val = float(_cfg("target_t1"))
@@ -2671,12 +2683,15 @@ elif view == "Playground":
         st.markdown("#### Priors")
 
         # ── Skeleton model ────────────────────────────────────────────────
+        st.session_state["wl_prior_model"] = str(_cfg("prior_model"))
         st.radio(
             "Skeleton model",
             options=["empiric", "logistic"],
-            horizontal=True, key="prior_model",
+            horizontal=True, key="wl_prior_model",
+            on_change=_sync_prior_model,
             help=h("prior_model", "Skeleton generation method, shared for both endpoints.")
         )
+        st.session_state["prior_model"] = str(st.session_state["wl_prior_model"])
         prior_model_val = str(_cfg("prior_model"))
         intcpt_val      = float(_cfg("logistic_intcpt"))
 
@@ -2703,12 +2718,15 @@ elif view == "Playground":
         # ── Scenario content ──────────────────────────────────────────────
         if _scen_val == "Custom":
             # Show the Endpoint tab and raw editable sliders
+            st.session_state["wl_prior_ep_tab"] = str(_cfg("prior_ep_tab"))
             ep_tab = st.radio(
                 "Endpoint",
                 options=["Tox1 (acute)", "Tox2 (subacute | surgery)"],
-                horizontal=True, key="prior_ep_tab",
+                horizontal=True, key="wl_prior_ep_tab",
+                on_change=_sync_prior_ep_tab,
                 help="Switch between tox1 and tox2 prior parameter sets.",
             )
+            st.session_state["prior_ep_tab"] = str(st.session_state["wl_prior_ep_tab"])
 
             if ep_tab == "Tox1 (acute)":
                 # ── Prior target ──────────────────────────────────────────
@@ -6173,21 +6191,25 @@ if view == "Design Exploration":
         # Advanced: custom scenario values (hidden by default)
         with st.expander("Advanced: custom scenario values", expanded=False):
             if _de_st_method == "Scale probabilities":
+                st.session_state["wl_de_st_scale_str"] = str(_cfg("de_st_scale_str"))
                 _st_custom_raw = st.text_input(
                     "Custom scale factors (comma-separated)",
-                    value=str(get_config_value("de_st_scale_str")),
                     key="wl_de_st_scale_str",
                     help="If non-empty, overrides the slider-generated values.",
                 )
-                st.session_state["de_st_scale_str"] = _st_custom_raw
+                st.session_state["de_st_scale_str"] = str(
+                    st.session_state.get("wl_de_st_scale_str", "")
+                )
             else:
+                st.session_state["wl_de_st_shift_str"] = str(_cfg("de_st_shift_str"))
                 _st_custom_raw = st.text_input(
                     "Custom shift amounts (comma-separated)",
-                    value=str(get_config_value("de_st_shift_str")),
                     key="wl_de_st_shift_str",
                     help="If non-empty, overrides the slider-generated values.",
                 )
-                st.session_state["de_st_shift_str"] = _st_custom_raw
+                st.session_state["de_st_shift_str"] = str(
+                    st.session_state.get("wl_de_st_shift_str", "")
+                )
             if _st_custom_raw.strip():
                 try:
                     _custom_vals = [
@@ -6233,9 +6255,9 @@ if view == "Design Exploration":
         # ── Simulations / seed ────────────────────────────────────────────────
         _st_sim_c1, _st_sim_c2 = st.columns(2)
         with _st_sim_c1:
+            st.session_state["wl_de_st_n_sim"] = int(_cfg("de_st_n_sim"))
             _de_st_n_sim = st.number_input(
                 "Simulations", min_value=10, max_value=5000,
-                value=int(get_config_value("de_st_n_sim")),
                 step=50, key="wl_de_st_n_sim",
                 on_change=_make_sync("de_st_n_sim", int, "wl_de_st_n_sim"),
             )
@@ -6243,9 +6265,9 @@ if view == "Design Exploration":
                 st.session_state.get("wl_de_st_n_sim", _de_st_n_sim)
             )
         with _st_sim_c2:
+            st.session_state["wl_de_st_seed"] = int(_cfg("de_st_seed"))
             _de_st_seed = st.number_input(
                 "Seed", min_value=0, max_value=99999,
-                value=int(get_config_value("de_st_seed")),
                 step=1, key="wl_de_st_seed",
                 on_change=_make_sync("de_st_seed", int, "wl_de_st_seed"),
             )
