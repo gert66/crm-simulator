@@ -4044,33 +4044,41 @@ def make_scaled_truth(true_probs, factor):
 
 
 def fit_logistic_curve(dose_indices, true_probs):
-    """Fit p(x) = 1 / (1 + exp(-(a + b*x))) to *true_probs* at *dose_indices*.
+    """Fit logistic(a + b*x) to *true_probs*, returning (a, b).
 
-    Returns (a, b) via least-squares on the logit scale.  Probabilities are
-    clipped to (eps, 1-eps) before taking logit to avoid +-inf.
+    Enforces monotonicity with np.maximum.accumulate before fitting.
+    Uses np.polyfit on the logit scale.  Clamps slope b to a minimum
+    of 1e-3 so the fitted curve stays non-decreasing.
     """
-    eps = 1e-6
+    eps = 1e-5
     x = np.asarray(dose_indices, dtype=float)
     y = np.asarray(true_probs, dtype=float)
+    y = np.maximum.accumulate(y)          # enforce monotone non-decreasing
     y = np.clip(y, eps, 1.0 - eps)
     logit_y = np.log(y / (1.0 - y))
-    X = np.column_stack([np.ones_like(x), x])
-    result = np.linalg.lstsq(X, logit_y, rcond=None)
-    a, b = float(result[0][0]), float(result[0][1])
-    return a, b
+    b, a = np.polyfit(x, logit_y, 1)     # returns [slope, intercept]
+    b = max(float(b), 1e-3)              # guard against non-positive slope
+    return float(a), float(b)
 
 
 def make_shifted_truth(true_probs, shift):
     """Return shifted true-probability curve via logistic horizontal shift.
 
-    Fits p(x) = logistic(a + b*x) then evaluates p_shifted(x) = logistic(a + b*(x+shift)).
-    A positive *shift* moves the curve left (more toxic at lower doses).
-    Probabilities are clipped to [0, 1].
+    Fits logistic(a + b*x) to the (monotone-enforced) baseline, then
+    evaluates the fitted curve at x + shift for each dose level x.
+
+    shift > 0 → more toxic (curve moves left; same toxicity at lower dose).
+    shift < 0 → less toxic (curve moves right).
+    shift == 0 → returns the original probabilities unchanged.
+
+    Output clipped to [1e-6, 0.95].
     """
-    dose_idx = list(range(len(true_probs)))
+    if shift == 0.0:
+        return list(true_probs)
+    dose_idx = np.arange(len(true_probs), dtype=float)
     a, b = fit_logistic_curve(dose_idx, true_probs)
-    shifted = [1.0 / (1.0 + np.exp(-(a + b * (x + shift)))) for x in dose_idx]
-    return [float(np.clip(v, 0.0, 1.0)) for v in shifted]
+    shifted = [1.0 / (1.0 + np.exp(-(a + b * (x + float(shift))))) for x in dose_idx]
+    return [float(np.clip(v, 1e-6, 0.95)) for v in shifted]
 
 
 def build_truth_scenarios(true_t1, true_t2, method, mode, values):
@@ -4990,11 +4998,11 @@ def _plot_stress_truth_curves(scenarios, baseline_t1, baseline_t2,
     _SC_COLORS = ["#4a9eff", "#44dd88", "#ffaa44", "#ff6666", "#cc66ff",
                   "#ff99cc", "#aaddff", "#ccff99", "#ffdd88", "#88ffee"]
 
-    # Baseline dashed — label here drives the legend entry
-    ax1.plot(x, list(baseline_t1), color="#888888", linestyle="--",
-             linewidth=1.5, marker="o", markersize=4, label="Baseline", zorder=5)
-    ax2.plot(x, list(baseline_t2), color="#888888", linestyle="--",
-             linewidth=1.5, marker="o", markersize=4, label="Baseline", zorder=5)
+    # Baseline dashed — thicker so it reads clearly against the scenario lines
+    ax1.plot(x, list(baseline_t1), color="#aaaaaa", linestyle="--",
+             linewidth=2.5, marker="o", markersize=5, label="Baseline", zorder=5)
+    ax2.plot(x, list(baseline_t2), color="#aaaaaa", linestyle="--",
+             linewidth=2.5, marker="o", markersize=5, label="Baseline", zorder=5)
 
     for si, (label, t1, t2) in enumerate(scenarios):
         c = _SC_COLORS[si % len(_SC_COLORS)]
@@ -5807,6 +5815,34 @@ if view == "Design Exploration":
                 except ValueError:
                     st.warning("Could not parse custom values — using slider-generated values.")
 
+            # Debug: horizontal shift verification (curve shift only)
+            if _de_st_method == "Curve shift":
+                st.markdown("**Horizontal shift check** — shift = +1.0")
+                st.caption(
+                    "Shifted L_i should equal baseline fitted L_{i+1}.  "
+                    "Small deviations are expected due to linear logit approximation."
+                )
+                _dbx = np.arange(5, dtype=float)
+                _db_a1, _db_b1 = fit_logistic_curve(_dbx, _de_t1)
+                _db_a2, _db_b2 = fit_logistic_curve(_dbx, _de_t2)
+                _db_sh_t1 = make_shifted_truth(_de_t1, 1.0)
+                _db_sh_t2 = make_shifted_truth(_de_t2, 1.0)
+                _db_rows = []
+                for _li in range(4):
+                    _db_fit_t1 = float(1.0 / (1.0 + np.exp(-(_db_a1 + _db_b1 * (_li + 1)))))
+                    _db_fit_t2 = float(1.0 / (1.0 + np.exp(-(_db_a2 + _db_b2 * (_li + 1)))))
+                    _db_rows.append({
+                        "Dose": f"L{_li}",
+                        "Shifted T1": f"{_db_sh_t1[_li]:.4f}",
+                        "Fitted base T1 (L+1)": f"{_db_fit_t1:.4f}",
+                        "T1 ✓": "✓" if abs(_db_sh_t1[_li] - _db_fit_t1) < 0.02 else "≈",
+                        "Shifted T2": f"{_db_sh_t2[_li]:.4f}",
+                        "Fitted base T2 (L+1)": f"{_db_fit_t2:.4f}",
+                        "T2 ✓": "✓" if abs(_db_sh_t2[_li] - _db_fit_t2) < 0.02 else "≈",
+                    })
+                st.dataframe(pd.DataFrame(_db_rows), hide_index=True,
+                             use_container_width=True)
+
         # ── Simulations / seed ────────────────────────────────────────────────
         _st_sim_c1, _st_sim_c2 = st.columns(2)
         with _st_sim_c1:
@@ -5868,6 +5904,12 @@ if view == "Design Exploration":
                     )
                     st.image(fig_to_png_bytes(_prev_fig), use_container_width=True)
                     plt.close(_prev_fig)
+                if _de_st_method == "Curve shift":
+                    st.caption(
+                        "Positive shift = more toxic: the baseline curve moves left, "
+                        "so the same toxicity probability appears at a lower dose level.  "
+                        "Negative shift = less toxic: the curve moves right."
+                    )
 
     # ── Execute sweep ─────────────────────────────────────────────────────
     if _de_run_btn and _de_skel_ok and len(_de_pv_eff) > 0:
