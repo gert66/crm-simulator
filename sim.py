@@ -3438,15 +3438,13 @@ if view == "Playground" and "_tite_results" in st.session_state and "sel_crm_per
             _ew_t1    = list(true_t1)
             _ew_t2    = list(true_t2)
             _ew_base  = dict(
-                target_tox1=float(get_config_value("target_t1")),
-                target_tox2=float(get_config_value("target_t2")),
                 p_surgery=float(_cfg("p_surgery")),
+                target1=float(get_config_value("target_t1")),
+                target2=float(get_config_value("target_t2")),
                 sigma=float(_cfg("sigma")),
-                ewoc_on=True,
-                ewoc_alpha=float(_cfg("ewoc_alpha")),
+                start_level=int(_cfg("start_level_1b")) - 1,
                 max_n=int(_cfg("max_n_crm")),
                 cohort_size=int(_cfg("cohort_size")),
-                start_level=int(_cfg("start_level_1b")) - 1,
                 accrual_per_month=float(_cfg("accrual_per_month")),
                 incl_to_rt=int(_cfg("incl_to_rt")),
                 rt_dur=int(_cfg("rt_dur")),
@@ -3473,13 +3471,21 @@ if view == "Playground" and "_tite_results" in st.session_state and "sel_crm_per
                 rng = np.random.default_rng(arm_seed)
                 sel_counts = np.zeros(5, dtype=int)
                 qs_list, od_list, th_list = [], [], []
-                kw = dict(_ew_base)
-                kw["ewoc_on"] = ewoc_on_flag
+                base_kw = dict(_ew_base)
+                for _dup in ("true_t1", "true_t2", "skel1", "skel2", "rng",
+                              "collect_trace", "ewoc_on", "ewoc_alpha"):
+                    base_kw.pop(_dup, None)
                 for _ in range(_ew_ns):
                     _s, *_ = run_tite_crm(
-                        true_t1=np.array(_ew_t1), true_t2=np.array(_ew_t2),
-                        skel1=_ew_skel1, skel2=_ew_skel2,
-                        rng=rng, collect_trace=False, **kw,
+                        true_t1=np.asarray(_ew_t1, dtype=float),
+                        true_t2=np.asarray(_ew_t2, dtype=float),
+                        skel1=np.asarray(_ew_skel1, dtype=float),
+                        skel2=np.asarray(_ew_skel2, dtype=float),
+                        ewoc_on=ewoc_on_flag,
+                        ewoc_alpha=float(_cfg("ewoc_alpha")),
+                        rng=rng,
+                        collect_trace=False,
+                        **base_kw,
                     )
                     sel_counts[_s] += 1
                     qs_list.append(_quality_score(_s, np.array(_ew_t1), np.array(_ew_t2),
