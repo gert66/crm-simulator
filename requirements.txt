@@ -1,3 +1,9 @@
 streamlit>=1.31
 numpy
 matplotlib
+plotly
+streamlit
+requests
+pandas
+openpyxl
+xlsxwriter
