@@ -1360,22 +1360,37 @@ R_DEFAULTS = {
     "prior_ep_tab":       "Tox1 (acute)",
     # Playground prior scenario selector
     "prior_scenario":     "Custom",
+    # Design Exploration — stress test settings
+    "de_expl_type":      "Design parameter sweep",
+    "de_st_method":      "Scale probabilities",
+    "de_st_mode":        "Both endpoints",
+    "de_st_n_scenarios": 5,
+    "de_st_scale_spread": 0.5,
+    "de_st_shift_spread": 1.0,
+    "de_st_scale_str":   "",
+    "de_st_shift_str":   "",
+    "de_st_n_sim":       200,
+    "de_st_seed":        42,
 }
 
 TRUE_T1_KEYS  = [f"true_t1_L{i}"  for i in range(5)]
 TRUE_T2_KEYS  = [f"true_t2_L{i}"  for i in range(5)]
+# Widget-layer keys for the true-tox number_inputs (wl_ prefix = never canonical)
+WL_TRUE_T1_KEYS = [f"wl_true_t1_L{i}" for i in range(5)]
+WL_TRUE_T2_KEYS = [f"wl_true_t2_L{i}" for i in range(5)]
 
 # Single merged defaults registry — the ONE source of all default values.
-# true_t1/t2 are intentionally EXCLUDED: those number_input widgets supply
-# value=DEFAULT_TRUE_T* so Streamlit seeds session_state on first render.
-# Pre-seeding them here via init_state() causes Streamlit ≥1.31 to reset
-# the displayed value to min_value (0.0) instead of the intended default.
+# true_t1/t2 ARE included here so init_state() seeds the canonical keys and
+# navigation no longer resets them.  Widgets use WL_TRUE_T*_KEYS (wl_ prefix)
+# as their key= argument so there is no Streamlit ≥1.31 session_state + value=
+# conflict.  Pre-writes read from the canonical keys; value= is not used.
 _ALL_DEFAULTS: dict = {
     **R_DEFAULTS,
+    **{TRUE_T1_KEYS[i]: DEFAULT_TRUE_T1[i] for i in range(5)},
+    **{TRUE_T2_KEYS[i]: DEFAULT_TRUE_T2[i] for i in range(5)},
 }
 
-# Separate read-only fallback for true-tox keys, used only by get_config_value
-# so Design Exploration works even before Playground has been visited once.
+# Kept for backward-compatibility (get_config_value fallback chain).
 _TRUE_DEFAULTS: dict = {
     **{TRUE_T1_KEYS[i]: DEFAULT_TRUE_T1[i] for i in range(5)},
     **{TRUE_T2_KEYS[i]: DEFAULT_TRUE_T2[i] for i in range(5)},
@@ -1452,7 +1467,7 @@ _PRIOR_SCENARIOS: dict = {
 # Single-source-of-truth state management
 # ==============================================================================
 
-_STATE_VERSION = "2026-03-26a"
+_STATE_VERSION = "2026-05-13b"
 
 def init_state() -> None:
     """Seed EVERY canonical config key exactly once per session.
@@ -1678,7 +1693,7 @@ def _make_sync(canonical_key: str, type_fn, wl_key: str):
     """Return an on_change callback that commits wl_key → canonical_key."""
     def _cb():
         st.session_state[canonical_key] = type_fn(
-            st.session_state.get(wl_key, R_DEFAULTS[canonical_key])
+            st.session_state.get(wl_key, _ALL_DEFAULTS.get(canonical_key))
         )
     _cb.__name__ = f"_sync_{canonical_key}"
     return _cb
@@ -1722,6 +1737,12 @@ _sync_s6_stop_min = _make_sync("s6_stop_min", int, "wl_s6_stop_min")
 _sync_s9_esc_max  = _make_sync("s9_esc_max",  int, "wl_s9_esc_max")
 _sync_s9_stop_min = _make_sync("s9_stop_min", int, "wl_s9_stop_min")
 _sync_prior_scenario = _make_sync("prior_scenario", str, "wl_prior_scenario")
+# Playground true-tox probabilities
+_sync_true_t1 = [_make_sync(TRUE_T1_KEYS[i], float, WL_TRUE_T1_KEYS[i]) for i in range(5)]
+_sync_true_t2 = [_make_sync(TRUE_T2_KEYS[i], float, WL_TRUE_T2_KEYS[i]) for i in range(5)]
+# Playground skeleton model and prior endpoint tab
+_sync_prior_model   = _make_sync("prior_model",   str, "wl_prior_model")
+_sync_prior_ep_tab  = _make_sync("prior_ep_tab",  str, "wl_prior_ep_tab")
 # Playground widget sync callbacks — mirror the Essentials wl_/canonical pattern so
 # that navigating away from Playground and returning preserves user-entered values.
 # Streamlit ≥1.28 deletes widget-backed session_state keys when their widgets are
@@ -1958,6 +1979,16 @@ _CFG_DE_KEYS: list[tuple[str, type]] = [
     ("de_n_sim",        int),
     ("de_seed",         int),
     ("de_speed_mode",   bool),
+    ("de_expl_type",       str),
+    ("de_st_method",       str),
+    ("de_st_mode",         str),
+    ("de_st_n_scenarios",  int),
+    ("de_st_scale_spread", float),
+    ("de_st_shift_spread", float),
+    ("de_st_scale_str",    str),
+    ("de_st_shift_str",    str),
+    ("de_st_n_sim",        int),
+    ("de_st_seed",         int),
 ]
 
 # Default values used when a DE key is absent from session state at export time.
@@ -1977,6 +2008,16 @@ _CFG_DE_DEFAULTS: dict = {
     "de_n_sim":       200,
     "de_seed":        42,
     "de_speed_mode":  False,
+    "de_expl_type":       "Design parameter sweep",
+    "de_st_method":       "Scale probabilities",
+    "de_st_mode":         "Both endpoints",
+    "de_st_n_scenarios":  5,
+    "de_st_scale_spread": 0.5,
+    "de_st_shift_spread": 1.0,
+    "de_st_scale_str":    "",
+    "de_st_shift_str":    "",
+    "de_st_n_sim":        200,
+    "de_st_seed":         42,
 }
 
 _CFG_SCHEMA_VERSION = 1
@@ -2931,6 +2972,10 @@ elif view == "Playground":
         nbridg  = np.zeros(ns, dtype=int)
         early_stop_crm  = np.zeros(ns, dtype=bool)
         n_at_stop_crm   = np.zeros(ns, dtype=int)
+        sel_crm_per_trial = np.zeros(ns, dtype=int)
+        early_dlt1_6  = np.zeros(ns)
+        early_dlt1_9  = np.zeros(ns)
+        early_dlt1_12 = np.zeros(ns)
 
         # tox1_win is derived: extends from RT start all the way to surgery
         # = RT duration + (RT end → surgery) — no separate UI input needed
@@ -3021,6 +3066,7 @@ elif view == "Playground":
                     "restrict_final_mtd": bool(_cfg("restrict_final_mtd")),
                 }
             sel_crm[selc] += 1
+            sel_crm_per_trial[s] = selc
             for p in ptsc:
                 nmat_crm[s, p["dose"]]  += 1
                 nsurg_crm[s, p["dose"]] += int(p["has_surgery"])
@@ -3028,6 +3074,8 @@ elif view == "Playground":
                 yscrm[s]  += int(p["has_tox2"])
                 nscrm[s]  += int(p["has_surgery"])
             dur_crm[s] = sdc
+            for _k, _earr in [(6, early_dlt1_6), (9, early_dlt1_9), (12, early_dlt1_12)]:
+                _earr[s] = float(sum(int(p["has_tox1"]) for p in ptsc[:_k]))
 
         # Store results
         p63   = sel_63  / ns
@@ -3063,6 +3111,14 @@ elif view == "Playground":
             ),
             "n_per_trial_crm":  n_at_stop_crm.tolist(),
             "early_stop_arr":   early_stop_crm.tolist(),
+            "sel_crm_per_trial": sel_crm_per_trial.tolist(),
+            "early_dlt1_6":     early_dlt1_6.tolist(),
+            "early_dlt1_9":     early_dlt1_9.tolist(),
+            "early_dlt1_12":    early_dlt1_12.tolist(),
+            "nmat_crm_raw":     nmat_crm.tolist(),
+            "yacrm_raw":        yacrm.tolist(),
+            "yscrm_raw":        yscrm.tolist(),
+            "dur_crm_raw":      dur_crm.tolist(),
         }
 
 # ==============================================================================
@@ -3180,6 +3236,378 @@ if view == "Playground" and "_tite_results" in st.session_state:
             f"n_sims={res['ns']} | seed={res['seed']}"
             + (f" | True safe=L{ts}" if ts is not None else " | No jointly safe dose")
         )
+
+# ==============================================================================
+# CRM dichotomy diagnostic helpers
+# ==============================================================================
+
+def _crm_bimodality(pcrm):
+    """Detect peaks and valleys in CRM selection-probability distribution.
+
+    Returns
+    -------
+    dict with keys:
+      peaks             : list[(dose_idx, prob)] sorted by prob desc
+      valleys           : list[(dose_idx, prob)]
+      second_peak_prob  : float  — probability of 2nd highest peak (0 if <2 peaks)
+      valley_depth      : float  — (p2 − min_between) / p2, 0 if no valley between peaks
+      peak_gap          : int    — |dose_idx_1 − dose_idx_2| for two highest peaks
+    """
+    n = len(pcrm)
+    peaks, valleys = [], []
+    for i in range(n):
+        lv = pcrm[i - 1] if i > 0 else -1.0
+        rv = pcrm[i + 1] if i < n - 1 else -1.0
+        if pcrm[i] >= lv and pcrm[i] >= rv:
+            peaks.append((i, float(pcrm[i])))
+        if i > 0 and i < n - 1 and pcrm[i] <= lv and pcrm[i] <= rv:
+            valleys.append((i, float(pcrm[i])))
+    peaks.sort(key=lambda t: -t[1])
+
+    second_peak_prob = 0.0
+    valley_depth     = 0.0
+    peak_gap         = 0
+    if len(peaks) >= 2:
+        p1_idx = peaks[0][0]
+        p2_idx = peaks[1][0]
+        p2_val = peaks[1][1]
+        second_peak_prob = p2_val
+        peak_gap = abs(p1_idx - p2_idx)
+        lo, hi = sorted([p1_idx, p2_idx])
+        min_between = float(min(pcrm[lo:hi + 1]))
+        valley_depth = (p2_val - min_between) / p2_val if p2_val > 1e-9 else 0.0
+
+    return {
+        "peaks":            peaks,
+        "valleys":          valleys,
+        "second_peak_prob": second_peak_prob,
+        "valley_depth":     valley_depth,
+        "peak_gap":         peak_gap,
+    }
+
+
+def _plot_dichotomy_selection(pcrm, bim, dose_labels_list):
+    """Annotated bar chart of CRM selection probabilities.
+
+    Peaks coloured green, identified valleys red, others orange.
+    """
+    fig, ax = plt.subplots(figsize=(7, 3.0))
+    _apply_dark_fig(fig, ax)
+    x = np.arange(len(pcrm))
+    peak_idxs   = {t[0] for t in bim["peaks"]}
+    valley_idxs = {t[0] for t in bim["valleys"]}
+    colors = [
+        "#44dd88" if i in peak_idxs else "#ff6666" if i in valley_idxs else "#ffaa44"
+        for i in range(len(pcrm))
+    ]
+    ax.bar(x, pcrm, color=colors, width=0.6)
+    for i, p in enumerate(pcrm):
+        if p > 0.005:
+            ax.text(i, p + 0.012, f"{p:.0%}", ha="center", fontsize=8,
+                    color=_DARK_FG, fontweight="bold")
+    ax.set_xticks(x)
+    ax.set_xticklabels(dose_labels_list, fontsize=9)
+    ax.set_ylabel("Selection probability", color=_DARK_FG, fontsize=8)
+    ax.set_ylim(0, min(1.0, max(pcrm) * 1.25 + 0.08))
+    ax.set_title("CRM dose selection", fontsize=9, color=_DARK_FG)
+    ax.tick_params(colors=_DARK_FG, labelsize=8)
+    compact_style(ax)
+    fig.tight_layout(pad=1.0)
+    return fig
+
+
+def _plot_pathway_bars(groups, metric_label, values_by_group, colors_by_group):
+    """Horizontal bar chart comparing a metric across Low/Middle/High pathways."""
+    fig, ax = plt.subplots(figsize=(7, 2.4))
+    _apply_dark_fig(fig, ax)
+    y = np.arange(len(groups))
+    bars = ax.barh(y, values_by_group, color=colors_by_group, height=0.5)
+    ax.set_yticks(y)
+    ax.set_yticklabels(groups, fontsize=8)
+    ax.set_xlabel(metric_label, color=_DARK_FG, fontsize=8)
+    ax.tick_params(colors=_DARK_FG, labelsize=8)
+    for bar, val in zip(bars, values_by_group):
+        if val > 0:
+            ax.text(bar.get_width() + 0.02 * max(values_by_group),
+                    bar.get_y() + bar.get_height() / 2,
+                    f"{val:.2f}", va="center", fontsize=8, color=_DARK_FG)
+    compact_style(ax)
+    fig.tight_layout(pad=1.0)
+    return fig
+
+
+def _quality_score(selected, true_t1, true_t2, target1, target2):
+    """Asymmetric exponential loss: penalises overdose more than underdose."""
+    d1 = float(true_t1[selected]) - float(target1)
+    d2 = float(true_t2[selected]) - float(target2)
+    bd = max(d1, d2)
+    w  = 1.8 if bd > 0 else 1.0
+    return float(np.exp(-6.0 * w * abs(bd)))
+
+
+def _true_optimal(true_t1, true_t2, target1, target2):
+    """Dose with highest quality score under the same asymmetric loss."""
+    scores = [_quality_score(d, true_t1, true_t2, target1, target2)
+              for d in range(len(true_t1))]
+    return int(np.argmax(scores))
+
+
+# ==============================================================================
+# CRM Dichotomy Diagnostic
+# ==============================================================================
+
+if view == "Playground" and "_tite_results" in st.session_state and "sel_crm_per_trial" in st.session_state["_tite_results"]:
+    _dd = st.session_state["_tite_results"]
+    _dd_pcrm  = np.array(_dd["pcrm"])
+    _dd_ns    = int(_dd["ns"])
+    _dd_sel   = np.array(_dd["sel_crm_per_trial"], dtype=int)
+    _dd_ya    = np.array(_dd["yacrm_raw"])
+    _dd_ys    = np.array(_dd["yscrm_raw"])
+    _dd_dur   = np.array(_dd["dur_crm_raw"])
+    _dd_n     = np.array(_dd["n_per_trial_crm"], dtype=int)
+    _dd_ed6   = np.array(_dd["early_dlt1_6"])
+    _dd_ed9   = np.array(_dd["early_dlt1_9"])
+    _dd_ed12  = np.array(_dd["early_dlt1_12"])
+    _dd_nmat  = np.array(_dd["nmat_crm_raw"])          # shape (ns, 5)
+    _dd_dl    = dose_labels                             # ["5×4 Gy", …]
+    _dd_bim   = _crm_bimodality(_dd_pcrm)
+
+    st.markdown("---")
+    st.subheader("CRM Dichotomy Diagnostic")
+    st.caption(
+        "Two peaks can occur when simulated trials split into different paths. "
+        "Some trials see early toxicity and the model selects a lower dose; "
+        "others see little or late toxicity and keep higher doses admissible. "
+        "EWOC may amplify this pattern when the final rule selects the highest "
+        "admissible dose."
+    )
+
+    # ── 1. Bimodality metrics ─────────────────────────────────────────────────
+    _bm_c1, _bm_c2, _bm_c3, _bm_c4 = st.columns(4)
+    _bm_c1.metric(
+        "Peaks detected",
+        str(len(_dd_bim["peaks"])),
+        help="Number of local maxima in the CRM selection-probability distribution.",
+    )
+    _bm_c2.metric(
+        "2nd peak probability",
+        f"{_dd_bim['second_peak_prob']:.1%}",
+        help="Selection probability at the second-largest peak (0 % if only one peak).",
+    )
+    _bm_c3.metric(
+        "Valley depth",
+        f"{_dd_bim['valley_depth']:.1%}",
+        help=(
+            "How deep the dip is between the two highest peaks, relative to the "
+            "smaller peak: (p2 − min_between) / p2.  "
+            "0 % = no valley; 100 % = valley drops to zero."
+        ),
+    )
+    _bm_c4.metric(
+        "Peak gap (dose levels)",
+        str(_dd_bim["peak_gap"]),
+        help="Distance in dose levels between the two highest peaks.",
+    )
+
+    _bm_fig = _plot_dichotomy_selection(_dd_pcrm, _dd_bim, _dd_dl)
+    st.image(fig_to_png_bytes(_bm_fig), use_container_width=False, width=560)
+    plt.close(_bm_fig)
+
+    # ── 2. Trial stratification by final selected MTD ─────────────────────────
+    st.markdown("#### Trial stratification by final selected MTD")
+    _strat_rows = []
+    for _di in range(5):
+        _mask = _dd_sel == _di
+        _cnt  = int(_mask.sum())
+        if _cnt == 0:
+            continue
+        _strat_rows.append({
+            "MTD selected":        _dd_dl[_di],
+            "Trials (n)":          _cnt,
+            "Trials (%)":          f"{100 * _cnt / _dd_ns:.1f}",
+            "Mean tox1 DLTs":      f"{_dd_ya[_mask].mean():.2f}",
+            "Mean tox2 DLTs":      f"{_dd_ys[_mask].mean():.2f}",
+            "Mean N enrolled":     f"{_dd_n[_mask].mean():.1f}",
+            "Mean duration (mo)":  f"{(_dd_dur[_mask].mean() / MONTH):.1f}",
+            "Early tox1 DLTs (6)": f"{_dd_ed6[_mask].mean():.2f}",
+            "Early tox1 DLTs (9)": f"{_dd_ed9[_mask].mean():.2f}",
+            "Early tox1 DLTs(12)": f"{_dd_ed12[_mask].mean():.2f}",
+        })
+    if _strat_rows:
+        st.dataframe(pd.DataFrame(_strat_rows), hide_index=True,
+                     use_container_width=True)
+
+    # ── 3. Low / Middle / High pathway grouping ───────────────────────────────
+    st.markdown("#### Low / Middle / High pathway grouping")
+    st.caption("Low = MTD ≤ L2 (1-indexed) · Middle = L3 · High = MTD ≥ L4")
+    _pw_groups  = ["Low (≤L2)", "Middle (L3)", "High (≥L4)"]
+    _pw_masks   = [_dd_sel <= 1, _dd_sel == 2, _dd_sel >= 3]
+    _pw_colors  = ["#4a9eff", "#ffaa44", "#ff6666"]
+    _pw_rows = []
+    for _pg, _pm in zip(_pw_groups, _pw_masks):
+        _pc = int(_pm.sum())
+        if _pc == 0:
+            _pw_rows.append({"Pathway": _pg, "Trials (n)": 0,
+                             "Trials (%)": "0.0",
+                             "Mean tox1 DLTs": "—",
+                             "Mean early tox1 (6)": "—",
+                             "Mean N enrolled": "—",
+                             "Mean duration (mo)": "—"})
+        else:
+            _pw_rows.append({
+                "Pathway":            _pg,
+                "Trials (n)":         _pc,
+                "Trials (%)":         f"{100 * _pc / _dd_ns:.1f}",
+                "Mean tox1 DLTs":     f"{_dd_ya[_pm].mean():.2f}",
+                "Mean early tox1 (6)": f"{_dd_ed6[_pm].mean():.2f}",
+                "Mean N enrolled":    f"{_dd_n[_pm].mean():.1f}",
+                "Mean duration (mo)": f"{(_dd_dur[_pm].mean() / MONTH):.1f}",
+            })
+    st.dataframe(pd.DataFrame(_pw_rows), hide_index=True, use_container_width=True)
+
+    _pw_counts = [int(m.sum()) for m in _pw_masks]
+    _pw_fig = _plot_pathway_bars(
+        _pw_groups, "Mean early tox1 DLTs (first 6 patients)",
+        [(_dd_ed6[m].mean() if m.sum() > 0 else 0.0) for m in _pw_masks],
+        _pw_colors,
+    )
+    st.image(fig_to_png_bytes(_pw_fig), use_container_width=False, width=560)
+    plt.close(_pw_fig)
+
+    # ── 4. EWOC sensitivity check ─────────────────────────────────────────────
+    st.markdown("#### EWOC sensitivity check")
+    _ewoc_btn = st.button(
+        "Compare EWOC ON vs OFF for this scenario",
+        key="pg_ewoc_compare_btn",
+        help=(
+            "Reruns the same CRM scenario with EWOC ON (current α) and EWOC OFF. "
+            "All other settings stay fixed."
+        ),
+    )
+    if _ewoc_btn or "_ewoc_compare" in st.session_state:
+        if _ewoc_btn:
+            _ew_ns    = min(int(_cfg("n_sims")), 500)   # cap at 500 for speed
+            _ew_seed  = int(_cfg("seed")) + 9999
+            _ew_t1    = list(true_t1)
+            _ew_t2    = list(true_t2)
+            _ew_base  = dict(
+                p_surgery=float(_cfg("p_surgery")),
+                target1=float(get_config_value("target_t1")),
+                target2=float(get_config_value("target_t2")),
+                sigma=float(_cfg("sigma")),
+                start_level=int(_cfg("start_level_1b")) - 1,
+                max_n=int(_cfg("max_n_crm")),
+                cohort_size=int(_cfg("cohort_size")),
+                accrual_per_month=float(_cfg("accrual_per_month")),
+                incl_to_rt=int(_cfg("incl_to_rt")),
+                rt_dur=int(_cfg("rt_dur")),
+                rt_to_surg=int(_cfg("rt_to_surg")),
+                tox1_win=int(_cfg("rt_dur")) + int(_cfg("rt_to_surg")),
+                tox2_win=int(_cfg("tox2_win")),
+                max_step=int(_cfg("max_step")),
+                gh_n=int(_cfg("gh_n")),
+                burn_in=bool(_cfg("burn_in")),
+                enforce_guardrail=bool(_cfg("enforce_guardrail")),
+                restrict_final_to_tried=bool(_cfg("restrict_final_mtd")),
+                n_safe_d1=int(_cfg("n_safe_d1")),
+                p_stop=1.0,
+            )
+            _ew_skel1 = list(skel_t1)
+            _ew_skel2 = list(skel_t2)
+            _ew_target1 = float(get_config_value("target_t1"))
+            _ew_target2 = float(get_config_value("target_t2"))
+            _ew_optimal = _true_optimal(
+                np.array(_ew_t1), np.array(_ew_t2), _ew_target1, _ew_target2
+            )
+
+            def _run_ewoc_arm(ewoc_on_flag, arm_seed):
+                rng = np.random.default_rng(arm_seed)
+                sel_counts = np.zeros(5, dtype=int)
+                qs_list, od_list, th_list = [], [], []
+                base_kw = dict(_ew_base)
+                for _dup in ("true_t1", "true_t2", "skel1", "skel2", "rng",
+                              "collect_trace", "ewoc_on", "ewoc_alpha"):
+                    base_kw.pop(_dup, None)
+                for _ in range(_ew_ns):
+                    _s, *_ = run_tite_crm(
+                        true_t1=np.asarray(_ew_t1, dtype=float),
+                        true_t2=np.asarray(_ew_t2, dtype=float),
+                        skel1=np.asarray(_ew_skel1, dtype=float),
+                        skel2=np.asarray(_ew_skel2, dtype=float),
+                        ewoc_on=ewoc_on_flag,
+                        ewoc_alpha=float(_cfg("ewoc_alpha")),
+                        rng=rng,
+                        collect_trace=False,
+                        **base_kw,
+                    )
+                    sel_counts[_s] += 1
+                    qs_list.append(_quality_score(_s, np.array(_ew_t1), np.array(_ew_t2),
+                                                  _ew_target1, _ew_target2))
+                    od_list.append(int(max(float(_ew_t1[_s]) - _ew_target1,
+                                          float(_ew_t2[_s]) - _ew_target2) > 0))
+                    th_list.append(int(_s > _ew_optimal))
+                psel = sel_counts / _ew_ns
+                bim  = _crm_bimodality(psel)
+                return {
+                    "psel": psel,
+                    "bim":  bim,
+                    "quality_score":      float(np.mean(qs_list)),
+                    "pct_correct":        100.0 * sel_counts[_ew_optimal] / _ew_ns,
+                    "overdose_rate":      100.0 * float(np.mean(od_list)),
+                    "too_high_rate":      100.0 * float(np.mean(th_list)),
+                }
+
+            with st.spinner(f"Running EWOC ON vs OFF ({_ew_ns} sims each)…"):
+                _ew_on  = _run_ewoc_arm(True,  _ew_seed)
+                _ew_off = _run_ewoc_arm(False, _ew_seed + 1)
+            st.session_state["_ewoc_compare"] = {
+                "on": _ew_on, "off": _ew_off,
+                "alpha": float(_cfg("ewoc_alpha")),
+                "ns": _ew_ns,
+            }
+
+        if "_ewoc_compare" in st.session_state:
+            _ec   = st.session_state["_ewoc_compare"]
+            _ec_on  = _ec["on"]
+            _ec_off = _ec["off"]
+            _ec_alpha = _ec["alpha"]
+            _ec_ns    = _ec["ns"]
+
+            st.caption(
+                f"Each arm: {_ec_ns} simulations · EWOC ON uses α = {_ec_alpha:.2f}"
+            )
+
+            # Side-by-side metrics
+            _ew_mc1, _ew_mc2 = st.columns(2)
+            with _ew_mc1:
+                st.markdown(f"**EWOC ON (α = {_ec_alpha:.2f})**")
+                st.metric("Quality score",      f"{_ec_on['quality_score']:.3f}")
+                st.metric("Correct selection",  f"{_ec_on['pct_correct']:.1f}%")
+                st.metric("Overdose rate",      f"{_ec_on['overdose_rate']:.1f}%")
+                st.metric("Too-high selection", f"{_ec_on['too_high_rate']:.1f}%")
+                st.metric("2nd peak prob",      f"{_ec_on['bim']['second_peak_prob']:.1%}")
+                st.metric("Valley depth",       f"{_ec_on['bim']['valley_depth']:.1%}")
+            with _ew_mc2:
+                st.markdown("**EWOC OFF**")
+                st.metric("Quality score",      f"{_ec_off['quality_score']:.3f}")
+                st.metric("Correct selection",  f"{_ec_off['pct_correct']:.1f}%")
+                st.metric("Overdose rate",      f"{_ec_off['overdose_rate']:.1f}%")
+                st.metric("Too-high selection", f"{_ec_off['too_high_rate']:.1f}%")
+                st.metric("2nd peak prob",      f"{_ec_off['bim']['second_peak_prob']:.1%}")
+                st.metric("Valley depth",       f"{_ec_off['bim']['valley_depth']:.1%}")
+
+            # Side-by-side selection charts
+            _ew_fc1, _ew_fc2 = st.columns(2)
+            with _ew_fc1:
+                _ew_fig_on = _plot_dichotomy_selection(
+                    _ec_on["psel"], _ec_on["bim"], _dd_dl)
+                st.image(fig_to_png_bytes(_ew_fig_on), use_container_width=True)
+                plt.close(_ew_fig_on)
+            with _ew_fc2:
+                _ew_fig_off = _plot_dichotomy_selection(
+                    _ec_off["psel"], _ec_off["bim"], _dd_dl)
+                st.image(fig_to_png_bytes(_ew_fig_off), use_container_width=True)
+                plt.close(_ew_fig_off)
 
 # ==============================================================================
 # CRM sample-size distribution histogram
@@ -4025,6 +4453,187 @@ def _true_optimal(true_t1, true_t2, target1, target2):
 
 
 # ------------------------------------------------------------------------------
+# True-probability stress-test helpers
+# ------------------------------------------------------------------------------
+
+def generate_symmetric_values(center, spread, n, min_value=None, max_value=None):
+    """Generate *n* evenly-spaced values symmetric around *center*.
+
+    Parameters
+    ----------
+    center    : float — midpoint (1.0 for scaling, 0.0 for shifts)
+    spread    : float — half-range; produces [center-spread … center+spread]
+    n         : int   — number of points (odd → centre is exactly *center*)
+    min_value : float | None — optional lower clip bound
+    max_value : float | None — optional upper clip bound
+
+    Returns
+    -------
+    list[float]
+    """
+    values = np.linspace(float(center) - float(spread),
+                         float(center) + float(spread), int(n))
+    lo = -np.inf if min_value is None else float(min_value)
+    hi =  np.inf if max_value is None else float(max_value)
+    return [float(v) for v in np.clip(values, lo, hi)]
+
+
+def make_scaled_truth(true_probs, factor):
+    """Return true_probs element-wise multiplied by *factor*, clipped to [0, 1]."""
+    return [float(np.clip(p * factor, 0.0, 1.0)) for p in true_probs]
+
+
+def fit_logistic_curve(dose_indices, true_probs):
+    """Fit logistic(a + b*x) to *true_probs*, returning (a, b).
+
+    Enforces monotonicity with np.maximum.accumulate before fitting.
+    Uses np.polyfit on the logit scale.  Clamps slope b to a minimum
+    of 1e-3 so the fitted curve stays non-decreasing.
+    """
+    eps = 1e-5
+    x = np.asarray(dose_indices, dtype=float)
+    y = np.asarray(true_probs, dtype=float)
+    y = np.maximum.accumulate(y)          # enforce monotone non-decreasing
+    y = np.clip(y, eps, 1.0 - eps)
+    logit_y = np.log(y / (1.0 - y))
+    b, a = np.polyfit(x, logit_y, 1)     # returns [slope, intercept]
+    b = max(float(b), 1e-3)              # guard against non-positive slope
+    return float(a), float(b)
+
+
+def make_shifted_truth(true_probs, shift):
+    """Return shifted true-probability curve via logistic horizontal shift.
+
+    Fits logistic(a + b*x) to the (monotone-enforced) baseline, then
+    evaluates the fitted curve at x + shift for each dose level x.
+
+    shift > 0 → more toxic (curve moves left; same toxicity at lower dose).
+    shift < 0 → less toxic (curve moves right).
+    shift == 0 → returns the original probabilities unchanged.
+
+    Output clipped to [1e-6, 0.95].
+    """
+    if shift == 0.0:
+        return list(true_probs)
+    dose_idx = np.arange(len(true_probs), dtype=float)
+    a, b = fit_logistic_curve(dose_idx, true_probs)
+    shifted = [1.0 / (1.0 + np.exp(-(a + b * (x + float(shift))))) for x in dose_idx]
+    return [float(np.clip(v, 1e-6, 0.95)) for v in shifted]
+
+
+def build_truth_scenarios(true_t1, true_t2, method, mode, values):
+    """Build a list of (label, t1_probs, t2_probs) truth scenarios.
+
+    Parameters
+    ----------
+    true_t1, true_t2 : list[float] — baseline true probabilities (length 5)
+    method : "Scale probabilities" | "Curve shift"
+    mode   : "Both endpoints" | "Tox1 only" | "Tox2 only"
+    values : list[float] — scale factors or shift amounts
+
+    Returns
+    -------
+    list of (label: str, t1: list[float], t2: list[float])
+    """
+    scenarios = []
+    for v in values:
+        if method == "Scale probabilities":
+            label = f"x{v:.3g}"
+            t1 = make_scaled_truth(true_t1, v) if mode in ("Both endpoints", "Tox1 only") else list(true_t1)
+            t2 = make_scaled_truth(true_t2, v) if mode in ("Both endpoints", "Tox2 only") else list(true_t2)
+        else:
+            sign = "+" if v >= 0 else ""
+            label = f"shift {sign}{v:.3g}"
+            t1 = make_shifted_truth(true_t1, v) if mode in ("Both endpoints", "Tox1 only") else list(true_t1)
+            t2 = make_shifted_truth(true_t2, v) if mode in ("Both endpoints", "Tox2 only") else list(true_t2)
+        scenarios.append((label, t1, t2))
+    return scenarios
+
+
+def run_truth_stress_test(scenarios, base_ss, skel_t1, skel_t2, n_sim, seed):
+    """Run TITE-CRM simulations for each truth scenario in *scenarios*.
+
+    Parameters
+    ----------
+    scenarios : list of (label, t1_list, t2_list) from build_truth_scenarios
+    base_ss   : dict — same format as for run_parameter_sweep
+    skel_t1/t2 : list[float] — CRM skeletons
+    n_sim     : int — simulations per scenario
+    seed      : int — base RNG seed
+
+    Returns
+    -------
+    pd.DataFrame with columns:
+        scenario, scenario_raw, true_t1_L0..4, true_t2_L0..4,
+        true_optimal, quality_score, pct_correct_selection,
+        overdose_rate, too_high_rate, mean_selected_dose, sel_L0..4
+    """
+    target1 = float(base_ss["target_tox1"])
+    target2 = float(base_ss["target_tox2"])
+    base_kw = dict(
+        p_surgery=float(base_ss["p_surgery"]),
+        target1=target1, target2=target2,
+        skel1=list(skel_t1), skel2=list(skel_t2),
+        sigma=float(base_ss["sigma"]),
+        start_level=int(base_ss["start_level"]),
+        max_n=int(base_ss["max_n"]),
+        cohort_size=int(base_ss["cohort_size"]),
+        accrual_per_month=float(base_ss["accrual_per_month"]),
+        incl_to_rt=int(base_ss["incl_to_rt"]),
+        rt_dur=int(base_ss["rt_dur"]),
+        rt_to_surg=int(base_ss["rt_to_surg"]),
+        tox1_win=int(base_ss["rt_dur"]) + int(base_ss["rt_to_surg"]),
+        tox2_win=int(base_ss["tox2_win"]),
+        max_step=int(base_ss["max_step"]),
+        gh_n=int(base_ss["gh_n"]),
+        burn_in=bool(base_ss["burn_in"]),
+        enforce_guardrail=bool(base_ss["enforce_guardrail"]),
+        restrict_final_to_tried=bool(base_ss["restrict_final_to_tried"]),
+        ewoc_on=bool(base_ss["ewoc_on"]),
+        ewoc_alpha=float(base_ss["ewoc_alpha"]),
+        n_safe_d1=int(base_ss.get("n_safe_d1", 0)),
+        p_stop=float(base_ss.get("p_stop", 1.0)),
+        collect_trace=False,
+    )
+    rows = []
+    n_levels = len(scenarios[0][1]) if scenarios else 5
+    for s_idx, (label, t1, t2) in enumerate(scenarios):
+        rng = np.random.default_rng(int(seed) + s_idx * 1000)
+        t1_arr = np.asarray(t1, dtype=float)
+        t2_arr = np.asarray(t2, dtype=float)
+        true_opt = _true_optimal(t1_arr, t2_arr, target1, target2)
+        sel_counts = [0] * n_levels
+        qual_scores, overdoses, too_high = [], 0, 0
+        for _ in range(int(n_sim)):
+            sel, *_ = run_tite_crm(true_t1=t1_arr, true_t2=t2_arr, **base_kw, rng=rng)
+            qual_scores.append(_quality_score(sel, t1_arr, t2_arr, target1, target2))
+            sel_counts[sel] += 1
+            if max(float(t1_arr[sel]) - target1, float(t2_arr[sel]) - target2) > 0:
+                overdoses += 1
+            if sel > true_opt:
+                too_high += 1
+        n = n_sim
+        row = dict(
+            scenario=label,
+            scenario_raw=s_idx,
+            true_optimal=true_opt + 1,
+            quality_score=float(np.mean(qual_scores)),
+            pct_correct_selection=100.0 * sel_counts[true_opt] / n,
+            overdose_rate=100.0 * overdoses / n,
+            too_high_rate=100.0 * too_high / n,
+            mean_selected_dose=float(
+                np.mean([i for i, c in enumerate(sel_counts) for _ in range(c)])
+            ) if n > 0 else 0.0,
+        )
+        for li in range(n_levels):
+            row[f"sel_L{li}"] = 100.0 * sel_counts[li] / n
+            row[f"true_t1_L{li}"] = float(t1_arr[li])
+            row[f"true_t2_L{li}"] = float(t2_arr[li])
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+# ------------------------------------------------------------------------------
 # Parameter sweep runner (adapted from design_exploration.py)
 # Note: run_tite_crm returns (selected, patients, study_days, trace,
 # stopped_early); the calls below use sel, *_ to discard unused values.
@@ -4745,6 +5354,119 @@ def _plot_sweep_results_light(df, param_label, param_name="", param_info=None):
     return fig
 
 
+def _plot_stress_metrics(df, method_label, mode_label):
+    """4-panel line chart: quality score, correct selection %, overdose rate %, too-high %."""
+    fig, axes = plt.subplots(2, 2, figsize=(12, 6))
+    _apply_dark_fig(fig, *axes.flat)
+    scenarios  = df["scenario"].tolist()
+    x          = list(range(len(scenarios)))
+    metrics    = [
+        ("quality_score",          "Quality score",         "#4a9eff"),
+        ("pct_correct_selection",  "Correct selection (%)", "#44dd88"),
+        ("overdose_rate",          "Overdose rate (%)",     "#ff6666"),
+        ("too_high_rate",          "Too-high selection (%)", "#ffaa44"),
+    ]
+    for ax, (col, title, color) in zip(axes.flat, metrics):
+        ax.plot(x, df[col].tolist(), marker="o", color=color, linewidth=1.8,
+                markersize=5, markeredgewidth=0)
+        ax.set_xticks(x)
+        ax.set_xticklabels(scenarios, fontsize=7, rotation=30, ha="right")
+        ax.set_title(title, fontsize=9, color=_DARK_FG)
+        ax.tick_params(colors=_DARK_FG, labelsize=7)
+        compact_style(ax)
+    fig.suptitle(
+        f"True-probability stress test — {method_label} | {mode_label}",
+        fontsize=10, color=_DARK_FG, y=1.01,
+    )
+    fig.tight_layout(pad=1.5)
+    return fig
+
+
+def _plot_stress_selection(df, dose_labels_list):
+    """Stacked bar chart of dose selection % by scenario."""
+    n_levels = len(dose_labels_list)
+    sel_cols  = [f"sel_L{i}" for i in range(n_levels)]
+    scenarios = df["scenario"].tolist()
+    x         = np.arange(len(scenarios))
+    colors    = ["#4a9eff", "#44dd88", "#ffaa44", "#ff6666", "#cc66ff"][:n_levels]
+    fig, ax   = plt.subplots(figsize=(12, 3.6))
+    _apply_dark_fig(fig, ax)
+    bottom = np.zeros(len(scenarios))
+    for li, col in enumerate(sel_cols):
+        vals = df[col].to_numpy()
+        ax.bar(x, vals, bottom=bottom, color=colors[li],
+               label=dose_labels_list[li], width=0.6)
+        bottom += vals
+    ax.set_xticks(x)
+    ax.set_xticklabels(scenarios, fontsize=8, rotation=30, ha="right")
+    ax.set_ylabel("Selection (%)", color=_DARK_FG, fontsize=8)
+    ax.set_title("Dose selection by scenario", fontsize=9, color=_DARK_FG)
+    ax.tick_params(colors=_DARK_FG, labelsize=7)
+    ax.legend(loc="upper right", fontsize=7, framealpha=0.3)
+    compact_style(ax)
+    fig.tight_layout(pad=1.5)
+    return fig
+
+
+def _plot_stress_truth_curves(scenarios, baseline_t1, baseline_t2,
+                              dose_labels_list, title="", light=False):
+    """Two-panel line plot: tox1 (left) and tox2 (right) true-probability curves.
+
+    Baseline is drawn as a dashed grey line; each scenario is a solid colored
+    line.  Shows the actual five dose-level probabilities passed to the
+    simulator — no smoothing.
+
+    Parameters
+    ----------
+    scenarios        : list of (label, t1, t2) — may be a single-element list
+    baseline_t1/t2   : list[float] — Playground baseline probabilities
+    dose_labels_list : list[str]   — x-axis tick labels (e.g. ['L0'…'L4'])
+    title            : str         — optional suptitle
+    light            : bool        — True → white bg for HTML export
+    """
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 3.2))
+    if light:
+        fig.patch.set_facecolor("white")
+        ax1.set_facecolor("white")
+        ax2.set_facecolor("white")
+        fg = "#444444"
+    else:
+        _apply_dark_fig(fig, ax1, ax2)
+        fg = _DARK_FG
+
+    x = np.arange(len(dose_labels_list))
+    _SC_COLORS = ["#4a9eff", "#44dd88", "#ffaa44", "#ff6666", "#cc66ff",
+                  "#ff99cc", "#aaddff", "#ccff99", "#ffdd88", "#88ffee"]
+
+    # Baseline dashed — thicker so it reads clearly against the scenario lines
+    ax1.plot(x, list(baseline_t1), color="#aaaaaa", linestyle="--",
+             linewidth=2.5, marker="o", markersize=5, label="Baseline", zorder=5)
+    ax2.plot(x, list(baseline_t2), color="#aaaaaa", linestyle="--",
+             linewidth=2.5, marker="o", markersize=5, label="Baseline", zorder=5)
+
+    for si, (label, t1, t2) in enumerate(scenarios):
+        c = _SC_COLORS[si % len(_SC_COLORS)]
+        ax1.plot(x, list(t1), color=c, linewidth=1.8, marker="o", markersize=4,
+                 label=label)
+        ax2.plot(x, list(t2), color=c, linewidth=1.8, marker="o", markersize=4,
+                 label=label)
+
+    for ax, ep_title in [(ax1, "Tox1 (acute)"), (ax2, "Tox2 (subacute)")]:
+        ax.set_xticks(x)
+        ax.set_xticklabels(dose_labels_list, fontsize=8)
+        ax.set_ylabel("True tox probability", color=fg, fontsize=8)
+        ax.set_ylim(0.0, 1.05)
+        ax.set_title(ep_title, fontsize=9, color=fg)
+        ax.tick_params(colors=fg, labelsize=7)
+        ax.legend(fontsize=7, framealpha=0.3)
+        compact_style(ax)
+
+    if title:
+        fig.suptitle(title, fontsize=9, color=fg, y=1.02)
+    fig.tight_layout(pad=1.5)
+    return fig
+
+
 def _plot_prior_mtd_context(true_tox, pv_list, tox_label, title,
                             prior_target, prior_halfwidth,
                             model="empiric", intcpt=3.0, light=False):
@@ -5076,302 +5798,562 @@ if view == "Design Exploration":
                 "quality_score = exp(−6 × loss)"
             )
 
-    # ── Sweep controls ────────────────────────────────────────────────────
-    # Short description shown under the selectbox for each parameter.
-    _DE_PARAM_DESCRIPTIONS = {
-        "sigma": (
-            "Varying the **prior uncertainty** on the dose-toxicity slope "
-            "(σ on θ).  A larger σ = wider prior = faster dose escalation.  "
-            "Max N and cohort size stay fixed."
-        ),
-        "ewoc_alpha": (
-            "Varying the **EWOC overdose threshold** α.  α is the maximum "
-            "acceptable posterior probability that the selected dose exceeds "
-            "the target toxicity rate.  Smaller α = more conservative.  "
-            "Max N and cohort size stay fixed."
-        ),
-        "max_n": (
-            "Varying the **maximum total number of patients** in the trial.  "
-            "Cohort size and all other settings stay fixed."
-        ),
-        "cohort_size": (
-            "Varying the **cohort size**: how many patients are enrolled and "
-            "observed before the model makes the next dose-level decision.  "
-            "The total max N stays fixed — only the decision frequency changes."
-        ),
-        "prior_nu_t1": (
-            "Varying the **prior MTD level for tox1 (acute toxicity)**.  "
-            "This is the dose level the CRM skeleton is centred on before "
-            "any data are observed.  L1 = lowest dose, L5 = highest dose.  "
-            "All other settings stay fixed."
-        ),
-        "prior_nu_t2": (
-            "Varying the **prior MTD level for tox2 (subacute / surgery toxicity)**.  "
-            "This is the dose level the CRM skeleton is centred on before "
-            "any data are observed.  L1 = lowest dose, L5 = highest dose.  "
-            "All other settings stay fixed."
-        ),
-        "enforce_guardrail": (
-            "Comparing **guardrail OFF vs ON**.  "
-            "When ON, the next recommended dose cannot skip untried levels "
-            "(next dose ≤ highest tried + 1).  "
-            "Turning OFF allows the CRM to escalate more aggressively.  "
-            "All other settings stay fixed."
-        ),
-        "restrict_final_mtd": (
-            "Comparing **final MTD restriction OFF vs ON**.  "
-            "When ON, the trial's final MTD recommendation is constrained to "
-            "dose levels that were actually tested on at least one patient.  "
-            "All other settings stay fixed."
-        ),
-        "burn_in": (
-            "Comparing **burn-in OFF vs ON**.  "
-            "When ON, the CRM holds at the starting dose until the first "
-            "tox1 DLT is observed before switching to model-guided escalation.  "
-            "All other settings stay fixed."
-        ),
-    }
+    # ── Exploration type selector ─────────────────────────────────────────
+    st.session_state["wl_de_expl_type"] = str(get_config_value("de_expl_type"))
+    _de_expl_type = st.radio(
+        "Exploration type",
+        options=["Design parameter sweep", "True probability stress test"],
+        horizontal=True,
+        key="wl_de_expl_type",
+        on_change=_make_sync("de_expl_type", str, "wl_de_expl_type"),
+    )
+    st.session_state["de_expl_type"] = st.session_state["wl_de_expl_type"]
 
-    _de_ctrl, _ = st.columns([2, 3])
-    with _de_ctrl:
-        _de_param = st.selectbox(
-            "Parameter to sweep",
-            ["sigma", "ewoc_alpha", "max_n", "cohort_size",
-             "prior_nu_t1", "prior_nu_t2",
-             "enforce_guardrail", "restrict_final_mtd", "burn_in"],
-            format_func={
-                "sigma":              "Prior sigma (σ)",
-                "ewoc_alpha":         "EWOC α — overdose threshold",
-                "max_n":              "Maximum sample size (max N)",
-                "cohort_size":        "Cohort size — patients per dose decision",
-                "prior_nu_t1":        "Prior MTD level — tox1 (acute)",
-                "prior_nu_t2":        "Prior MTD level — tox2 (subacute / surgery)",
-                "enforce_guardrail":  "Safety: guardrail (≤ highest tried + 1)",
-                "restrict_final_mtd": "Safety: final MTD restricted to tried doses",
-                "burn_in":            "Behaviour: burn-in until first tox1 DLT",
-            }.get,
-            key="de_param_name",
-            help=(
-                "Choose which single design parameter to vary.  "
-                "All other parameters are held at their current "
-                "Essentials / Playground values."
+    # Sentinels — prevent NameError when the matching controls block doesn't render
+    _de_run_btn    = False
+    _de_batch_btn  = False
+    _de_st_run_btn = False
+    _de_pv_eff     = []
+
+    if _de_expl_type == "Design parameter sweep":
+        # ── Sweep controls ────────────────────────────────────────────────────
+        # Short description shown under the selectbox for each parameter.
+        _DE_PARAM_DESCRIPTIONS = {
+            "sigma": (
+                "Varying the **prior uncertainty** on the dose-toxicity slope "
+                "(σ on θ).  A larger σ = wider prior = faster dose escalation.  "
+                "Max N and cohort size stay fixed."
             ),
-        )
-        # Per-parameter explanatory caption
-        st.caption(_DE_PARAM_DESCRIPTIONS[_de_param])
+            "ewoc_alpha": (
+                "Varying the **EWOC overdose threshold** α.  α is the maximum "
+                "acceptable posterior probability that the selected dose exceeds "
+                "the target toxicity rate.  Smaller α = more conservative.  "
+                "Max N and cohort size stay fixed."
+            ),
+            "max_n": (
+                "Varying the **maximum total number of patients** in the trial.  "
+                "Cohort size and all other settings stay fixed."
+            ),
+            "cohort_size": (
+                "Varying the **cohort size**: how many patients are enrolled and "
+                "observed before the model makes the next dose-level decision.  "
+                "The total max N stays fixed — only the decision frequency changes."
+            ),
+            "prior_nu_t1": (
+                "Varying the **prior MTD level for tox1 (acute toxicity)**.  "
+                "This is the dose level the CRM skeleton is centred on before "
+                "any data are observed.  L1 = lowest dose, L5 = highest dose.  "
+                "All other settings stay fixed."
+            ),
+            "prior_nu_t2": (
+                "Varying the **prior MTD level for tox2 (subacute / surgery toxicity)**.  "
+                "This is the dose level the CRM skeleton is centred on before "
+                "any data are observed.  L1 = lowest dose, L5 = highest dose.  "
+                "All other settings stay fixed."
+            ),
+            "enforce_guardrail": (
+                "Comparing **guardrail OFF vs ON**.  "
+                "When ON, the next recommended dose cannot skip untried levels "
+                "(next dose ≤ highest tried + 1).  "
+                "Turning OFF allows the CRM to escalate more aggressively.  "
+                "All other settings stay fixed."
+            ),
+            "restrict_final_mtd": (
+                "Comparing **final MTD restriction OFF vs ON**.  "
+                "When ON, the trial's final MTD recommendation is constrained to "
+                "dose levels that were actually tested on at least one patient.  "
+                "All other settings stay fixed."
+            ),
+            "burn_in": (
+                "Comparing **burn-in OFF vs ON**.  "
+                "When ON, the CRM holds at the starting dose until the first "
+                "tox1 DLT is observed before switching to model-guided escalation.  "
+                "All other settings stay fixed."
+            ),
+        }
 
-        # Initialise DE widget defaults once (avoids key+value conflict).
-        # EWOC alpha keys (de_ea_*) are intentionally excluded here — they
-        # are initialised via explicit value= parameters on their widgets,
-        # which is the only pattern that survives Streamlit's widget-state
-        # cleanup when switching between sweep parameters (≥1.28).
-        for _dk, _dv in [("de_sig_min", 0.3), ("de_sig_max", 2.0),
-                          ("de_sig_pts", 8),
-                          ("de_n_sim",  200), ("de_seed",    42),
-                          ("de_nu1_vals", [1, 2, 3, 4, 5]),
-                          ("de_nu2_vals", [1, 2, 3, 4, 5])]:
-            if _dk not in _ss:
-                _ss[_dk] = _dv
-
-        # Clamp de_sig_max so its stored value stays above the dynamic
-        # min_value when de_sig_min is raised.
-        _sig_min_floor = round(float(_ss["de_sig_min"]) + 0.1, 1)
-        if float(_ss["de_sig_max"]) < _sig_min_floor:
-            _ss["de_sig_max"] = min(_sig_min_floor, 5.0)
-
-        # Clamp de_ea_max only when the key already exists in session state
-        # (i.e. the EWOC widgets have been rendered at least once).  On the
-        # first render the widget initialises itself via its value= parameter.
-        if "de_ea_min" in _ss and "de_ea_max" in _ss:
-            _ea_min_floor = round(float(_ss["de_ea_min"]) + 0.01, 2)
-            if float(_ss["de_ea_max"]) < _ea_min_floor:
-                _ss["de_ea_max"] = min(_ea_min_floor, 0.99)
-
-        if _de_param == "sigma":
-            _c1, _c2, _c3 = st.columns(3)
-            _de_sig_min = _c1.number_input(
-                "Min σ", 0.1, 4.9, step=0.1, key="de_sig_min",
-                help="Lower bound of the σ sweep. σ controls how peaked the "
-                     "CRM prior is — larger σ means a wider, more uncertain prior.")
-            _de_sig_max = _c2.number_input(
-                "Max σ", float(max(_de_sig_min + 0.1, 0.2)), 5.0,
-                step=0.1, key="de_sig_max",
-                help="Upper bound of the σ sweep range.")
-            _de_sig_pts = _c3.slider(
-                "Points", 3, 20, key="de_sig_pts",
-                help="Number of evenly-spaced σ values between Min and Max.")
-            _de_pv      = np.linspace(_de_sig_min, _de_sig_max,
-                                      _de_sig_pts).tolist()
-            _de_label   = "σ (prior sigma)"
-            _de_ptype   = "continuous"
-
-        elif _de_param == "ewoc_alpha":
-            _c1, _c2, _c3 = st.columns(3)
-            # Use explicit value= for all four controls.  This is the only
-            # pattern that reliably survives Streamlit's widget-state cleanup
-            # (≥1.28): when switching away from the EWOC param and back,
-            # Streamlit removes widget-backed keys from session state, so any
-            # init-loop pre-write would be lost before the widget renders.
-            # value=_ss.get(key, default) ensures the correct default on first
-            # render while honouring any user-edited value on subsequent runs.
-            _de_ea_min  = _c1.number_input(
-                "Min α", 0.05, 0.97,
-                value=float(_ss.get("de_ea_min", 0.05)),
-                step=0.01, key="de_ea_min",
-                help="Lower bound of the EWOC overdose-probability threshold "
-                     "sweep. α is the maximum acceptable probability of "
-                     "recommending a dose above the MTD.")
-            _ea_max_min = float(max(_de_ea_min + 0.01, 0.06))
-            _de_ea_max  = _c2.number_input(
-                "Max α", _ea_max_min, 0.99,
-                value=float(max(_ss.get("de_ea_max", 0.60), _ea_max_min)),
-                step=0.01, key="de_ea_max",
-                help="Upper bound of the EWOC α sweep range.")
-            _de_ea_pts  = _c3.slider(
-                "Points", 3, 20,
-                value=int(_ss.get("de_ea_pts", 8)),
-                key="de_ea_pts",
-                help="Number of evenly-spaced α values between Min and Max.")
-            _de_inc_off = st.checkbox(
-                "Include EWOC OFF as a point",
-                value=bool(_ss.get("de_inc_off", True)),
-                key="de_inc_off",
-                help="Also run the design with EWOC disabled. Useful to "
-                     "quantify how much safety benefit EWOC provides.")
-            _de_pv      = (([None] if _de_inc_off else []) +
-                           np.linspace(_de_ea_min, _de_ea_max,
-                                       _de_ea_pts).tolist())
-            _de_label   = "EWOC α"
-            _de_ptype   = "continuous"
-
-        elif _de_param == "max_n":
-            _de_mn_baseline = int(get_config_value("max_n_crm"))
-            st.caption(
-                f"Baseline max N from Essentials = **{_de_mn_baseline}**.  "
-                "Select the total patient counts you want to compare."
+        _de_ctrl, _ = st.columns([2, 3])
+        with _de_ctrl:
+            _de_param = st.selectbox(
+                "Parameter to sweep",
+                ["sigma", "ewoc_alpha", "max_n", "cohort_size",
+                 "prior_nu_t1", "prior_nu_t2",
+                 "enforce_guardrail", "restrict_final_mtd", "burn_in"],
+                format_func={
+                    "sigma":              "Prior sigma (σ)",
+                    "ewoc_alpha":         "EWOC α — overdose threshold",
+                    "max_n":              "Maximum sample size (max N)",
+                    "cohort_size":        "Cohort size — patients per dose decision",
+                    "prior_nu_t1":        "Prior MTD level — tox1 (acute)",
+                    "prior_nu_t2":        "Prior MTD level — tox2 (subacute / surgery)",
+                    "enforce_guardrail":  "Safety: guardrail (≤ highest tried + 1)",
+                    "restrict_final_mtd": "Safety: final MTD restricted to tried doses",
+                    "burn_in":            "Behaviour: burn-in until first tox1 DLT",
+                }.get,
+                key="de_param_name",
+                help=(
+                    "Choose which single design parameter to vary.  "
+                    "All other parameters are held at their current "
+                    "Essentials / Playground values."
+                ),
             )
-            _de_pv = st.multiselect(
-                "Total patient counts to sweep",
-                [12, 15, 18, 21, 24, 27, 30, 33, 36],
-                default=[12, 15, 18, 21, 24, 27, 30, 33, 36],
-                key="de_max_n_vals",
-                help="Select the maximum total patient counts to compare. "
-                     "Larger N gives the CRM more data but lengthens the trial.",
-            )
-            _de_label = "Maximum total patients (max N)"
-            _de_ptype = "discrete"
+            # Per-parameter explanatory caption
+            st.caption(_DE_PARAM_DESCRIPTIONS[_de_param])
 
-        elif _de_param == "prior_nu_t1":
-            st.caption(
-                f"Current tox1 prior MTD level: **L{_de_nu1}** (from Playground).  "
-                "Select the levels you want to compare."
-            )
-            _de_pv = st.multiselect(
-                "Tox1 prior MTD levels to sweep (L1 = lowest, L5 = highest)",
-                [1, 2, 3, 4, 5],
-                default=_ss["de_nu1_vals"],
-                key="de_nu1_vals",
-                help="Select which prior MTD level assumptions to compare for "
-                     "acute tox1. The assumed level shifts the CRM skeleton — "
-                     "a lower assumed level makes the model more conservative.",
-            )
-            _de_label = "Prior MTD level — tox1 (acute)"
-            _de_ptype = "discrete"
+            # Initialise DE widget defaults once (avoids key+value conflict).
+            # EWOC alpha keys (de_ea_*) are intentionally excluded here — they
+            # are initialised via explicit value= parameters on their widgets,
+            # which is the only pattern that survives Streamlit's widget-state
+            # cleanup when switching between sweep parameters (≥1.28).
+            for _dk, _dv in [("de_sig_min", 0.3), ("de_sig_max", 2.0),
+                              ("de_sig_pts", 8),
+                              ("de_n_sim",  200), ("de_seed",    42),
+                              ("de_nu1_vals", [1, 2, 3, 4, 5]),
+                              ("de_nu2_vals", [1, 2, 3, 4, 5])]:
+                if _dk not in _ss:
+                    _ss[_dk] = _dv
 
-        elif _de_param == "prior_nu_t2":
-            st.caption(
-                f"Current tox2 prior MTD level: **L{_de_nu2}** (from Playground).  "
-                "Select the levels you want to compare."
-            )
-            _de_pv = st.multiselect(
-                "Tox2 prior MTD levels to sweep (L1 = lowest, L5 = highest)",
-                [1, 2, 3, 4, 5],
-                default=_ss["de_nu2_vals"],
-                key="de_nu2_vals",
-                help="Select which prior MTD level assumptions to compare for "
-                     "subacute tox2 (surgery endpoint). The assumed level "
-                     "shapes how the CRM weights subacute toxicity risk.",
-            )
-            _de_label = "Prior MTD level — tox2 (subacute / surgery)"
-            _de_ptype = "discrete"
+            # Clamp de_sig_max so its stored value stays above the dynamic
+            # min_value when de_sig_min is raised.
+            _sig_min_floor = round(float(_ss["de_sig_min"]) + 0.1, 1)
+            if float(_ss["de_sig_max"]) < _sig_min_floor:
+                _ss["de_sig_max"] = min(_sig_min_floor, 5.0)
 
-        elif _de_param in ("enforce_guardrail", "restrict_final_mtd", "burn_in"):
-            _bool_labels = {
-                "enforce_guardrail":  "Guardrail (next dose ≤ highest tried + 1)",
-                "restrict_final_mtd": "Final MTD restricted to tried doses",
-                "burn_in":            "Burn-in until first tox1 DLT",
-            }
-            _de_label = _bool_labels[_de_param]
-            _de_pv    = [False, True]
-            _de_ptype = "discrete"
-            st.caption("Sweeps both **OFF** and **ON** (2 sweep points).")
+            # Clamp de_ea_max only when the key already exists in session state
+            # (i.e. the EWOC widgets have been rendered at least once).  On the
+            # first render the widget initialises itself via its value= parameter.
+            if "de_ea_min" in _ss and "de_ea_max" in _ss:
+                _ea_min_floor = round(float(_ss["de_ea_min"]) + 0.01, 2)
+                if float(_ss["de_ea_max"]) < _ea_min_floor:
+                    _ss["de_ea_max"] = min(_ea_min_floor, 0.99)
 
-        else:  # cohort_size
-            _de_mn_baseline = int(get_config_value("max_n_crm"))
-            st.caption(
-                f"Max N fixed at **{_de_mn_baseline}** (from Essentials).  "
-                "Select the cohort sizes you want to compare."
-            )
-            _de_pv = st.multiselect(
-                "Cohort sizes to sweep (patients per dose decision)",
-                [1, 2, 3, 4, 5, 6],
-                default=[1, 2, 3, 4],
-                key="de_cohort_vals",
-                help="Select the number of patients enrolled per dose "
-                     "decision. Larger cohorts provide more information per "
-                     "step but slow down dose escalation.",
-            )
-            _de_label = "Cohort size (patients per dose decision)"
-            _de_ptype = "discrete"
+            if _de_param == "sigma":
+                _c1, _c2, _c3 = st.columns(3)
+                _de_sig_min = _c1.number_input(
+                    "Min σ", 0.1, 4.9, step=0.1, key="de_sig_min",
+                    help="Lower bound of the σ sweep. σ controls how peaked the "
+                         "CRM prior is — larger σ means a wider, more uncertain prior.")
+                _de_sig_max = _c2.number_input(
+                    "Max σ", float(max(_de_sig_min + 0.1, 0.2)), 5.0,
+                    step=0.1, key="de_sig_max",
+                    help="Upper bound of the σ sweep range.")
+                _de_sig_pts = _c3.slider(
+                    "Points", 3, 20, key="de_sig_pts",
+                    help="Number of evenly-spaced σ values between Min and Max.")
+                _de_pv      = np.linspace(_de_sig_min, _de_sig_max,
+                                          _de_sig_pts).tolist()
+                _de_label   = "σ (prior sigma)"
+                _de_ptype   = "continuous"
 
-        st.divider()
-        _de_n_sim  = st.slider(
-            "Simulations per point", 50, 2000, step=50, key="de_n_sim",
-            help="Number of simulated trials run at each parameter value. "
-                 "Higher values give more stable estimates but take longer.")
-        _de_seed   = st.number_input(
-            "Seed", 0, 99999, step=1, key="de_seed",
-            help="Random seed for reproducibility. Changing the seed varies "
-                 "the simulated patient outcomes across runs.")
-        _de_speed  = st.checkbox(
-            "Speed mode (faster, less precise)",
-            key="de_speed_mode",
-            help="Reduces simulations per point to max(50, n÷4) and caps "
-                 "the grid to ≤8 continuous / ≤3 discrete points. "
-                 "Results are approximate.",
-        )
+            elif _de_param == "ewoc_alpha":
+                _c1, _c2, _c3 = st.columns(3)
+                # Use explicit value= for all four controls.  This is the only
+                # pattern that reliably survives Streamlit's widget-state cleanup
+                # (≥1.28): when switching away from the EWOC param and back,
+                # Streamlit removes widget-backed keys from session state, so any
+                # init-loop pre-write would be lost before the widget renders.
+                # value=_ss.get(key, default) ensures the correct default on first
+                # render while honouring any user-edited value on subsequent runs.
+                _de_ea_min  = _c1.number_input(
+                    "Min α", 0.05, 0.97,
+                    value=float(_ss.get("de_ea_min", 0.05)),
+                    step=0.01, key="de_ea_min",
+                    help="Lower bound of the EWOC overdose-probability threshold "
+                         "sweep. α is the maximum acceptable probability of "
+                         "recommending a dose above the MTD.")
+                _ea_max_min = float(max(_de_ea_min + 0.01, 0.06))
+                _de_ea_max  = _c2.number_input(
+                    "Max α", _ea_max_min, 0.99,
+                    value=float(max(_ss.get("de_ea_max", 0.60), _ea_max_min)),
+                    step=0.01, key="de_ea_max",
+                    help="Upper bound of the EWOC α sweep range.")
+                _de_ea_pts  = _c3.slider(
+                    "Points", 3, 20,
+                    value=int(_ss.get("de_ea_pts", 8)),
+                    key="de_ea_pts",
+                    help="Number of evenly-spaced α values between Min and Max.")
+                _de_inc_off = st.checkbox(
+                    "Include EWOC OFF as a point",
+                    value=bool(_ss.get("de_inc_off", True)),
+                    key="de_inc_off",
+                    help="Also run the design with EWOC disabled. Useful to "
+                         "quantify how much safety benefit EWOC provides.")
+                _de_pv      = (([None] if _de_inc_off else []) +
+                               np.linspace(_de_ea_min, _de_ea_max,
+                                           _de_ea_pts).tolist())
+                _de_label   = "EWOC α"
+                _de_ptype   = "continuous"
 
-        if _de_speed:
-            _de_n_eff = max(50, int(_de_n_sim) // 4)
-            _de_pv_eff = (_de_pv[:8] if _de_ptype == "continuous"
-                          else _de_pv[:3])
-            st.caption(
-                f":orange[Speed mode — {_de_n_eff} sims × "
-                f"{len(_de_pv_eff)} points (approximate)]"
-            )
-        else:
-            _de_n_eff  = int(_de_n_sim)
-            _de_pv_eff = list(_de_pv)
-            if _de_pv_eff:
+            elif _de_param == "max_n":
+                _de_mn_baseline = int(get_config_value("max_n_crm"))
                 st.caption(
-                    f"{_de_n_eff} sims × {len(_de_pv_eff)} points = "
-                    f"{_de_n_eff * len(_de_pv_eff):,} total trials"
+                    f"Baseline max N from Essentials = **{_de_mn_baseline}**.  "
+                    "Select the total patient counts you want to compare."
                 )
+                _de_pv = st.multiselect(
+                    "Total patient counts to sweep",
+                    [12, 15, 18, 21, 24, 27, 30, 33, 36],
+                    default=[12, 15, 18, 21, 24, 27, 30, 33, 36],
+                    key="de_max_n_vals",
+                    help="Select the maximum total patient counts to compare. "
+                         "Larger N gives the CRM more data but lengthens the trial.",
+                )
+                _de_label = "Maximum total patients (max N)"
+                _de_ptype = "discrete"
 
-        _de_run_btn = st.button(
-            "▶ Run Sweep", type="primary", key="de_run_btn",
-            disabled=(not _de_skel_ok or len(_de_pv_eff) == 0),
-        )
-        _de_batch_btn = st.button(
-            "▶▶ Run Batch Exploration",
+            elif _de_param == "prior_nu_t1":
+                st.caption(
+                    f"Current tox1 prior MTD level: **L{_de_nu1}** (from Playground).  "
+                    "Select the levels you want to compare."
+                )
+                _de_pv = st.multiselect(
+                    "Tox1 prior MTD levels to sweep (L1 = lowest, L5 = highest)",
+                    [1, 2, 3, 4, 5],
+                    default=_ss["de_nu1_vals"],
+                    key="de_nu1_vals",
+                    help="Select which prior MTD level assumptions to compare for "
+                         "acute tox1. The assumed level shifts the CRM skeleton — "
+                         "a lower assumed level makes the model more conservative.",
+                )
+                _de_label = "Prior MTD level — tox1 (acute)"
+                _de_ptype = "discrete"
+
+            elif _de_param == "prior_nu_t2":
+                st.caption(
+                    f"Current tox2 prior MTD level: **L{_de_nu2}** (from Playground).  "
+                    "Select the levels you want to compare."
+                )
+                _de_pv = st.multiselect(
+                    "Tox2 prior MTD levels to sweep (L1 = lowest, L5 = highest)",
+                    [1, 2, 3, 4, 5],
+                    default=_ss["de_nu2_vals"],
+                    key="de_nu2_vals",
+                    help="Select which prior MTD level assumptions to compare for "
+                         "subacute tox2 (surgery endpoint). The assumed level "
+                         "shapes how the CRM weights subacute toxicity risk.",
+                )
+                _de_label = "Prior MTD level — tox2 (subacute / surgery)"
+                _de_ptype = "discrete"
+
+            elif _de_param in ("enforce_guardrail", "restrict_final_mtd", "burn_in"):
+                _bool_labels = {
+                    "enforce_guardrail":  "Guardrail (next dose ≤ highest tried + 1)",
+                    "restrict_final_mtd": "Final MTD restricted to tried doses",
+                    "burn_in":            "Burn-in until first tox1 DLT",
+                }
+                _de_label = _bool_labels[_de_param]
+                _de_pv    = [False, True]
+                _de_ptype = "discrete"
+                st.caption("Sweeps both **OFF** and **ON** (2 sweep points).")
+
+            else:  # cohort_size
+                _de_mn_baseline = int(get_config_value("max_n_crm"))
+                st.caption(
+                    f"Max N fixed at **{_de_mn_baseline}** (from Essentials).  "
+                    "Select the cohort sizes you want to compare."
+                )
+                _de_pv = st.multiselect(
+                    "Cohort sizes to sweep (patients per dose decision)",
+                    [1, 2, 3, 4, 5, 6],
+                    default=[1, 2, 3, 4],
+                    key="de_cohort_vals",
+                    help="Select the number of patients enrolled per dose "
+                         "decision. Larger cohorts provide more information per "
+                         "step but slow down dose escalation.",
+                )
+                _de_label = "Cohort size (patients per dose decision)"
+                _de_ptype = "discrete"
+
+            st.divider()
+            _de_n_sim  = st.slider(
+                "Simulations per point", 50, 2000, step=50, key="de_n_sim",
+                help="Number of simulated trials run at each parameter value. "
+                     "Higher values give more stable estimates but take longer.")
+            _de_seed   = st.number_input(
+                "Seed", 0, 99999, step=1, key="de_seed",
+                help="Random seed for reproducibility. Changing the seed varies "
+                     "the simulated patient outcomes across runs.")
+            _de_speed  = st.checkbox(
+                "Speed mode (faster, less precise)",
+                key="de_speed_mode",
+                help="Reduces simulations per point to max(50, n÷4) and caps "
+                     "the grid to ≤8 continuous / ≤3 discrete points. "
+                     "Results are approximate.",
+            )
+
+            if _de_speed:
+                _de_n_eff = max(50, int(_de_n_sim) // 4)
+                _de_pv_eff = (_de_pv[:8] if _de_ptype == "continuous"
+                              else _de_pv[:3])
+                st.caption(
+                    f":orange[Speed mode — {_de_n_eff} sims × "
+                    f"{len(_de_pv_eff)} points (approximate)]"
+                )
+            else:
+                _de_n_eff  = int(_de_n_sim)
+                _de_pv_eff = list(_de_pv)
+                if _de_pv_eff:
+                    st.caption(
+                        f"{_de_n_eff} sims × {len(_de_pv_eff)} points = "
+                        f"{_de_n_eff * len(_de_pv_eff):,} total trials"
+                    )
+
+            _de_run_btn = st.button(
+                "▶ Run Sweep", type="primary", key="de_run_btn",
+                disabled=(not _de_skel_ok or len(_de_pv_eff) == 0),
+            )
+            _de_batch_btn = st.button(
+                "▶▶ Run Batch Exploration",
+                type="primary",
+                key="de_batch_all_btn",
+                disabled=not _de_skel_ok,
+                help=(
+                    "Sweeps all six parameters in sequence using the values "
+                    "configured above (or defaults) and saves a combined HTML report."
+                ),
+            )
+
+    # end if _de_expl_type == "Design parameter sweep" sweep controls
+
+    elif _de_expl_type == "True probability stress test":
+        # ── Stress test controls ─────────────────────────────────────────────
+        _st_c1, _st_c2 = st.columns(2)
+        with _st_c1:
+            st.session_state["wl_de_st_method"] = str(get_config_value("de_st_method"))
+            _de_st_method = st.selectbox(
+                "Stress method",
+                options=["Scale probabilities", "Curve shift"],
+                key="wl_de_st_method",
+                on_change=_make_sync("de_st_method", str, "wl_de_st_method"),
+                help=(
+                    "**Scale probabilities**: multiply each true probability by a factor.  \n"
+                    "**Curve shift**: fit a logistic curve and shift it horizontally — "
+                    "positive = more toxic (toxicity appears at lower dose levels)."
+                ),
+            )
+            st.session_state["de_st_method"] = st.session_state["wl_de_st_method"]
+        with _st_c2:
+            st.session_state["wl_de_st_mode"] = str(get_config_value("de_st_mode"))
+            _de_st_mode = st.selectbox(
+                "Endpoint mode",
+                options=["Both endpoints", "Tox1 only", "Tox2 only"],
+                key="wl_de_st_mode",
+                on_change=_make_sync("de_st_mode", str, "wl_de_st_mode"),
+                help="Which toxicity endpoint(s) to stress-test.",
+            )
+            st.session_state["de_st_mode"] = st.session_state["wl_de_st_mode"]
+
+        # ── Slider-based scenario generation ─────────────────────────────────
+        _st_sl_c1, _st_sl_c2 = st.columns([3, 1])
+        _n_sc_stored = int(get_config_value("de_st_n_scenarios"))
+        _n_sc_stored = _n_sc_stored if _n_sc_stored in [3, 5, 7] else 5
+        if _de_st_method == "Scale probabilities":
+            with _st_sl_c1:
+                _spread_val = float(np.clip(get_config_value("de_st_scale_spread"), 0.0, 1.0))
+                st.session_state["wl_de_st_scale_spread"] = _spread_val
+                _de_st_spread = st.slider(
+                    "Scaling spread",
+                    min_value=0.0, max_value=1.0, step=0.05,
+                    key="wl_de_st_scale_spread",
+                    on_change=_make_sync("de_st_scale_spread", float, "wl_de_st_scale_spread"),
+                    help=(
+                        "Half-range around baseline (1.0).  "
+                        "Spread 0.5 → scale factors from 0.5 to 1.5."
+                    ),
+                )
+                st.session_state["de_st_scale_spread"] = float(
+                    st.session_state.get("wl_de_st_scale_spread", _de_st_spread)
+                )
+            with _st_sl_c2:
+                st.session_state["wl_de_st_n_scenarios"] = _n_sc_stored
+                _de_st_n_sc = st.selectbox(
+                    "Scenarios",
+                    options=[3, 5, 7],
+                    key="wl_de_st_n_scenarios",
+                    on_change=_make_sync("de_st_n_scenarios", int, "wl_de_st_n_scenarios"),
+                    help="Number of stress scenarios (always includes the baseline).",
+                )
+                st.session_state["de_st_n_scenarios"] = int(
+                    st.session_state.get("wl_de_st_n_scenarios", _de_st_n_sc)
+                )
+            _de_st_values = generate_symmetric_values(
+                center=1.0, spread=_de_st_spread, n=_de_st_n_sc,
+                min_value=0.05, max_value=2.0,
+            )
+            st.caption(
+                "Generated scale factors: "
+                + ", ".join(f"{v:.2f}" for v in _de_st_values)
+            )
+        else:  # Curve shift
+            with _st_sl_c1:
+                _spread_val = float(np.clip(get_config_value("de_st_shift_spread"), 0.0, 2.0))
+                st.session_state["wl_de_st_shift_spread"] = _spread_val
+                _de_st_spread = st.slider(
+                    "Curve shift spread",
+                    min_value=0.0, max_value=2.0, step=0.1,
+                    key="wl_de_st_shift_spread",
+                    on_change=_make_sync("de_st_shift_spread", float, "wl_de_st_shift_spread"),
+                    help=(
+                        "Half-range around baseline (0.0) in dose levels.  "
+                        "Spread 1.0 → shifts from −1.0 to +1.0.  "
+                        "Positive shift = more toxic."
+                    ),
+                )
+                st.session_state["de_st_shift_spread"] = float(
+                    st.session_state.get("wl_de_st_shift_spread", _de_st_spread)
+                )
+            with _st_sl_c2:
+                st.session_state["wl_de_st_n_scenarios"] = _n_sc_stored
+                _de_st_n_sc = st.selectbox(
+                    "Scenarios",
+                    options=[3, 5, 7],
+                    key="wl_de_st_n_scenarios",
+                    on_change=_make_sync("de_st_n_scenarios", int, "wl_de_st_n_scenarios"),
+                    help="Number of stress scenarios (always includes the baseline).",
+                )
+                st.session_state["de_st_n_scenarios"] = int(
+                    st.session_state.get("wl_de_st_n_scenarios", _de_st_n_sc)
+                )
+            _de_st_values = generate_symmetric_values(
+                center=0.0, spread=_de_st_spread, n=_de_st_n_sc,
+                min_value=-2.0, max_value=2.0,
+            )
+            st.caption(
+                "Generated curve shifts: "
+                + ", ".join(f"{v:.2f}" for v in _de_st_values)
+            )
+
+        # Advanced: custom scenario values (hidden by default)
+        with st.expander("Advanced: custom scenario values", expanded=False):
+            if _de_st_method == "Scale probabilities":
+                st.session_state["wl_de_st_scale_str"] = str(_cfg("de_st_scale_str"))
+                _st_custom_raw = st.text_input(
+                    "Custom scale factors (comma-separated)",
+                    key="wl_de_st_scale_str",
+                    help="If non-empty, overrides the slider-generated values.",
+                )
+                st.session_state["de_st_scale_str"] = str(
+                    st.session_state.get("wl_de_st_scale_str", "")
+                )
+            else:
+                st.session_state["wl_de_st_shift_str"] = str(_cfg("de_st_shift_str"))
+                _st_custom_raw = st.text_input(
+                    "Custom shift amounts (comma-separated)",
+                    key="wl_de_st_shift_str",
+                    help="If non-empty, overrides the slider-generated values.",
+                )
+                st.session_state["de_st_shift_str"] = str(
+                    st.session_state.get("wl_de_st_shift_str", "")
+                )
+            if _st_custom_raw.strip():
+                try:
+                    _custom_vals = [
+                        float(v.strip()) for v in _st_custom_raw.split(",") if v.strip()
+                    ]
+                    if _custom_vals:
+                        _de_st_values = _custom_vals
+                        st.caption(
+                            "Using custom values: "
+                            + ", ".join(f"{v:.3g}" for v in _de_st_values)
+                        )
+                except ValueError:
+                    st.warning("Could not parse custom values — using slider-generated values.")
+
+            # Debug: horizontal shift verification (curve shift only)
+            if _de_st_method == "Curve shift":
+                st.markdown("**Horizontal shift check** — shift = +1.0")
+                st.caption(
+                    "Shifted L_i should equal baseline fitted L_{i+1}.  "
+                    "Small deviations are expected due to linear logit approximation."
+                )
+                _dbx = np.arange(5, dtype=float)
+                _db_a1, _db_b1 = fit_logistic_curve(_dbx, _de_t1)
+                _db_a2, _db_b2 = fit_logistic_curve(_dbx, _de_t2)
+                _db_sh_t1 = make_shifted_truth(_de_t1, 1.0)
+                _db_sh_t2 = make_shifted_truth(_de_t2, 1.0)
+                _db_rows = []
+                for _li in range(4):
+                    _db_fit_t1 = float(1.0 / (1.0 + np.exp(-(_db_a1 + _db_b1 * (_li + 1)))))
+                    _db_fit_t2 = float(1.0 / (1.0 + np.exp(-(_db_a2 + _db_b2 * (_li + 1)))))
+                    _db_rows.append({
+                        "Dose": f"L{_li}",
+                        "Shifted T1": f"{_db_sh_t1[_li]:.4f}",
+                        "Fitted base T1 (L+1)": f"{_db_fit_t1:.4f}",
+                        "T1 ✓": "✓" if abs(_db_sh_t1[_li] - _db_fit_t1) < 0.02 else "≈",
+                        "Shifted T2": f"{_db_sh_t2[_li]:.4f}",
+                        "Fitted base T2 (L+1)": f"{_db_fit_t2:.4f}",
+                        "T2 ✓": "✓" if abs(_db_sh_t2[_li] - _db_fit_t2) < 0.02 else "≈",
+                    })
+                st.dataframe(pd.DataFrame(_db_rows), hide_index=True,
+                             use_container_width=True)
+
+        # ── Simulations / seed ────────────────────────────────────────────────
+        _st_sim_c1, _st_sim_c2 = st.columns(2)
+        with _st_sim_c1:
+            st.session_state["wl_de_st_n_sim"] = int(_cfg("de_st_n_sim"))
+            _de_st_n_sim = st.number_input(
+                "Simulations", min_value=10, max_value=5000,
+                step=50, key="wl_de_st_n_sim",
+                on_change=_make_sync("de_st_n_sim", int, "wl_de_st_n_sim"),
+            )
+            st.session_state["de_st_n_sim"] = int(
+                st.session_state.get("wl_de_st_n_sim", _de_st_n_sim)
+            )
+        with _st_sim_c2:
+            st.session_state["wl_de_st_seed"] = int(_cfg("de_st_seed"))
+            _de_st_seed = st.number_input(
+                "Seed", min_value=0, max_value=99999,
+                step=1, key="wl_de_st_seed",
+                on_change=_make_sync("de_st_seed", int, "wl_de_st_seed"),
+            )
+            st.session_state["de_st_seed"] = int(
+                st.session_state.get("wl_de_st_seed", _de_st_seed)
+            )
+
+        _de_st_run_btn = st.button(
+            "Run stress test",
             type="primary",
-            key="de_batch_all_btn",
-            disabled=not _de_skel_ok,
-            help=(
-                "Sweeps all six parameters in sequence using the values "
-                "configured above (or defaults) and saves a combined HTML report."
-            ),
+            disabled=not _de_skel_ok or len(_de_st_values) == 0,
+            help="Run TITE-CRM simulations for each stress scenario.",
         )
+
+        # ── Live truth-curve preview ──────────────────────────────────────────
+        if _de_skel_ok and _de_st_values:
+            _prev_sc = build_truth_scenarios(
+                _de_t1, _de_t2,
+                method=_de_st_method,
+                mode=_de_st_mode,
+                values=_de_st_values,
+            )
+            _PREV_DOSE_LBLS = [f"L{i}" for i in range(5)]
+            with st.expander("📈 Truth curve preview", expanded=True):
+                if len(_prev_sc) <= 8:
+                    _prev_fig = _plot_stress_truth_curves(
+                        _prev_sc, _de_t1, _de_t2, _PREV_DOSE_LBLS,
+                    )
+                    st.image(fig_to_png_bytes(_prev_fig), use_container_width=True)
+                    plt.close(_prev_fig)
+                else:
+                    _prev_sc_labels = [sc[0] for sc in _prev_sc]
+                    _prev_chosen = st.selectbox(
+                        "Scenario to preview",
+                        options=_prev_sc_labels,
+                        key="wl_de_st_preview_sel",
+                        help="Select a scenario to preview its truth curves.",
+                    )
+                    _prev_one = [sc for sc in _prev_sc if sc[0] == _prev_chosen]
+                    _prev_fig = _plot_stress_truth_curves(
+                        _prev_one, _de_t1, _de_t2, _PREV_DOSE_LBLS,
+                        title=f"Scenario: {_prev_chosen}",
+                    )
+                    st.image(fig_to_png_bytes(_prev_fig), use_container_width=True)
+                    plt.close(_prev_fig)
+                if _de_st_method == "Curve shift":
+                    st.caption(
+                        "Positive shift = more toxic: the baseline curve moves left, "
+                        "so the same toxicity probability appears at a lower dose level.  "
+                        "Negative shift = less toxic: the curve moves right."
+                    )
 
     # ── Execute sweep ─────────────────────────────────────────────────────
     if _de_run_btn and _de_skel_ok and len(_de_pv_eff) > 0:
@@ -5671,3 +6653,122 @@ if view == "Design Exploration":
             "click the button above to download it."
         )
 
+    # ── Execute stress test ───────────────────────────────────────────────
+    if _de_st_run_btn and _de_skel_ok:
+        _de_st_base_ss = dict(
+            target_tox1             = float(get_config_value("target_t1")),
+            target_tox2             = float(get_config_value("target_t2")),
+            p_surgery               = float(_cfg("p_surgery")),
+            sigma                   = float(_cfg("sigma")),
+            ewoc_on                 = bool(_cfg("ewoc_on")),
+            ewoc_alpha              = float(get_config_value("ewoc_alpha")),
+            max_n                   = int(_cfg("max_n_crm")),
+            cohort_size             = int(_cfg("cohort_size")),
+            start_level             = int(_cfg("start_level_1b")) - 1,
+            accrual_per_month       = float(_cfg("accrual_per_month")),
+            incl_to_rt              = int(_cfg("incl_to_rt")),
+            rt_dur                  = int(_cfg("rt_dur")),
+            rt_to_surg              = int(_cfg("rt_to_surg")),
+            tox2_win                = int(_cfg("tox2_win")),
+            max_step                = int(_cfg("max_step")),
+            gh_n                    = int(_cfg("gh_n")),
+            burn_in                 = bool(_cfg("burn_in")),
+            enforce_guardrail       = bool(_cfg("enforce_guardrail")),
+            restrict_final_to_tried = bool(_cfg("restrict_final_mtd")),
+        )
+        _de_st_scenarios = build_truth_scenarios(
+            _de_t1, _de_t2,
+            method=str(get_config_value("de_st_method")),
+            mode=str(get_config_value("de_st_mode")),
+            values=_de_st_values,
+        )
+        _de_st_total = len(_de_st_scenarios) * int(get_config_value("de_st_n_sim"))
+        with st.spinner(f"Running {_de_st_total:,} stress-test trials…"):
+            _de_st_result_df = run_truth_stress_test(
+                _de_st_scenarios, _de_st_base_ss,
+                _de_sk1, _de_sk2,
+                int(get_config_value("de_st_n_sim")),
+                int(get_config_value("de_st_seed")),
+            )
+        _ss["_de_st_df"]     = _de_st_result_df
+        _ss["_de_st_method"] = str(get_config_value("de_st_method"))
+        _ss["_de_st_mode"]   = str(get_config_value("de_st_mode"))
+
+    # ── Display stress test results ───────────────────────────────────────
+    if "_de_st_df" in _ss and _de_expl_type == "True probability stress test":
+        _st_df   = _ss["_de_st_df"]
+        _st_meth = _ss.get("_de_st_method", "")
+        _st_mode = _ss.get("_de_st_mode", "")
+
+        st.markdown("#### Scenario true probabilities")
+        _t1_cols = [f"true_t1_L{i}" for i in range(5)]
+        _t2_cols = [f"true_t2_L{i}" for i in range(5)]
+        _disp_cols = ["scenario"] + _t1_cols + _t2_cols + ["true_optimal"]
+        _st_disp = _st_df[_disp_cols].copy()
+        _st_disp.columns = (
+            ["Scenario"] +
+            [f"T1 L{i+1}" for i in range(5)] +
+            [f"T2 L{i+1}" for i in range(5)] +
+            ["True optimal (1-idx)"]
+        )
+        st.dataframe(
+            _st_disp.style.format({c: "{:.3f}" for c in _st_disp.columns if c.startswith("T")}),
+            hide_index=True, use_container_width=True,
+        )
+
+        # Truth curve chart — reconstruct scenarios from stored DataFrame
+        _st_scenarios_from_df = [
+            (
+                row["scenario"],
+                [row[f"true_t1_L{i}"] for i in range(5)],
+                [row[f"true_t2_L{i}"] for i in range(5)],
+            )
+            for _, row in _st_df.iterrows()
+        ]
+        _RES_DOSE_LBLS = [f"L{i}" for i in range(5)]
+        _MAX_RES_COMPACT = 8
+        if len(_st_scenarios_from_df) <= _MAX_RES_COMPACT:
+            _res_curve_fig = _plot_stress_truth_curves(
+                _st_scenarios_from_df, _de_t1, _de_t2, _RES_DOSE_LBLS,
+            )
+            st.image(fig_to_png_bytes(_res_curve_fig), use_container_width=True)
+            plt.close(_res_curve_fig)
+        else:
+            _res_sc_labels = [sc[0] for sc in _st_scenarios_from_df]
+            _res_chosen = st.selectbox(
+                "Scenario curves to display",
+                options=["All"] + _res_sc_labels,
+                key="wl_de_st_res_curve_sel",
+                help="Show all scenarios or zoom into one.",
+            )
+            if _res_chosen == "All":
+                _res_subset = _st_scenarios_from_df
+            else:
+                _res_subset = [sc for sc in _st_scenarios_from_df if sc[0] == _res_chosen]
+            _res_curve_fig = _plot_stress_truth_curves(
+                _res_subset, _de_t1, _de_t2, _RES_DOSE_LBLS,
+                title=("" if _res_chosen == "All" else f"Scenario: {_res_chosen}"),
+            )
+            st.image(fig_to_png_bytes(_res_curve_fig), use_container_width=True)
+            plt.close(_res_curve_fig)
+
+        st.markdown("#### Metrics by scenario")
+        _metric_cols = ["scenario", "quality_score", "pct_correct_selection",
+                        "overdose_rate", "too_high_rate", "mean_selected_dose"]
+        _st_metric_disp = _st_df[_metric_cols].copy()
+        _st_metric_disp.columns = [
+            "Scenario", "Quality score", "Correct sel. (%)",
+            "Overdose rate (%)", "Too-high sel. (%)", "Mean selected dose (0-idx)",
+        ]
+        st.dataframe(
+            _st_metric_disp.style.format({c: "{:.2f}" for c in _st_metric_disp.columns if c != "Scenario"}),
+            hide_index=True, use_container_width=True,
+        )
+
+        _st_metrics_fig = _plot_stress_metrics(_st_df, _st_meth, _st_mode)
+        st.pyplot(_st_metrics_fig)
+        plt.close(_st_metrics_fig)
+
+        _st_sel_fig = _plot_stress_selection(_st_df, dose_labels)
+        st.pyplot(_st_sel_fig)
+        plt.close(_st_sel_fig)
