@@ -4959,15 +4959,11 @@ def _plot_stress_truth_curves(scenarios, baseline_t1, baseline_t2,
     _SC_COLORS = ["#4a9eff", "#44dd88", "#ffaa44", "#ff6666", "#cc66ff",
                   "#ff99cc", "#aaddff", "#ccff99", "#ffdd88", "#88ffee"]
 
-    for ax in (ax1, ax2):
-        ax.plot(x, [], color="#888888", linestyle="--", linewidth=1.5,
-                marker="o", markersize=4, label="Baseline")  # legend entry
-
-    # Baseline dashed
+    # Baseline dashed — label here drives the legend entry
     ax1.plot(x, list(baseline_t1), color="#888888", linestyle="--",
-             linewidth=1.5, marker="o", markersize=4, zorder=5)
+             linewidth=1.5, marker="o", markersize=4, label="Baseline", zorder=5)
     ax2.plot(x, list(baseline_t2), color="#888888", linestyle="--",
-             linewidth=1.5, marker="o", markersize=4, zorder=5)
+             linewidth=1.5, marker="o", markersize=4, label="Baseline", zorder=5)
 
     for si, (label, t1, t2) in enumerate(scenarios):
         c = _SC_COLORS[si % len(_SC_COLORS)]
