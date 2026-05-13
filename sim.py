@@ -2919,6 +2919,10 @@ elif view == "Playground":
         nbridg  = np.zeros(ns, dtype=int)
         early_stop_crm  = np.zeros(ns, dtype=bool)
         n_at_stop_crm   = np.zeros(ns, dtype=int)
+        sel_crm_per_trial = np.zeros(ns, dtype=int)
+        early_dlt1_6  = np.zeros(ns)
+        early_dlt1_9  = np.zeros(ns)
+        early_dlt1_12 = np.zeros(ns)
 
         # tox1_win is derived: extends from RT start all the way to surgery
         # = RT duration + (RT end → surgery) — no separate UI input needed
@@ -3009,6 +3013,7 @@ elif view == "Playground":
                     "restrict_final_mtd": bool(_cfg("restrict_final_mtd")),
                 }
             sel_crm[selc] += 1
+            sel_crm_per_trial[s] = selc
             for p in ptsc:
                 nmat_crm[s, p["dose"]]  += 1
                 nsurg_crm[s, p["dose"]] += int(p["has_surgery"])
@@ -3016,6 +3021,8 @@ elif view == "Playground":
                 yscrm[s]  += int(p["has_tox2"])
                 nscrm[s]  += int(p["has_surgery"])
             dur_crm[s] = sdc
+            for _k, _earr in [(6, early_dlt1_6), (9, early_dlt1_9), (12, early_dlt1_12)]:
+                _earr[s] = float(sum(int(p["has_tox1"]) for p in ptsc[:_k]))
 
         # Store results
         p63   = sel_63  / ns
@@ -3051,6 +3058,14 @@ elif view == "Playground":
             ),
             "n_per_trial_crm":  n_at_stop_crm.tolist(),
             "early_stop_arr":   early_stop_crm.tolist(),
+            "sel_crm_per_trial": sel_crm_per_trial.tolist(),
+            "early_dlt1_6":     early_dlt1_6.tolist(),
+            "early_dlt1_9":     early_dlt1_9.tolist(),
+            "early_dlt1_12":    early_dlt1_12.tolist(),
+            "nmat_crm_raw":     nmat_crm.tolist(),
+            "yacrm_raw":        yacrm.tolist(),
+            "yscrm_raw":        yscrm.tolist(),
+            "dur_crm_raw":      dur_crm.tolist(),
         }
 
 # ==============================================================================
