@@ -382,6 +382,104 @@ def crm_select_mtd(sigma, skel1, skel2,
         dist = np.abs(pm1[candidates] - float(target1))
         return int(candidates[int(np.argmin(dist))])
 
+
+def crm_mtd_posterior_probs(sigma, skel1, skel2,
+                             n1, y1, n2, y2,
+                             target1, target2,
+                             ewoc_alpha=None, gh_n=61,
+                             restrict_to_tried=True):
+    """
+    Compute the posterior probability that each dose level would be selected
+    as the final MTD, integrating over the joint tox1/tox2 posterior.
+
+    Uses the same dual-endpoint selection rule as crm_select_mtd:
+    - EWOC ON  (ewoc_alpha is not None): highest jointly admissible dose.
+    - EWOC OFF (ewoc_alpha is None):     dose whose posterior mean P(tox1) is
+                                         closest to target1.
+
+    For each Gauss-Hermite quadrature point:
+      1. Compute P(tox1) and P(tox2) at all dose levels.
+      2. Apply joint safety filter (if ewoc_alpha is not None).
+      3. Apply restrict_to_tried mask (same as crm_select_mtd).
+      4. Identify the selected dose under that quadrature point.
+      5. Sum posterior weights by selected dose.
+
+    Returns
+    -------
+    probs : np.ndarray, shape (n_levels,)
+        Posterior probability that each dose level is selected as the MTD.
+        Sums to 1.0 (approximately, to floating-point precision).
+    """
+    # Use the tox1 posterior only (same marginals as crm_select_mtd) for speed.
+    # The dual-endpoint EWOC filter is approximated using point-wise OD probs:
+    # a dose is "point-admissible" if P1[i,d] <= target1 AND P2[j,d] <= target2.
+    # This is consistent with the EWOC posterior-OD logic in crm_select_mtd.
+    post_w1, P1 = posterior_via_gh(sigma, skel1, n1, y1, gh_n=gh_n)
+    post_w2, P2 = posterior_via_gh(sigma, skel2, n2, y2, gh_n=gh_n)
+    n_levels = len(skel1)
+
+    # tried-dose mask
+    tried_mask = np.ones(n_levels, dtype=bool)
+    if restrict_to_tried:
+        tried = np.where(np.asarray(n1) > 0)[0]
+        if tried.size > 0:
+            tried_mask[:] = False
+            tried_mask[tried] = True
+
+    # Outer-product weight matrix: shape (n_q1, n_q2)
+    W = post_w1[:, None] * post_w2[None, :]   # (n_q1, n_q2)
+
+    # For each (i, j) quad point: determine selected dose.
+    # P1: (n_q1, n_levels), P2: (n_q2, n_levels)
+    # Vectorised: compute per (i,j) admissibility and selection.
+    # Shape of P1 broadcast: (n_q1, 1, n_levels)
+    #                  P2  : (1, n_q2, n_levels)
+    P1_3d = P1[:, None, :]          # (n_q1, 1,    n_levels)
+    P2_3d = P2[None, :, :]          # (1,    n_q2, n_levels)
+
+    if ewoc_alpha is not None:
+        # Admissible = point-wise tox below target (conservative per-point OD proxy)
+        admissible = (P1_3d <= float(target1)) & (P2_3d <= float(target2))
+        # shape: (n_q1, n_q2, n_levels)
+    else:
+        admissible = np.ones((len(post_w1), len(post_w2), n_levels), dtype=bool)
+
+    # Apply tried restriction
+    admissible &= tried_mask[None, None, :]
+
+    # Fallback: if no admissible dose for a grid point, allow all tried doses
+    any_admissible = admissible.any(axis=2, keepdims=True)  # (n_q1, n_q2, 1)
+    fallback = tried_mask[None, None, :]
+    admissible = np.where(any_admissible, admissible, fallback)
+
+    # Final fallback: if still nothing tried, admit dose 0
+    any_adm2 = admissible.any(axis=2, keepdims=True)
+    dose0 = np.zeros((1, 1, n_levels), dtype=bool)
+    dose0[0, 0, 0] = True
+    admissible = np.where(any_adm2, admissible, dose0)
+
+    if ewoc_alpha is not None:
+        # Highest admissible dose
+        # Replace non-admissible with -1, then argmax
+        dose_idx = np.arange(n_levels, dtype=float)[None, None, :]
+        dose_idx_masked = np.where(admissible, dose_idx, -1.0)
+        selected_grid = dose_idx_masked.max(axis=2).astype(int)  # (n_q1, n_q2)
+    else:
+        # Closest posterior-mean tox1 to target1
+        dist = np.abs(P1_3d - float(target1))      # (n_q1, 1, n_levels)
+        dist_masked = np.where(admissible, dist, np.inf)
+        selected_grid = dist_masked.argmin(axis=2).astype(int)   # (n_q1, n_q2)
+
+    # Accumulate weighted probability per selected dose
+    probs = np.zeros(n_levels, dtype=float)
+    for d in range(n_levels):
+        probs[d] = float(W[selected_grid == d].sum())
+
+    total = probs.sum()
+    if total > 0:
+        probs /= total
+    return probs
+
 # ==============================================================================
 # TITE-CRM trial runner
 # ==============================================================================
@@ -400,6 +498,7 @@ def run_tite_crm(
     collect_trace=False,
     n_safe_d1=0,
     p_stop=1.0,
+    require_full_tox1_fu_before_escalation=True,
 ):
     """
     TITE-CRM trial simulation.
@@ -416,13 +515,19 @@ def run_tite_crm(
       cohort update (posteriors, weights, allowed doses, decision reason).
       Adds negligible runtime; used only for the first simulated trial.
 
-    n_safe_d1: number of patients already safely treated at dose level 0 with
-      complete follow-up before the trial opens (day 0).  Their records are
-      pre-loaded into the patient list so the CRM sees them as fully-weighted
-      observations at dose 0 with no DLTs.  Surgery status for these patients
-      is drawn from p_surgery.  These patients count toward max_n — if you want
-      max_n new patients in addition to the pre-treated cohort, increase max_n
-      by n_safe_d1.
+    n_safe_d1: number of patients already safely treated at L1 with complete follow-up
+      before the trial opens (day 0).  Their records are pre-loaded into the patient
+      list so the CRM sees them as fully-weighted observations at L1 (dose index 1)
+      with no DLTs.  Surgery status for these patients is drawn from p_surgery.
+      These patients count toward max_n — if you want max_n new patients in addition
+      to the pre-treated cohort, increase max_n by n_safe_d1.
+
+    require_full_tox1_fu_before_escalation: when True, burn-in escalation from
+      the current dose Lx to Lx+1 is only allowed if at least cohort_size patients
+      treated at Lx have completed full acute tox1 follow-up (tox1_win_end defined
+      as pt["rt_start"] + tox1_win) with no observed tox1 DLTs.  The check is
+      evaluated at the next patient's RT start day (arrival + incl_to_rt), not at
+      inclusion.  Has no effect when burn_in=False or after burn-in has ended.
 
     p_stop: early-stopping threshold (0 < p_stop <= 1).  After each CRM cohort
       decision (burn-in excluded), the posterior probability that the recommended
@@ -444,7 +549,7 @@ def run_tite_crm(
     n_levels = len(true_t1)
     rate_per_day = float(accrual_per_month) / MONTH
 
-    level         = int(start_level)
+    level         = int(np.clip(int(start_level), 0, n_levels - 1))
     patients      = []
     highest_tried = -1
     current_day   = 0.0
@@ -455,7 +560,7 @@ def run_tite_crm(
     stopped_early = False
     _p_stop       = float(p_stop)
 
-    # Pre-populate with historically safe patients at dose level 0.
+    # Pre-populate with historically safe patients at L1 (dose index 1).
     # Arrivals are placed far enough before day 0 that every follow-up window —
     # including the tox2 window for surgery patients — is already closed.
     if n_safe_d1 > 0:
@@ -470,7 +575,7 @@ def run_tite_crm(
             _surg_day = float(_rt_end + float(rt_to_surg)) if _has_surg else None
             _t2w_end  = float(_surg_day + float(tox2_win)) if _has_surg else None
             patients.append({
-                "dose":         0,
+                "dose":         1,
                 "arrival":      float(_arr),
                 "rt_start":     _rt_start,
                 "tox1_win_end": _t1w_end,
@@ -483,19 +588,63 @@ def run_tite_crm(
                 "tox2_day":     None,
                 "is_bridging":  False,
             })
-        highest_tried = 0
+        highest_tried = 1
+
+    _req_fu = bool(require_full_tox1_fu_before_escalation)
 
     while len(patients) < int(max_n):
         n_add        = min(int(cohort_size), int(max_n) - len(patients))
         cohort_start = len(patients)
 
-        # Enroll cohort: each patient arrives after an Exp(1/rate) inter-arrival
+        # Enroll cohort: each patient arrives after an Exp(1/rate) inter-arrival.
+        # When require_full_tox1_fu_before_escalation is ON and burn-in is active,
+        # the dose for each new patient is evaluated at their RT start day so that
+        # the full-follow-up check can use the correct calendar time.
         for _ in range(n_add):
             current_day += rng.exponential(1.0 / rate_per_day)
-            pt = make_patient(rng, level, current_day,
+            _assign_level = level
+
+            if _req_fu and burn_active:
+                # Evaluate the escalation decision at next patient's RT start day,
+                # not at inclusion.  tox1 full follow-up means current_day + incl_to_rt
+                # >= pt["tox1_win_end"], i.e. rt_start + tox1_win has elapsed.
+                _next_rt_start = current_day + float(incl_to_rt)
+
+                # Check whether any tox1 DLT has been observed by RT start
+                _obs_dlt_at_rt = any(
+                    p["has_tox1"] and p["tox1_day"] is not None
+                    and p["tox1_day"] <= _next_rt_start
+                    for p in patients
+                )
+                if _obs_dlt_at_rt:
+                    # DLT observed — burn-in will end; stay at current dose
+                    _assign_level = level
+                else:
+                    # Count fully tox1-evaluable patients at current dose with no DLT.
+                    # Full evaluability: tox1_win_end (= rt_start + tox1_win) <= check day.
+                    _fu_safe = sum(
+                        1 for p in patients
+                        if p["dose"] == level
+                        and float(_next_rt_start) >= p["tox1_win_end"]
+                        and not p["has_tox1"]
+                    )
+                    _can_esc = _fu_safe >= int(cohort_size)
+                    if _can_esc:
+                        _assign_level = min(level + 1, n_levels - 1)
+                    else:
+                        _assign_level = level
+            elif burn_active:
+                # Standard burn-in: dose assigned at inclusion, escalation checked
+                # after the cohort (handled below in the post-cohort block).
+                _assign_level = level
+
+            pt = make_patient(rng, _assign_level, current_day,
                               true_t1, p_surgery, true_t2,
                               incl_to_rt, rt_dur, rt_to_surg, tox1_win, tox2_win)
             patients.append(pt)
+            # When the strict FU mode escalates mid-cohort, carry the new level forward
+            if _req_fu and burn_active:
+                level = _assign_level
 
         # Decision time = calendar day when last patient in cohort arrived
         decision_day  = current_day
@@ -507,7 +656,7 @@ def run_tite_crm(
 
         burn_was_active = burn_active
 
-        # Burn-in: check if any tox1 event has been observed by now
+        # Burn-in: check if any tox1 event has been observed by decision day
         if burn_active:
             obs_any_dlt = any(
                 p["has_tox1"] and p["tox1_day"] is not None
@@ -518,8 +667,13 @@ def run_tite_crm(
                 burn_active = False
 
         if burn_active:
-            # No DLT observed yet — escalate one level
-            next_level = min(level + 1, n_levels - 1)
+            if _req_fu:
+                # Strict FU mode: escalation was already handled per-patient above.
+                # Post-cohort: keep level as-is (already updated inside the loop).
+                next_level = level
+            else:
+                # Standard burn-in: escalate one level
+                next_level = min(level + 1, n_levels - 1)
             if next_level == n_levels - 1:
                 burn_active = False   # reached top, switch to CRM next round
         else:
@@ -564,8 +718,39 @@ def run_tite_crm(
 
             # Human-readable reason for the dose selected
             if burn_was_active:
-                reason = (f"Burn-in: escalate one level (no tox1 DLT "
-                          f"observed yet → L{next_level})")
+                if _req_fu:
+                    # Count evaluable patients at previous level for trace annotation
+                    _fu_cnt = sum(
+                        1 for p in patients[:cohort_start]
+                        if p["dose"] == (next_level - 1) and not p["has_tox1"]
+                        and float(decision_day) >= p["tox1_win_end"]
+                    )
+                    if next_level > level or (next_level == level and cohort_start > 0
+                                              and patients[cohort_start - 1]["dose"] == level):
+                        # Escalation happened (or was attempted)
+                        _prev = next_level - 1 if next_level > 0 else 0
+                        if _fu_cnt >= int(cohort_size):
+                            reason = (
+                                f"Burn-in escalation allowed (strict FU mode): "
+                                f"{_fu_cnt} patients at L{_prev} have complete "
+                                f"tox1 follow-up with 0 tox1 DLTs → L{next_level}. "
+                                f"Dose decision evaluated at RT start."
+                            )
+                        else:
+                            reason = (
+                                f"Burn-in escalation blocked (strict FU mode): "
+                                f"fewer than {int(cohort_size)} patients at L{_prev} "
+                                f"have complete tox1 follow-up — staying at L{next_level}. "
+                                f"Dose decision evaluated at RT start."
+                            )
+                    else:
+                        reason = (
+                            f"Burn-in: no tox1 DLT observed yet → L{next_level} "
+                            f"(strict FU mode; dose decision evaluated at RT start)"
+                        )
+                else:
+                    reason = (f"Burn-in: escalate one level (no tox1 DLT "
+                              f"observed yet → L{next_level})")
             elif not allowed_arr:
                 reason = "No dose within joint safety bounds → fallback to L0"
             elif ewoc_eff is None:
@@ -1299,7 +1484,7 @@ R_DEFAULTS = {
     "target_t1":          0.15,
     "target_t2":          0.33,
     "p_surgery":          0.80,
-    "start_level_1b":     2,
+    "start_level_1b":     1,    # L-level (0-based): L1 default when no pre-treated patients
     # Simulation
     "n_sims":             200,
     "seed":               123,
@@ -1308,14 +1493,14 @@ R_DEFAULTS = {
     # Timing (days)
     "incl_to_rt":         21,
     "rt_dur":             14,
-    "rt_to_surg":         84,
+    "rt_to_surg":         42,
     "tox2_win":           30,
     # Sample sizes
     "max_n_63":           27,
     "max_n_crm":          27,
     "cohort_size":        3,
-    # Pre-treated patients at dose level 1 (0-indexed: level 0)
-    "n_safe_d1":          0,
+    # Pre-treated patients at L1 (dose index 1)
+    "n_safe_d1":          6,
     # Priors — shared model
     "prior_model":        "empiric",
     "logistic_intcpt":    3.0,
@@ -1330,6 +1515,7 @@ R_DEFAULTS = {
     # CRM knobs
     "sigma":              1.0,
     "burn_in":            True,
+    "require_full_tox1_fu": True,
     "ewoc_on":            True,
     "ewoc_alpha":         0.25,
     # Early stopping
@@ -1715,14 +1901,25 @@ _sync_tox2_win       = _make_sync("tox2_win",        int,   "wl_tox2_win")
 _sync_max_n_63       = _make_sync("max_n_63",        int,   "wl_max_n_63")
 _sync_max_n_crm      = _make_sync("max_n_crm",       int,   "wl_max_n_crm")
 _sync_cohort_size    = _make_sync("cohort_size",     int,   "wl_cohort_size")
-_sync_n_safe_d1      = _make_sync("n_safe_d1",       int,   "wl_n_safe_d1")
+def _sync_n_safe_d1():
+    """Sync n_safe_d1 widget → canonical, and auto-adjust start_level_1b default."""
+    new_val = int(st.session_state.get("wl_n_safe_d1", R_DEFAULTS["n_safe_d1"]))
+    st.session_state["n_safe_d1"] = new_val
+    # Auto-adjust start_level_1b (L-level, 0-based): if user hasn't set it away from
+    # the base defaults (L1 when no pretreated, L2 when pretreated), keep it in sync.
+    cur = int(st.session_state.get("start_level_1b", R_DEFAULTS["start_level_1b"]))
+    if new_val > 0 and cur == 1:
+        st.session_state["start_level_1b"] = 2
+    elif new_val == 0 and cur == 2:
+        st.session_state["start_level_1b"] = 1
 # Essentials right column
 _sync_gh_n              = _make_sync("gh_n",              int,   "wl_gh_n")
 _sync_max_step          = _make_sync("max_step",          int,   "wl_max_step")
 _sync_sigma             = _make_sync("sigma",             float, "sl_sigma")
 _sync_enforce_guardrail = _make_sync("enforce_guardrail", bool,  "wl_enforce_guardrail")
 _sync_restrict_final_mtd= _make_sync("restrict_final_mtd",bool,  "wl_restrict_final_mtd")
-_sync_burn_in           = _make_sync("burn_in",           bool,  "wl_burn_in")
+_sync_burn_in              = _make_sync("burn_in",              bool, "wl_burn_in")
+_sync_require_full_tox1_fu = _make_sync("require_full_tox1_fu", bool, "wl_require_full_tox1_fu")
 _sync_ewoc_on           = _make_sync("ewoc_on",           bool,  "wl_ewoc_on")
 _sync_ewoc_alpha        = _make_sync("ewoc_alpha",        float, "wl_ewoc_alpha")
 _sync_early_stop_on     = _make_sync("early_stop_on",     bool,  "wl_early_stop_on")
@@ -1935,6 +2132,7 @@ _CFG_ESSENTIALS_KEYS: list[tuple[str, type]] = [
     ("restrict_final_mtd",  bool),
     # CRM behaviour
     ("burn_in",             bool),
+    ("require_full_tox1_fu", bool),
     ("ewoc_on",             bool),
     ("ewoc_alpha",          float),
     ("early_stop_on",       bool),
@@ -2260,12 +2458,25 @@ if view == "Essentials":
         )
         st.session_state["p_surgery"] = st.session_state["wl_p_surgery"]
 
+        # Smart default: L2 when pre-treated patients exist, L1 otherwise.
+        # Only applied when start_level_1b has not yet been stored in session state.
+        if "start_level_1b" not in st.session_state:
+            _n_pretreated_init = int(_cfg("n_safe_d1"))
+            st.session_state["start_level_1b"] = 2 if _n_pretreated_init > 0 else 1
+        _dose_opts = ["L0", "L1", "L2", "L3", "L4"]
         st.session_state["wl_start_level_1b"] = int(_cfg("start_level_1b"))
-        st.number_input(
-            "Start dose level (1-based)",
-            min_value=1, max_value=5, step=1, key="wl_start_level_1b",
+        st.selectbox(
+            "Start dose level",
+            options=list(range(5)),
+            format_func=lambda i: _dose_opts[i],
+            index=int(_cfg("start_level_1b")),
+            key="wl_start_level_1b",
             on_change=_sync_start_level_1b,
-            help=h("start_level_1b", "Starting dose level (1 = lowest).")
+            help=h("start_level_1b",
+                   "CRM starting dose level (L0 = lowest, L4 = highest). "
+                   "Default is L1 when no pre-treated patients exist; "
+                   "auto-adjusts to L2 when pre-treated patients are present at L1, "
+                   "since L1 is already established as safe.")
         )
         st.session_state["start_level_1b"] = st.session_state["wl_start_level_1b"]
 
@@ -2330,7 +2541,7 @@ if view == "Essentials":
             min_value=1, max_value=365, step=1, key="wl_rt_to_surg",
             on_change=_sync_rt_to_surg,
             help=h("rt_to_surg",
-                   "Days from end of radiotherapy to surgery. Default 84 days ≈ 12 weeks. "
+                   "Days from end of radiotherapy to surgery. Default 42 days ≈ 6 weeks. "
                    "The tox1 (acute) follow-up window is derived as RT duration + this value, "
                    "so it always extends from RT start to the moment of surgery.")
         )
@@ -2381,16 +2592,14 @@ if view == "Essentials":
 
         st.session_state["wl_n_safe_d1"] = int(_cfg("n_safe_d1"))
         st.number_input(
-            "Pre-treated patients at dose level 1 (n_safe_d1)",
+            "Pre-treated patients at L1",
             min_value=0, max_value=50, step=1, key="wl_n_safe_d1",
             on_change=_sync_n_safe_d1,
             help=h("n_safe_d1",
-                   "Number of patients already safely treated at dose level 1 "
-                   "(0 DLTs, complete follow-up) before the trial opens. These "
-                   "are pre-loaded into the CRM as fully-weighted observations "
-                   "at dose 0 with no toxicities. They count toward Max sample "
-                   "size (CRM) — increase that by this amount if you want the "
-                   "same number of newly enrolled patients.")
+                   "Patients already safely treated at L1 (0 DLTs, complete follow-up) "
+                   "before the trial opens. Pre-loaded into the CRM as fully weighted "
+                   "observations at L1 with no toxicities. They count toward Max sample "
+                   "size (CRM).")
         )
         st.session_state["n_safe_d1"] = st.session_state["wl_n_safe_d1"]
 
@@ -2470,6 +2679,21 @@ if view == "Essentials":
                    "then switch to CRM updates.")
         )
         st.session_state["burn_in"] = st.session_state["wl_burn_in"]
+
+        # ── require_full_tox1_fu ──────────────────────────────────────────
+        st.session_state["wl_require_full_tox1_fu"] = bool(_cfg("require_full_tox1_fu"))
+        st.toggle(
+            "Require full tox1 follow-up before burn-in escalation",
+            key="wl_require_full_tox1_fu",
+            on_change=_sync_require_full_tox1_fu,
+            help=h("require_full_tox1_fu",
+                   "When enabled, escalation during burn-in is only allowed after the "
+                   "current dose level has at least one full cohort (cohort_size patients) "
+                   "with complete acute tox1 follow-up (RT start + tox1 window) and no "
+                   "observed tox1 DLT. The escalation check is made at the next patient's "
+                   "RT start, not at inclusion.")
+        )
+        st.session_state["require_full_tox1_fu"] = st.session_state["wl_require_full_tox1_fu"]
 
         # ── ewoc_on ───────────────────────────────────────────────────────
         st.session_state["wl_ewoc_on"] = bool(_cfg("ewoc_on"))
@@ -2791,12 +3015,12 @@ elif view == "Playground":
 
                 # ── Prior MTD level ────────────────────────────────────────
                 st.session_state["sl_prior_nu_t1"] = int(_cfg("prior_nu_t1"))
-                st.slider("Prior MTD level (tox1, 1-based)", 1, 5, step=1,
+                st.slider("Prior MTD level (tox1)", 1, 5, step=1,
                           key="sl_prior_nu_t1",
                           on_change=_sync_prior_nu_t1,
                           help=h("prior_nu_t1",
                                  "Dose level that is a priori closest to the tox1 target. "
-                                 "L1 = most cautious, L5 = most optimistic."))
+                                 "1 = most cautious (L0), 5 = most optimistic (L4)."))
                 st.session_state["prior_nu_t1"] = st.session_state["sl_prior_nu_t1"]
 
             else:
@@ -2825,7 +3049,7 @@ elif view == "Playground":
 
                 # ── Prior MTD level (tox2) ─────────────────────────────────
                 st.session_state["sl_prior_nu_t2"] = int(_cfg("prior_nu_t2"))
-                st.slider("Prior MTD level (tox2, 1-based)", 1, 5, step=1,
+                st.slider("Prior MTD level (tox2)", 1, 5, step=1,
                           key="sl_prior_nu_t2",
                           on_change=_sync_prior_nu_t2,
                           help=h("prior_nu_t2",
@@ -2954,7 +3178,7 @@ elif view == "Playground":
     if run:
         rng_master = np.random.default_rng(int(_cfg("seed")))
         ns         = int(_cfg("n_sims"))
-        start_0b   = int(np.clip(int(_cfg("start_level_1b")) - 1, 0, 4))
+        start_0b   = int(np.clip(int(_cfg("start_level_1b")), 0, len(true_t1) - 1))
 
         sel_63  = np.zeros(5, dtype=int)
         sel_crm = np.zeros(5, dtype=int)
@@ -2973,6 +3197,7 @@ elif view == "Playground":
         early_stop_crm  = np.zeros(ns, dtype=bool)
         n_at_stop_crm   = np.zeros(ns, dtype=int)
         sel_crm_per_trial = np.zeros(ns, dtype=int)
+        mtd_support_arr   = np.zeros(ns, dtype=float)   # posterior support for selected MTD
         early_dlt1_6  = np.zeros(ns)
         early_dlt1_9  = np.zeros(ns)
         early_dlt1_12 = np.zeros(ns)
@@ -3034,6 +3259,7 @@ elif view == "Playground":
                 ewoc_on      = bool(_cfg("ewoc_on")),
                 ewoc_alpha   = float(_cfg("ewoc_alpha")),
                 burn_in      = bool(_cfg("burn_in")),
+                require_full_tox1_fu_before_escalation = bool(_cfg("require_full_tox1_fu")),
                 n_safe_d1    = int(_cfg("n_safe_d1")),
                 p_stop       = (float(_cfg("p_stop"))
                                 if bool(_cfg("early_stop_on")) else 1.0),
@@ -3067,6 +3293,20 @@ elif view == "Playground":
                 }
             sel_crm[selc] += 1
             sel_crm_per_trial[s] = selc
+
+            # Compute posterior support for the selected MTD using final follow-up weights
+            _n1f_s, _y1f_s, _n2f_s, _y2f_s = tite_weights(
+                ptsc, sdc, _tox1_win_derived, int(_cfg("tox2_win")), len(true_t1))
+            _supp_probs = crm_mtd_posterior_probs(
+                float(_cfg("sigma")), skel_t1, skel_t2,
+                _n1f_s, _y1f_s, _n2f_s, _y2f_s,
+                target_t1_val, target_t2_val,
+                ewoc_alpha=(float(_cfg("ewoc_alpha")) if bool(_cfg("ewoc_on")) else None),
+                gh_n=int(_cfg("gh_n")),
+                restrict_to_tried=bool(_cfg("restrict_final_mtd")),
+            )
+            mtd_support_arr[s] = float(_supp_probs[selc])
+
             for p in ptsc:
                 nmat_crm[s, p["dose"]]  += 1
                 nsurg_crm[s, p["dose"]] += int(p["has_surgery"])
@@ -3111,7 +3351,8 @@ elif view == "Playground":
             ),
             "n_per_trial_crm":  n_at_stop_crm.tolist(),
             "early_stop_arr":   early_stop_crm.tolist(),
-            "sel_crm_per_trial": sel_crm_per_trial.tolist(),
+            "sel_crm_per_trial":  sel_crm_per_trial.tolist(),
+            "mtd_support_arr":    mtd_support_arr.tolist(),
             "early_dlt1_6":     early_dlt1_6.tolist(),
             "early_dlt1_9":     early_dlt1_9.tolist(),
             "early_dlt1_12":    early_dlt1_12.tolist(),
@@ -3236,6 +3477,101 @@ if view == "Playground" and "_tite_results" in st.session_state:
             f"n_sims={res['ns']} | seed={res['seed']}"
             + (f" | True safe=L{ts}" if ts is not None else " | No jointly safe dose")
         )
+
+    # ── Posterior support for selected MTD ─────────────────────────────────────
+    if "mtd_support_arr" in res:
+        _msa = np.array(res["mtd_support_arr"], dtype=float)
+        _msa_sel = np.array(res["sel_crm_per_trial"], dtype=int)
+
+        st.markdown("---")
+        st.subheader("Posterior support for selected MTD")
+        st.caption(
+            "Posterior support for selected MTD shows how strongly the final CRM model "
+            "supported the dose it selected at the end of each simulated trial. "
+            "A higher value means the selected dose was clearly favoured by the final "
+            "posterior. A lower value means the model selected an MTD, but the posterior "
+            "still spread meaningful probability across other dose levels."
+        )
+
+        _ps_c1, _ps_c2 = st.columns(2, gap="large")
+
+        with _ps_c1:
+            # Histogram of posterior support values
+            fig_ps, ax_ps = plt.subplots(figsize=(RESULT_W_IN, RESULT_H_IN), dpi=RESULT_DPI)
+            _apply_dark_fig(fig_ps, ax_ps)
+            _bins = np.linspace(0, 1, 21)
+            ax_ps.hist(_msa, bins=_bins, color="#ffaa44", edgecolor=_DARK_BG, linewidth=0.4)
+            ax_ps.set_xlabel("Posterior support", fontsize=9)
+            ax_ps.set_ylabel("Simulated trials", fontsize=9)
+            ax_ps.set_xlim(0, 1)
+            ax_ps.set_title("Posterior support for selected MTD", fontsize=10)
+            compact_style(ax_ps)
+            fig_ps.tight_layout(pad=0.4)
+            st.image(fig_to_png_bytes(fig_ps), use_container_width=True)
+            plt.close(fig_ps)
+
+            # Summary metrics
+            _med_supp  = float(np.median(_msa))
+            _q25, _q75 = float(np.percentile(_msa, 25)), float(np.percentile(_msa, 75))
+            _pct50 = float(np.mean(_msa >= 0.50)) * 100
+            _pct70 = float(np.mean(_msa >= 0.70)) * 100
+            _pct80 = float(np.mean(_msa >= 0.80)) * 100
+            _ms1, _ms2 = st.columns(2, gap="small")
+            with _ms1:
+                st.metric("Median support",
+                          f"{_med_supp:.2f}",
+                          help="Median posterior support for selected MTD across all simulated trials.")
+                st.metric("IQR",
+                          f"{_q25:.2f} – {_q75:.2f}",
+                          help="Interquartile range of posterior support (25th–75th percentile).")
+            with _ms2:
+                st.metric("≥ 0.50",
+                          f"{_pct50:.1f}%",
+                          help="Percentage of trials where posterior support for selected MTD ≥ 0.50.")
+                st.metric("≥ 0.70",
+                          f"{_pct70:.1f}%",
+                          help="Percentage of trials where posterior support for selected MTD ≥ 0.70.")
+                st.metric("≥ 0.80",
+                          f"{_pct80:.1f}%",
+                          help="Percentage of trials where posterior support for selected MTD ≥ 0.80.")
+
+        with _ps_c2:
+            # Box plot: MTD certainty grouped by selected MTD level
+            _dose_lbls_ps = [f"L{i}" for i in range(5)]
+            _groups = [_msa[_msa_sel == d] for d in range(5)]
+            _groups_nonempty = [(lbl, g) for lbl, g in zip(_dose_lbls_ps, _groups) if len(g) > 0]
+
+            fig_bp, ax_bp = plt.subplots(figsize=(RESULT_W_IN, RESULT_H_IN), dpi=RESULT_DPI)
+            _apply_dark_fig(fig_bp, ax_bp)
+            if _groups_nonempty:
+                _bp_lbls   = [lbl for lbl, _ in _groups_nonempty]
+                _bp_data   = [g   for _, g   in _groups_nonempty]
+                _ps_dose_colors = ["#4a9eff", "#ffaa44", "#ff6677", "#55dd99", "#cc88ff"]
+                _bp_colors = [_ps_dose_colors[i] for i, (lbl, g)
+                              in enumerate(zip(_dose_lbls_ps, _groups))
+                              if len(g) > 0]
+                bp = ax_bp.boxplot(
+                    _bp_data,
+                    patch_artist=True,
+                    medianprops=dict(color="#ffffff", linewidth=1.5),
+                    whiskerprops=dict(color=_DARK_FG),
+                    capprops=dict(color=_DARK_FG),
+                    flierprops=dict(marker="o", markersize=2,
+                                   markerfacecolor=_DARK_FG, alpha=0.4),
+                )
+                for patch, col in zip(bp["boxes"], _bp_colors):
+                    patch.set_facecolor(col)
+                    patch.set_alpha(0.75)
+                ax_bp.set_xticks(range(1, len(_bp_lbls) + 1))
+                ax_bp.set_xticklabels(_bp_lbls, fontsize=9)
+            ax_bp.set_ylim(0, 1.05)
+            ax_bp.set_xlabel("Selected MTD", fontsize=9)
+            ax_bp.set_ylabel("Posterior support", fontsize=9)
+            ax_bp.set_title("MTD certainty by selected MTD", fontsize=10)
+            compact_style(ax_bp)
+            fig_bp.tight_layout(pad=0.4)
+            st.image(fig_to_png_bytes(fig_bp), use_container_width=True)
+            plt.close(fig_bp)
 
 # ==============================================================================
 # CRM dichotomy diagnostic helpers
@@ -3495,7 +3831,7 @@ if view == "Playground" and "_tite_results" in st.session_state and "sel_crm_per
                 target1=float(get_config_value("target_t1")),
                 target2=float(get_config_value("target_t2")),
                 sigma=float(_cfg("sigma")),
-                start_level=int(_cfg("start_level_1b")) - 1,
+                start_level=int(_cfg("start_level_1b")),
                 max_n=int(_cfg("max_n_crm")),
                 cohort_size=int(_cfg("cohort_size")),
                 accrual_per_month=float(_cfg("accrual_per_month")),
@@ -3510,6 +3846,7 @@ if view == "Playground" and "_tite_results" in st.session_state and "sel_crm_per
                 enforce_guardrail=bool(_cfg("enforce_guardrail")),
                 restrict_final_to_tried=bool(_cfg("restrict_final_mtd")),
                 n_safe_d1=int(_cfg("n_safe_d1")),
+                require_full_tox1_fu_before_escalation=bool(_cfg("require_full_tox1_fu")),
                 p_stop=1.0,
             )
             _ew_skel1 = list(skel_t1)
@@ -3925,6 +4262,71 @@ if view == "Playground" and "_tite_results" in st.session_state:
             "Green dashed line = target toxicity rate (shading boundary). "
             "Orange dashed line = EWOC α — OD probabilities above this value "
             "cause dose exclusion."
+        )
+
+        # ── Final posterior support by dose (first trial) ─────────────────────
+        st.subheader("Final posterior support by dose — first CRM trial")
+        _final_mtd_for_supp = _post_tr.get("final_mtd")
+        _ewoc_on_ps  = bool(_post_tr.get("ewoc_on",  _cfg("ewoc_on")))
+        _ewoc_alp_ps = float(_post_tr.get("ewoc_alpha", _cfg("ewoc_alpha")))
+        _restrict_ps = bool(_post_tr.get("restrict_final_mtd", _cfg("restrict_final_mtd")))
+        _supp_probs_tr = crm_mtd_posterior_probs(
+            _sigma_pt,
+            _skel_t1_pt, _skel_t2_pt,
+            _n1_end, _y1_end, _n2_end, _y2_end,
+            float(_post_tr.get("target_t1", _cfg("target_t1"))),
+            float(_post_tr.get("target_t2", _cfg("target_t2"))),
+            ewoc_alpha=(_ewoc_alp_ps if _ewoc_on_ps else None),
+            gh_n=_gh_n_pt,
+            restrict_to_tried=_restrict_ps,
+        )
+        _dose_labels_sp = [f"L{i}" for i in range(_n_lvls)]
+        fig_sp, ax_sp = plt.subplots(figsize=(6.0, 2.8), dpi=150)
+        _apply_dark_fig(fig_sp, ax_sp)
+        _sp_colors = ["#4a9eff", "#ffaa44", "#ff6677", "#55dd99", "#cc88ff"]
+        _bars_sp = ax_sp.bar(
+            range(_n_lvls), _supp_probs_tr,
+            color=[_sp_colors[i] for i in range(_n_lvls)],
+            edgecolor=_DARK_BG, linewidth=0.5,
+        )
+        # Annotate bars with probability values
+        for _i, (bar, prob) in enumerate(zip(_bars_sp, _supp_probs_tr)):
+            if prob > 0.01:
+                ax_sp.text(bar.get_x() + bar.get_width() / 2, prob + 0.01,
+                           f"{prob:.2f}", ha="center", va="bottom",
+                           fontsize=8, color=_DARK_FG)
+        # Highlight final selected MTD
+        if _final_mtd_for_supp is not None:
+            _bars_sp[_final_mtd_for_supp].set_edgecolor("#ffd700")
+            _bars_sp[_final_mtd_for_supp].set_linewidth(2.5)
+            ax_sp.text(
+                _final_mtd_for_supp, _supp_probs_tr[_final_mtd_for_supp] / 2,
+                "▶ selected",
+                ha="center", va="center", fontsize=7.5, color="#ffd700",
+                fontweight="bold",
+            )
+        ax_sp.set_xticks(range(_n_lvls))
+        ax_sp.set_xticklabels(_dose_labels_sp, fontsize=9)
+        ax_sp.set_ylim(0, min(1.05, max(float(_supp_probs_tr.max()) * 1.25, 0.12)))
+        ax_sp.set_xlabel("Dose level", fontsize=9)
+        ax_sp.set_ylabel("Posterior probability", fontsize=9)
+        ax_sp.set_title(
+            f"Final posterior support by dose  "
+            f"(selected MTD = L{_final_mtd_for_supp}, "
+            f"support = {float(_supp_probs_tr[_final_mtd_for_supp]):.2f})"
+            if _final_mtd_for_supp is not None else
+            "Final posterior support by dose",
+            fontsize=10,
+        )
+        compact_style(ax_sp)
+        fig_sp.tight_layout(pad=0.4)
+        st.image(fig_to_png_bytes(fig_sp), use_container_width=False, width=520)
+        plt.close(fig_sp)
+        st.caption(
+            "Posterior probability that each dose level would be selected as the final MTD "
+            "by the CRM rule, integrating over the study-end posterior. "
+            "Gold border = the dose actually selected in this trial. "
+            "Dual-endpoint selection rule (EWOC + tox1 target matching) applied."
         )
 
         # ── Dose eligibility trajectory ────────────────────────────────────────
@@ -4592,6 +4994,7 @@ def run_truth_stress_test(scenarios, base_ss, skel_t1, skel_t2, n_sim, seed):
         ewoc_on=bool(base_ss["ewoc_on"]),
         ewoc_alpha=float(base_ss["ewoc_alpha"]),
         n_safe_d1=int(base_ss.get("n_safe_d1", 0)),
+        require_full_tox1_fu_before_escalation=bool(base_ss.get("require_full_tox1_fu", False)),
         p_stop=float(base_ss.get("p_stop", 1.0)),
         collect_trace=False,
     )
@@ -4698,6 +5101,7 @@ def run_parameter_sweep(param_name, param_values, base_ss,
         ewoc_on=bool(base_ss["ewoc_on"]),
         ewoc_alpha=float(base_ss["ewoc_alpha"]),
         n_safe_d1=int(base_ss.get("n_safe_d1", 0)),
+        require_full_tox1_fu_before_escalation=bool(base_ss.get("require_full_tox1_fu", False)),
         p_stop=float(base_ss.get("p_stop", 1.0)),
     )
 
@@ -5665,7 +6069,7 @@ def _plot_prior_mtd_context(true_tox, pv_list, tox_label, title,
 #             ewoc_alpha=st.session_state["ewoc_alpha"],
 #             max_n=st.session_state["max_n_crm"],
 #             cohort_size=st.session_state["cohort_size"],
-#             start_level=st.session_state["start_level_1b"] - 1,
+#             start_level=st.session_state["start_level_1b"],
 #             accrual_per_month=st.session_state["accrual_per_month"],
 #             incl_to_rt=st.session_state["incl_to_rt"],
 #             rt_dur=st.session_state["rt_dur"],
@@ -6366,7 +6770,7 @@ if view == "Design Exploration":
             ewoc_alpha           = float(get_config_value("ewoc_alpha")),
             max_n                = int(_cfg("max_n_crm")),
             cohort_size          = int(_cfg("cohort_size")),
-            start_level          = int(_cfg("start_level_1b")) - 1,
+            start_level          = int(_cfg("start_level_1b")),
             accrual_per_month    = float(_cfg("accrual_per_month")),
             incl_to_rt           = int(_cfg("incl_to_rt")),
             rt_dur               = int(_cfg("rt_dur")),
@@ -6375,6 +6779,7 @@ if view == "Design Exploration":
             max_step             = int(_cfg("max_step")),
             gh_n                 = int(_cfg("gh_n")),
             burn_in              = bool(_cfg("burn_in")),
+            require_full_tox1_fu = bool(_cfg("require_full_tox1_fu")),
             enforce_guardrail    = bool(_cfg("enforce_guardrail")),
             restrict_final_to_tried = bool(_cfg("restrict_final_mtd")),
             # Prior params (needed when sweeping prior_nu_t1 / prior_nu_t2)
@@ -6495,7 +6900,7 @@ if view == "Design Exploration":
             ewoc_alpha              = float(get_config_value("ewoc_alpha")),
             max_n                   = int(_cfg("max_n_crm")),
             cohort_size             = int(_cfg("cohort_size")),
-            start_level             = int(_cfg("start_level_1b")) - 1,
+            start_level             = int(_cfg("start_level_1b")),
             accrual_per_month       = float(_cfg("accrual_per_month")),
             incl_to_rt              = int(_cfg("incl_to_rt")),
             rt_dur                  = int(_cfg("rt_dur")),
@@ -6504,6 +6909,7 @@ if view == "Design Exploration":
             max_step                = int(_cfg("max_step")),
             gh_n                    = int(_cfg("gh_n")),
             burn_in                 = bool(_cfg("burn_in")),
+            require_full_tox1_fu    = bool(_cfg("require_full_tox1_fu")),
             enforce_guardrail       = bool(_cfg("enforce_guardrail")),
             restrict_final_to_tried = bool(_cfg("restrict_final_mtd")),
             prior_pt1               = _de_pt1,
@@ -6664,7 +7070,7 @@ if view == "Design Exploration":
             ewoc_alpha              = float(get_config_value("ewoc_alpha")),
             max_n                   = int(_cfg("max_n_crm")),
             cohort_size             = int(_cfg("cohort_size")),
-            start_level             = int(_cfg("start_level_1b")) - 1,
+            start_level             = int(_cfg("start_level_1b")),
             accrual_per_month       = float(_cfg("accrual_per_month")),
             incl_to_rt              = int(_cfg("incl_to_rt")),
             rt_dur                  = int(_cfg("rt_dur")),
@@ -6673,6 +7079,7 @@ if view == "Design Exploration":
             max_step                = int(_cfg("max_step")),
             gh_n                    = int(_cfg("gh_n")),
             burn_in                 = bool(_cfg("burn_in")),
+            require_full_tox1_fu    = bool(_cfg("require_full_tox1_fu")),
             enforce_guardrail       = bool(_cfg("enforce_guardrail")),
             restrict_final_to_tried = bool(_cfg("restrict_final_mtd")),
         )
