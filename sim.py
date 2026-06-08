@@ -1500,7 +1500,7 @@ R_DEFAULTS = {
     "max_n_crm":          27,
     "cohort_size":        3,
     # Pre-treated patients at L1 (dose index 1)
-    "n_safe_d1":          0,
+    "n_safe_d1":          6,
     # Priors — shared model
     "prior_model":        "empiric",
     "logistic_intcpt":    3.0,
