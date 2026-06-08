@@ -400,6 +400,7 @@ def run_tite_crm(
     collect_trace=False,
     n_safe_d1=0,
     p_stop=1.0,
+    require_full_tox1_fu_before_escalation=False,
 ):
     """
     TITE-CRM trial simulation.
@@ -422,6 +423,13 @@ def run_tite_crm(
       with no DLTs.  Surgery status for these patients is drawn from p_surgery.
       These patients count toward max_n — if you want max_n new patients in addition
       to the pre-treated cohort, increase max_n by n_safe_d1.
+
+    require_full_tox1_fu_before_escalation: when True, burn-in escalation from
+      the current dose Lx to Lx+1 is only allowed if at least cohort_size patients
+      treated at Lx have completed full acute tox1 follow-up (tox1_win_end defined
+      as pt["rt_start"] + tox1_win) with no observed tox1 DLTs.  The check is
+      evaluated at the next patient's RT start day (arrival + incl_to_rt), not at
+      inclusion.  Has no effect when burn_in=False or after burn-in has ended.
 
     p_stop: early-stopping threshold (0 < p_stop <= 1).  After each CRM cohort
       decision (burn-in excluded), the posterior probability that the recommended
@@ -484,17 +492,61 @@ def run_tite_crm(
             })
         highest_tried = 1
 
+    _req_fu = bool(require_full_tox1_fu_before_escalation)
+
     while len(patients) < int(max_n):
         n_add        = min(int(cohort_size), int(max_n) - len(patients))
         cohort_start = len(patients)
 
-        # Enroll cohort: each patient arrives after an Exp(1/rate) inter-arrival
+        # Enroll cohort: each patient arrives after an Exp(1/rate) inter-arrival.
+        # When require_full_tox1_fu_before_escalation is ON and burn-in is active,
+        # the dose for each new patient is evaluated at their RT start day so that
+        # the full-follow-up check can use the correct calendar time.
         for _ in range(n_add):
             current_day += rng.exponential(1.0 / rate_per_day)
-            pt = make_patient(rng, level, current_day,
+            _assign_level = level
+
+            if _req_fu and burn_active:
+                # Evaluate the escalation decision at next patient's RT start day,
+                # not at inclusion.  tox1 full follow-up means current_day + incl_to_rt
+                # >= pt["tox1_win_end"], i.e. rt_start + tox1_win has elapsed.
+                _next_rt_start = current_day + float(incl_to_rt)
+
+                # Check whether any tox1 DLT has been observed by RT start
+                _obs_dlt_at_rt = any(
+                    p["has_tox1"] and p["tox1_day"] is not None
+                    and p["tox1_day"] <= _next_rt_start
+                    for p in patients
+                )
+                if _obs_dlt_at_rt:
+                    # DLT observed — burn-in will end; stay at current dose
+                    _assign_level = level
+                else:
+                    # Count fully tox1-evaluable patients at current dose with no DLT.
+                    # Full evaluability: tox1_win_end (= rt_start + tox1_win) <= check day.
+                    _fu_safe = sum(
+                        1 for p in patients
+                        if p["dose"] == level
+                        and float(_next_rt_start) >= p["tox1_win_end"]
+                        and not p["has_tox1"]
+                    )
+                    _can_esc = _fu_safe >= int(cohort_size)
+                    if _can_esc:
+                        _assign_level = min(level + 1, n_levels - 1)
+                    else:
+                        _assign_level = level
+            elif burn_active:
+                # Standard burn-in: dose assigned at inclusion, escalation checked
+                # after the cohort (handled below in the post-cohort block).
+                _assign_level = level
+
+            pt = make_patient(rng, _assign_level, current_day,
                               true_t1, p_surgery, true_t2,
                               incl_to_rt, rt_dur, rt_to_surg, tox1_win, tox2_win)
             patients.append(pt)
+            # When the strict FU mode escalates mid-cohort, carry the new level forward
+            if _req_fu and burn_active:
+                level = _assign_level
 
         # Decision time = calendar day when last patient in cohort arrived
         decision_day  = current_day
@@ -506,7 +558,7 @@ def run_tite_crm(
 
         burn_was_active = burn_active
 
-        # Burn-in: check if any tox1 event has been observed by now
+        # Burn-in: check if any tox1 event has been observed by decision day
         if burn_active:
             obs_any_dlt = any(
                 p["has_tox1"] and p["tox1_day"] is not None
@@ -517,8 +569,13 @@ def run_tite_crm(
                 burn_active = False
 
         if burn_active:
-            # No DLT observed yet — escalate one level
-            next_level = min(level + 1, n_levels - 1)
+            if _req_fu:
+                # Strict FU mode: escalation was already handled per-patient above.
+                # Post-cohort: keep level as-is (already updated inside the loop).
+                next_level = level
+            else:
+                # Standard burn-in: escalate one level
+                next_level = min(level + 1, n_levels - 1)
             if next_level == n_levels - 1:
                 burn_active = False   # reached top, switch to CRM next round
         else:
@@ -563,8 +620,39 @@ def run_tite_crm(
 
             # Human-readable reason for the dose selected
             if burn_was_active:
-                reason = (f"Burn-in: escalate one level (no tox1 DLT "
-                          f"observed yet → L{next_level})")
+                if _req_fu:
+                    # Count evaluable patients at previous level for trace annotation
+                    _fu_cnt = sum(
+                        1 for p in patients[:cohort_start]
+                        if p["dose"] == (next_level - 1) and not p["has_tox1"]
+                        and float(decision_day) >= p["tox1_win_end"]
+                    )
+                    if next_level > level or (next_level == level and cohort_start > 0
+                                              and patients[cohort_start - 1]["dose"] == level):
+                        # Escalation happened (or was attempted)
+                        _prev = next_level - 1 if next_level > 0 else 0
+                        if _fu_cnt >= int(cohort_size):
+                            reason = (
+                                f"Burn-in escalation allowed (strict FU mode): "
+                                f"{_fu_cnt} patients at L{_prev} have complete "
+                                f"tox1 follow-up with 0 tox1 DLTs → L{next_level}. "
+                                f"Dose decision evaluated at RT start."
+                            )
+                        else:
+                            reason = (
+                                f"Burn-in escalation blocked (strict FU mode): "
+                                f"fewer than {int(cohort_size)} patients at L{_prev} "
+                                f"have complete tox1 follow-up — staying at L{next_level}. "
+                                f"Dose decision evaluated at RT start."
+                            )
+                    else:
+                        reason = (
+                            f"Burn-in: no tox1 DLT observed yet → L{next_level} "
+                            f"(strict FU mode; dose decision evaluated at RT start)"
+                        )
+                else:
+                    reason = (f"Burn-in: escalate one level (no tox1 DLT "
+                              f"observed yet → L{next_level})")
             elif not allowed_arr:
                 reason = "No dose within joint safety bounds → fallback to L0"
             elif ewoc_eff is None:
@@ -1329,6 +1417,7 @@ R_DEFAULTS = {
     # CRM knobs
     "sigma":              1.0,
     "burn_in":            True,
+    "require_full_tox1_fu": False,
     "ewoc_on":            True,
     "ewoc_alpha":         0.25,
     # Early stopping
@@ -1731,7 +1820,8 @@ _sync_max_step          = _make_sync("max_step",          int,   "wl_max_step")
 _sync_sigma             = _make_sync("sigma",             float, "sl_sigma")
 _sync_enforce_guardrail = _make_sync("enforce_guardrail", bool,  "wl_enforce_guardrail")
 _sync_restrict_final_mtd= _make_sync("restrict_final_mtd",bool,  "wl_restrict_final_mtd")
-_sync_burn_in           = _make_sync("burn_in",           bool,  "wl_burn_in")
+_sync_burn_in              = _make_sync("burn_in",              bool, "wl_burn_in")
+_sync_require_full_tox1_fu = _make_sync("require_full_tox1_fu", bool, "wl_require_full_tox1_fu")
 _sync_ewoc_on           = _make_sync("ewoc_on",           bool,  "wl_ewoc_on")
 _sync_ewoc_alpha        = _make_sync("ewoc_alpha",        float, "wl_ewoc_alpha")
 _sync_early_stop_on     = _make_sync("early_stop_on",     bool,  "wl_early_stop_on")
@@ -1944,6 +2034,7 @@ _CFG_ESSENTIALS_KEYS: list[tuple[str, type]] = [
     ("restrict_final_mtd",  bool),
     # CRM behaviour
     ("burn_in",             bool),
+    ("require_full_tox1_fu", bool),
     ("ewoc_on",             bool),
     ("ewoc_alpha",          float),
     ("early_stop_on",       bool),
@@ -2490,6 +2581,21 @@ if view == "Essentials":
                    "then switch to CRM updates.")
         )
         st.session_state["burn_in"] = st.session_state["wl_burn_in"]
+
+        # ── require_full_tox1_fu ──────────────────────────────────────────
+        st.session_state["wl_require_full_tox1_fu"] = bool(_cfg("require_full_tox1_fu"))
+        st.toggle(
+            "Require full tox1 follow-up before burn-in escalation",
+            key="wl_require_full_tox1_fu",
+            on_change=_sync_require_full_tox1_fu,
+            help=h("require_full_tox1_fu",
+                   "When enabled, escalation during burn-in is only allowed after the "
+                   "current dose level has at least one full cohort (cohort_size patients) "
+                   "with complete acute tox1 follow-up (RT start + tox1 window) and no "
+                   "observed tox1 DLT. The escalation check is made at the next patient's "
+                   "RT start, not at inclusion.")
+        )
+        st.session_state["require_full_tox1_fu"] = st.session_state["wl_require_full_tox1_fu"]
 
         # ── ewoc_on ───────────────────────────────────────────────────────
         st.session_state["wl_ewoc_on"] = bool(_cfg("ewoc_on"))
@@ -3054,6 +3160,7 @@ elif view == "Playground":
                 ewoc_on      = bool(_cfg("ewoc_on")),
                 ewoc_alpha   = float(_cfg("ewoc_alpha")),
                 burn_in      = bool(_cfg("burn_in")),
+                require_full_tox1_fu_before_escalation = bool(_cfg("require_full_tox1_fu")),
                 n_safe_d1    = int(_cfg("n_safe_d1")),
                 p_stop       = (float(_cfg("p_stop"))
                                 if bool(_cfg("early_stop_on")) else 1.0),
@@ -3530,6 +3637,7 @@ if view == "Playground" and "_tite_results" in st.session_state and "sel_crm_per
                 enforce_guardrail=bool(_cfg("enforce_guardrail")),
                 restrict_final_to_tried=bool(_cfg("restrict_final_mtd")),
                 n_safe_d1=int(_cfg("n_safe_d1")),
+                require_full_tox1_fu_before_escalation=bool(_cfg("require_full_tox1_fu")),
                 p_stop=1.0,
             )
             _ew_skel1 = list(skel_t1)
@@ -4612,6 +4720,7 @@ def run_truth_stress_test(scenarios, base_ss, skel_t1, skel_t2, n_sim, seed):
         ewoc_on=bool(base_ss["ewoc_on"]),
         ewoc_alpha=float(base_ss["ewoc_alpha"]),
         n_safe_d1=int(base_ss.get("n_safe_d1", 0)),
+        require_full_tox1_fu_before_escalation=bool(base_ss.get("require_full_tox1_fu", False)),
         p_stop=float(base_ss.get("p_stop", 1.0)),
         collect_trace=False,
     )
@@ -4718,6 +4827,7 @@ def run_parameter_sweep(param_name, param_values, base_ss,
         ewoc_on=bool(base_ss["ewoc_on"]),
         ewoc_alpha=float(base_ss["ewoc_alpha"]),
         n_safe_d1=int(base_ss.get("n_safe_d1", 0)),
+        require_full_tox1_fu_before_escalation=bool(base_ss.get("require_full_tox1_fu", False)),
         p_stop=float(base_ss.get("p_stop", 1.0)),
     )
 
@@ -6395,6 +6505,7 @@ if view == "Design Exploration":
             max_step             = int(_cfg("max_step")),
             gh_n                 = int(_cfg("gh_n")),
             burn_in              = bool(_cfg("burn_in")),
+            require_full_tox1_fu = bool(_cfg("require_full_tox1_fu")),
             enforce_guardrail    = bool(_cfg("enforce_guardrail")),
             restrict_final_to_tried = bool(_cfg("restrict_final_mtd")),
             # Prior params (needed when sweeping prior_nu_t1 / prior_nu_t2)
@@ -6524,6 +6635,7 @@ if view == "Design Exploration":
             max_step                = int(_cfg("max_step")),
             gh_n                    = int(_cfg("gh_n")),
             burn_in                 = bool(_cfg("burn_in")),
+            require_full_tox1_fu    = bool(_cfg("require_full_tox1_fu")),
             enforce_guardrail       = bool(_cfg("enforce_guardrail")),
             restrict_final_to_tried = bool(_cfg("restrict_final_mtd")),
             prior_pt1               = _de_pt1,
@@ -6693,6 +6805,7 @@ if view == "Design Exploration":
             max_step                = int(_cfg("max_step")),
             gh_n                    = int(_cfg("gh_n")),
             burn_in                 = bool(_cfg("burn_in")),
+            require_full_tox1_fu    = bool(_cfg("require_full_tox1_fu")),
             enforce_guardrail       = bool(_cfg("enforce_guardrail")),
             restrict_final_to_tried = bool(_cfg("restrict_final_mtd")),
         )
