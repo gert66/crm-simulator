@@ -1484,7 +1484,7 @@ R_DEFAULTS = {
     "target_t1":          0.15,
     "target_t2":          0.33,
     "p_surgery":          0.80,
-    "start_level_1b":     1,    # L-level (0-based): L1 default when no pre-treated patients
+    "start_level_1b":     2,    # L-level (0-based): L2 default when pre-treated patients exist (n_safe_d1=6)
     # Simulation
     "n_sims":             200,
     "seed":               123,
