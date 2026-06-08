@@ -382,6 +382,104 @@ def crm_select_mtd(sigma, skel1, skel2,
         dist = np.abs(pm1[candidates] - float(target1))
         return int(candidates[int(np.argmin(dist))])
 
+
+def crm_mtd_posterior_probs(sigma, skel1, skel2,
+                             n1, y1, n2, y2,
+                             target1, target2,
+                             ewoc_alpha=None, gh_n=61,
+                             restrict_to_tried=True):
+    """
+    Compute the posterior probability that each dose level would be selected
+    as the final MTD, integrating over the joint tox1/tox2 posterior.
+
+    Uses the same dual-endpoint selection rule as crm_select_mtd:
+    - EWOC ON  (ewoc_alpha is not None): highest jointly admissible dose.
+    - EWOC OFF (ewoc_alpha is None):     dose whose posterior mean P(tox1) is
+                                         closest to target1.
+
+    For each Gauss-Hermite quadrature point:
+      1. Compute P(tox1) and P(tox2) at all dose levels.
+      2. Apply joint safety filter (if ewoc_alpha is not None).
+      3. Apply restrict_to_tried mask (same as crm_select_mtd).
+      4. Identify the selected dose under that quadrature point.
+      5. Sum posterior weights by selected dose.
+
+    Returns
+    -------
+    probs : np.ndarray, shape (n_levels,)
+        Posterior probability that each dose level is selected as the MTD.
+        Sums to 1.0 (approximately, to floating-point precision).
+    """
+    # Use the tox1 posterior only (same marginals as crm_select_mtd) for speed.
+    # The dual-endpoint EWOC filter is approximated using point-wise OD probs:
+    # a dose is "point-admissible" if P1[i,d] <= target1 AND P2[j,d] <= target2.
+    # This is consistent with the EWOC posterior-OD logic in crm_select_mtd.
+    post_w1, P1 = posterior_via_gh(sigma, skel1, n1, y1, gh_n=gh_n)
+    post_w2, P2 = posterior_via_gh(sigma, skel2, n2, y2, gh_n=gh_n)
+    n_levels = len(skel1)
+
+    # tried-dose mask
+    tried_mask = np.ones(n_levels, dtype=bool)
+    if restrict_to_tried:
+        tried = np.where(np.asarray(n1) > 0)[0]
+        if tried.size > 0:
+            tried_mask[:] = False
+            tried_mask[tried] = True
+
+    # Outer-product weight matrix: shape (n_q1, n_q2)
+    W = post_w1[:, None] * post_w2[None, :]   # (n_q1, n_q2)
+
+    # For each (i, j) quad point: determine selected dose.
+    # P1: (n_q1, n_levels), P2: (n_q2, n_levels)
+    # Vectorised: compute per (i,j) admissibility and selection.
+    # Shape of P1 broadcast: (n_q1, 1, n_levels)
+    #                  P2  : (1, n_q2, n_levels)
+    P1_3d = P1[:, None, :]          # (n_q1, 1,    n_levels)
+    P2_3d = P2[None, :, :]          # (1,    n_q2, n_levels)
+
+    if ewoc_alpha is not None:
+        # Admissible = point-wise tox below target (conservative per-point OD proxy)
+        admissible = (P1_3d <= float(target1)) & (P2_3d <= float(target2))
+        # shape: (n_q1, n_q2, n_levels)
+    else:
+        admissible = np.ones((len(post_w1), len(post_w2), n_levels), dtype=bool)
+
+    # Apply tried restriction
+    admissible &= tried_mask[None, None, :]
+
+    # Fallback: if no admissible dose for a grid point, allow all tried doses
+    any_admissible = admissible.any(axis=2, keepdims=True)  # (n_q1, n_q2, 1)
+    fallback = tried_mask[None, None, :]
+    admissible = np.where(any_admissible, admissible, fallback)
+
+    # Final fallback: if still nothing tried, admit dose 0
+    any_adm2 = admissible.any(axis=2, keepdims=True)
+    dose0 = np.zeros((1, 1, n_levels), dtype=bool)
+    dose0[0, 0, 0] = True
+    admissible = np.where(any_adm2, admissible, dose0)
+
+    if ewoc_alpha is not None:
+        # Highest admissible dose
+        # Replace non-admissible with -1, then argmax
+        dose_idx = np.arange(n_levels, dtype=float)[None, None, :]
+        dose_idx_masked = np.where(admissible, dose_idx, -1.0)
+        selected_grid = dose_idx_masked.max(axis=2).astype(int)  # (n_q1, n_q2)
+    else:
+        # Closest posterior-mean tox1 to target1
+        dist = np.abs(P1_3d - float(target1))      # (n_q1, 1, n_levels)
+        dist_masked = np.where(admissible, dist, np.inf)
+        selected_grid = dist_masked.argmin(axis=2).astype(int)   # (n_q1, n_q2)
+
+    # Accumulate weighted probability per selected dose
+    probs = np.zeros(n_levels, dtype=float)
+    for d in range(n_levels):
+        probs[d] = float(W[selected_grid == d].sum())
+
+    total = probs.sum()
+    if total > 0:
+        probs /= total
+    return probs
+
 # ==============================================================================
 # TITE-CRM trial runner
 # ==============================================================================
@@ -400,7 +498,7 @@ def run_tite_crm(
     collect_trace=False,
     n_safe_d1=0,
     p_stop=1.0,
-    require_full_tox1_fu_before_escalation=False,
+    require_full_tox1_fu_before_escalation=True,
 ):
     """
     TITE-CRM trial simulation.
@@ -1417,7 +1515,7 @@ R_DEFAULTS = {
     # CRM knobs
     "sigma":              1.0,
     "burn_in":            True,
-    "require_full_tox1_fu": False,
+    "require_full_tox1_fu": True,
     "ewoc_on":            True,
     "ewoc_alpha":         0.25,
     # Early stopping
@@ -3099,6 +3197,7 @@ elif view == "Playground":
         early_stop_crm  = np.zeros(ns, dtype=bool)
         n_at_stop_crm   = np.zeros(ns, dtype=int)
         sel_crm_per_trial = np.zeros(ns, dtype=int)
+        mtd_support_arr   = np.zeros(ns, dtype=float)   # posterior support for selected MTD
         early_dlt1_6  = np.zeros(ns)
         early_dlt1_9  = np.zeros(ns)
         early_dlt1_12 = np.zeros(ns)
@@ -3194,6 +3293,20 @@ elif view == "Playground":
                 }
             sel_crm[selc] += 1
             sel_crm_per_trial[s] = selc
+
+            # Compute posterior support for the selected MTD using final follow-up weights
+            _n1f_s, _y1f_s, _n2f_s, _y2f_s = tite_weights(
+                ptsc, sdc, _tox1_win_derived, int(_cfg("tox2_win")), len(true_t1))
+            _supp_probs = crm_mtd_posterior_probs(
+                float(_cfg("sigma")), skel_t1, skel_t2,
+                _n1f_s, _y1f_s, _n2f_s, _y2f_s,
+                target_t1_val, target_t2_val,
+                ewoc_alpha=(float(_cfg("ewoc_alpha")) if bool(_cfg("ewoc_on")) else None),
+                gh_n=int(_cfg("gh_n")),
+                restrict_to_tried=bool(_cfg("restrict_final_mtd")),
+            )
+            mtd_support_arr[s] = float(_supp_probs[selc])
+
             for p in ptsc:
                 nmat_crm[s, p["dose"]]  += 1
                 nsurg_crm[s, p["dose"]] += int(p["has_surgery"])
@@ -3238,7 +3351,8 @@ elif view == "Playground":
             ),
             "n_per_trial_crm":  n_at_stop_crm.tolist(),
             "early_stop_arr":   early_stop_crm.tolist(),
-            "sel_crm_per_trial": sel_crm_per_trial.tolist(),
+            "sel_crm_per_trial":  sel_crm_per_trial.tolist(),
+            "mtd_support_arr":    mtd_support_arr.tolist(),
             "early_dlt1_6":     early_dlt1_6.tolist(),
             "early_dlt1_9":     early_dlt1_9.tolist(),
             "early_dlt1_12":    early_dlt1_12.tolist(),
@@ -3363,6 +3477,101 @@ if view == "Playground" and "_tite_results" in st.session_state:
             f"n_sims={res['ns']} | seed={res['seed']}"
             + (f" | True safe=L{ts}" if ts is not None else " | No jointly safe dose")
         )
+
+    # ── Posterior support for selected MTD ─────────────────────────────────────
+    if "mtd_support_arr" in res:
+        _msa = np.array(res["mtd_support_arr"], dtype=float)
+        _msa_sel = np.array(res["sel_crm_per_trial"], dtype=int)
+
+        st.markdown("---")
+        st.subheader("Posterior support for selected MTD")
+        st.caption(
+            "Posterior support for selected MTD shows how strongly the final CRM model "
+            "supported the dose it selected at the end of each simulated trial. "
+            "A higher value means the selected dose was clearly favoured by the final "
+            "posterior. A lower value means the model selected an MTD, but the posterior "
+            "still spread meaningful probability across other dose levels."
+        )
+
+        _ps_c1, _ps_c2 = st.columns(2, gap="large")
+
+        with _ps_c1:
+            # Histogram of posterior support values
+            fig_ps, ax_ps = plt.subplots(figsize=(RESULT_W_IN, RESULT_H_IN), dpi=RESULT_DPI)
+            _apply_dark_fig(fig_ps, ax_ps)
+            _bins = np.linspace(0, 1, 21)
+            ax_ps.hist(_msa, bins=_bins, color="#ffaa44", edgecolor=_DARK_BG, linewidth=0.4)
+            ax_ps.set_xlabel("Posterior support", fontsize=9)
+            ax_ps.set_ylabel("Simulated trials", fontsize=9)
+            ax_ps.set_xlim(0, 1)
+            ax_ps.set_title("Posterior support for selected MTD", fontsize=10)
+            compact_style(ax_ps)
+            fig_ps.tight_layout(pad=0.4)
+            st.image(fig_to_png_bytes(fig_ps), use_container_width=True)
+            plt.close(fig_ps)
+
+            # Summary metrics
+            _med_supp  = float(np.median(_msa))
+            _q25, _q75 = float(np.percentile(_msa, 25)), float(np.percentile(_msa, 75))
+            _pct50 = float(np.mean(_msa >= 0.50)) * 100
+            _pct70 = float(np.mean(_msa >= 0.70)) * 100
+            _pct80 = float(np.mean(_msa >= 0.80)) * 100
+            _ms1, _ms2 = st.columns(2, gap="small")
+            with _ms1:
+                st.metric("Median support",
+                          f"{_med_supp:.2f}",
+                          help="Median posterior support for selected MTD across all simulated trials.")
+                st.metric("IQR",
+                          f"{_q25:.2f} – {_q75:.2f}",
+                          help="Interquartile range of posterior support (25th–75th percentile).")
+            with _ms2:
+                st.metric("≥ 0.50",
+                          f"{_pct50:.1f}%",
+                          help="Percentage of trials where posterior support for selected MTD ≥ 0.50.")
+                st.metric("≥ 0.70",
+                          f"{_pct70:.1f}%",
+                          help="Percentage of trials where posterior support for selected MTD ≥ 0.70.")
+                st.metric("≥ 0.80",
+                          f"{_pct80:.1f}%",
+                          help="Percentage of trials where posterior support for selected MTD ≥ 0.80.")
+
+        with _ps_c2:
+            # Box plot: MTD certainty grouped by selected MTD level
+            _dose_lbls_ps = [f"L{i}" for i in range(5)]
+            _groups = [_msa[_msa_sel == d] for d in range(5)]
+            _groups_nonempty = [(lbl, g) for lbl, g in zip(_dose_lbls_ps, _groups) if len(g) > 0]
+
+            fig_bp, ax_bp = plt.subplots(figsize=(RESULT_W_IN, RESULT_H_IN), dpi=RESULT_DPI)
+            _apply_dark_fig(fig_bp, ax_bp)
+            if _groups_nonempty:
+                _bp_lbls   = [lbl for lbl, _ in _groups_nonempty]
+                _bp_data   = [g   for _, g   in _groups_nonempty]
+                _ps_dose_colors = ["#4a9eff", "#ffaa44", "#ff6677", "#55dd99", "#cc88ff"]
+                _bp_colors = [_ps_dose_colors[i] for i, (lbl, g)
+                              in enumerate(zip(_dose_lbls_ps, _groups))
+                              if len(g) > 0]
+                bp = ax_bp.boxplot(
+                    _bp_data,
+                    patch_artist=True,
+                    medianprops=dict(color="#ffffff", linewidth=1.5),
+                    whiskerprops=dict(color=_DARK_FG),
+                    capprops=dict(color=_DARK_FG),
+                    flierprops=dict(marker="o", markersize=2,
+                                   markerfacecolor=_DARK_FG, alpha=0.4),
+                )
+                for patch, col in zip(bp["boxes"], _bp_colors):
+                    patch.set_facecolor(col)
+                    patch.set_alpha(0.75)
+                ax_bp.set_xticks(range(1, len(_bp_lbls) + 1))
+                ax_bp.set_xticklabels(_bp_lbls, fontsize=9)
+            ax_bp.set_ylim(0, 1.05)
+            ax_bp.set_xlabel("Selected MTD", fontsize=9)
+            ax_bp.set_ylabel("Posterior support", fontsize=9)
+            ax_bp.set_title("MTD certainty by selected MTD", fontsize=10)
+            compact_style(ax_bp)
+            fig_bp.tight_layout(pad=0.4)
+            st.image(fig_to_png_bytes(fig_bp), use_container_width=True)
+            plt.close(fig_bp)
 
 # ==============================================================================
 # CRM dichotomy diagnostic helpers
@@ -4053,6 +4262,71 @@ if view == "Playground" and "_tite_results" in st.session_state:
             "Green dashed line = target toxicity rate (shading boundary). "
             "Orange dashed line = EWOC α — OD probabilities above this value "
             "cause dose exclusion."
+        )
+
+        # ── Final posterior support by dose (first trial) ─────────────────────
+        st.subheader("Final posterior support by dose — first CRM trial")
+        _final_mtd_for_supp = _post_tr.get("final_mtd")
+        _ewoc_on_ps  = bool(_post_tr.get("ewoc_on",  _cfg("ewoc_on")))
+        _ewoc_alp_ps = float(_post_tr.get("ewoc_alpha", _cfg("ewoc_alpha")))
+        _restrict_ps = bool(_post_tr.get("restrict_final_mtd", _cfg("restrict_final_mtd")))
+        _supp_probs_tr = crm_mtd_posterior_probs(
+            _sigma_pt,
+            _skel_t1_pt, _skel_t2_pt,
+            _n1_end, _y1_end, _n2_end, _y2_end,
+            float(_post_tr.get("target_t1", _cfg("target_t1"))),
+            float(_post_tr.get("target_t2", _cfg("target_t2"))),
+            ewoc_alpha=(_ewoc_alp_ps if _ewoc_on_ps else None),
+            gh_n=_gh_n_pt,
+            restrict_to_tried=_restrict_ps,
+        )
+        _dose_labels_sp = [f"L{i}" for i in range(_n_lvls)]
+        fig_sp, ax_sp = plt.subplots(figsize=(6.0, 2.8), dpi=150)
+        _apply_dark_fig(fig_sp, ax_sp)
+        _sp_colors = ["#4a9eff", "#ffaa44", "#ff6677", "#55dd99", "#cc88ff"]
+        _bars_sp = ax_sp.bar(
+            range(_n_lvls), _supp_probs_tr,
+            color=[_sp_colors[i] for i in range(_n_lvls)],
+            edgecolor=_DARK_BG, linewidth=0.5,
+        )
+        # Annotate bars with probability values
+        for _i, (bar, prob) in enumerate(zip(_bars_sp, _supp_probs_tr)):
+            if prob > 0.01:
+                ax_sp.text(bar.get_x() + bar.get_width() / 2, prob + 0.01,
+                           f"{prob:.2f}", ha="center", va="bottom",
+                           fontsize=8, color=_DARK_FG)
+        # Highlight final selected MTD
+        if _final_mtd_for_supp is not None:
+            _bars_sp[_final_mtd_for_supp].set_edgecolor("#ffd700")
+            _bars_sp[_final_mtd_for_supp].set_linewidth(2.5)
+            ax_sp.text(
+                _final_mtd_for_supp, _supp_probs_tr[_final_mtd_for_supp] / 2,
+                "▶ selected",
+                ha="center", va="center", fontsize=7.5, color="#ffd700",
+                fontweight="bold",
+            )
+        ax_sp.set_xticks(range(_n_lvls))
+        ax_sp.set_xticklabels(_dose_labels_sp, fontsize=9)
+        ax_sp.set_ylim(0, min(1.05, max(float(_supp_probs_tr.max()) * 1.25, 0.12)))
+        ax_sp.set_xlabel("Dose level", fontsize=9)
+        ax_sp.set_ylabel("Posterior probability", fontsize=9)
+        ax_sp.set_title(
+            f"Final posterior support by dose  "
+            f"(selected MTD = L{_final_mtd_for_supp}, "
+            f"support = {float(_supp_probs_tr[_final_mtd_for_supp]):.2f})"
+            if _final_mtd_for_supp is not None else
+            "Final posterior support by dose",
+            fontsize=10,
+        )
+        compact_style(ax_sp)
+        fig_sp.tight_layout(pad=0.4)
+        st.image(fig_to_png_bytes(fig_sp), use_container_width=False, width=520)
+        plt.close(fig_sp)
+        st.caption(
+            "Posterior probability that each dose level would be selected as the final MTD "
+            "by the CRM rule, integrating over the study-end posterior. "
+            "Gold border = the dose actually selected in this trial. "
+            "Dual-endpoint selection rule (EWOC + tox1 target matching) applied."
         )
 
         # ── Dose eligibility trajectory ────────────────────────────────────────
