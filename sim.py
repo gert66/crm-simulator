@@ -416,13 +416,13 @@ def run_tite_crm(
       cohort update (posteriors, weights, allowed doses, decision reason).
       Adds negligible runtime; used only for the first simulated trial.
 
-    n_safe_d1: number of patients already safely treated at dose level 0 with
-      complete follow-up before the trial opens (day 0).  Their records are
-      pre-loaded into the patient list so the CRM sees them as fully-weighted
-      observations at dose 0 with no DLTs.  Surgery status for these patients
-      is drawn from p_surgery.  These patients count toward max_n — if you want
-      max_n new patients in addition to the pre-treated cohort, increase max_n
-      by n_safe_d1.
+    n_safe_d1: number of patients already safely treated at dose level 2 (0-indexed:
+      dose index 1) with complete follow-up before the trial opens (day 0).  Their
+      records are pre-loaded into the patient list so the CRM sees them as
+      fully-weighted observations at dose index 1 with no DLTs.  Surgery status for
+      these patients is drawn from p_surgery.  These patients count toward max_n —
+      if you want max_n new patients in addition to the pre-treated cohort, increase
+      max_n by n_safe_d1.
 
     p_stop: early-stopping threshold (0 < p_stop <= 1).  After each CRM cohort
       decision (burn-in excluded), the posterior probability that the recommended
@@ -444,7 +444,7 @@ def run_tite_crm(
     n_levels = len(true_t1)
     rate_per_day = float(accrual_per_month) / MONTH
 
-    level         = int(start_level)
+    level         = int(np.clip(int(start_level), 0, n_levels - 1))
     patients      = []
     highest_tried = -1
     current_day   = 0.0
@@ -455,7 +455,7 @@ def run_tite_crm(
     stopped_early = False
     _p_stop       = float(p_stop)
 
-    # Pre-populate with historically safe patients at dose level 0.
+    # Pre-populate with historically safe patients at dose level 2 (index 1).
     # Arrivals are placed far enough before day 0 that every follow-up window —
     # including the tox2 window for surgery patients — is already closed.
     if n_safe_d1 > 0:
@@ -470,7 +470,7 @@ def run_tite_crm(
             _surg_day = float(_rt_end + float(rt_to_surg)) if _has_surg else None
             _t2w_end  = float(_surg_day + float(tox2_win)) if _has_surg else None
             patients.append({
-                "dose":         0,
+                "dose":         1,
                 "arrival":      float(_arr),
                 "rt_start":     _rt_start,
                 "tox1_win_end": _t1w_end,
@@ -483,7 +483,7 @@ def run_tite_crm(
                 "tox2_day":     None,
                 "is_bridging":  False,
             })
-        highest_tried = 0
+        highest_tried = 1
 
     while len(patients) < int(max_n):
         n_add        = min(int(cohort_size), int(max_n) - len(patients))
@@ -1308,13 +1308,13 @@ R_DEFAULTS = {
     # Timing (days)
     "incl_to_rt":         21,
     "rt_dur":             14,
-    "rt_to_surg":         84,
+    "rt_to_surg":         42,
     "tox2_win":           30,
     # Sample sizes
     "max_n_63":           27,
     "max_n_crm":          27,
     "cohort_size":        3,
-    # Pre-treated patients at dose level 1 (0-indexed: level 0)
+    # Pre-treated patients at dose level 2 (0-indexed: level 1)
     "n_safe_d1":          0,
     # Priors — shared model
     "prior_model":        "empiric",
@@ -1715,7 +1715,17 @@ _sync_tox2_win       = _make_sync("tox2_win",        int,   "wl_tox2_win")
 _sync_max_n_63       = _make_sync("max_n_63",        int,   "wl_max_n_63")
 _sync_max_n_crm      = _make_sync("max_n_crm",       int,   "wl_max_n_crm")
 _sync_cohort_size    = _make_sync("cohort_size",     int,   "wl_cohort_size")
-_sync_n_safe_d1      = _make_sync("n_safe_d1",       int,   "wl_n_safe_d1")
+def _sync_n_safe_d1():
+    """Sync n_safe_d1 widget → canonical, and auto-adjust start_level_1b default."""
+    new_val = int(st.session_state.get("wl_n_safe_d1", R_DEFAULTS["n_safe_d1"]))
+    st.session_state["n_safe_d1"] = new_val
+    # Auto-adjust start_level_1b: if user hasn't set it away from the base defaults
+    # (2 when no pretreated, 3 when pretreated), keep it in sync.
+    cur = int(st.session_state.get("start_level_1b", R_DEFAULTS["start_level_1b"]))
+    if new_val > 0 and cur == 2:
+        st.session_state["start_level_1b"] = 3
+    elif new_val == 0 and cur == 3:
+        st.session_state["start_level_1b"] = 2
 # Essentials right column
 _sync_gh_n              = _make_sync("gh_n",              int,   "wl_gh_n")
 _sync_max_step          = _make_sync("max_step",          int,   "wl_max_step")
@@ -2260,12 +2270,20 @@ if view == "Essentials":
         )
         st.session_state["p_surgery"] = st.session_state["wl_p_surgery"]
 
+        # Smart default: level 3 when pre-treated patients exist, level 2 otherwise.
+        # Only applied when start_level_1b has not yet been stored in session state.
+        if "start_level_1b" not in st.session_state:
+            _n_pretreated_init = int(_cfg("n_safe_d1"))
+            st.session_state["start_level_1b"] = 3 if _n_pretreated_init > 0 else 2
         st.session_state["wl_start_level_1b"] = int(_cfg("start_level_1b"))
         st.number_input(
             "Start dose level (1-based)",
             min_value=1, max_value=5, step=1, key="wl_start_level_1b",
             on_change=_sync_start_level_1b,
-            help=h("start_level_1b", "Starting dose level (1 = lowest).")
+            help=h("start_level_1b",
+                   "Starting dose level (1 = lowest). Default is 2 when no pre-treated "
+                   "patients exist; auto-adjusts to 3 when pre-treated patients are present "
+                   "at dose level 2, since that level is already established as safe.")
         )
         st.session_state["start_level_1b"] = st.session_state["wl_start_level_1b"]
 
@@ -2330,7 +2348,7 @@ if view == "Essentials":
             min_value=1, max_value=365, step=1, key="wl_rt_to_surg",
             on_change=_sync_rt_to_surg,
             help=h("rt_to_surg",
-                   "Days from end of radiotherapy to surgery. Default 84 days ≈ 12 weeks. "
+                   "Days from end of radiotherapy to surgery. Default 42 days ≈ 6 weeks. "
                    "The tox1 (acute) follow-up window is derived as RT duration + this value, "
                    "so it always extends from RT start to the moment of surgery.")
         )
@@ -2381,16 +2399,15 @@ if view == "Essentials":
 
         st.session_state["wl_n_safe_d1"] = int(_cfg("n_safe_d1"))
         st.number_input(
-            "Pre-treated patients at dose level 1 (n_safe_d1)",
+            "Pre-treated patients at dose level 2",
             min_value=0, max_value=50, step=1, key="wl_n_safe_d1",
             on_change=_sync_n_safe_d1,
             help=h("n_safe_d1",
-                   "Number of patients already safely treated at dose level 1 "
-                   "(0 DLTs, complete follow-up) before the trial opens. These "
-                   "are pre-loaded into the CRM as fully-weighted observations "
-                   "at dose 0 with no toxicities. They count toward Max sample "
-                   "size (CRM) — increase that by this amount if you want the "
-                   "same number of newly enrolled patients.")
+                   "These patients were already safely treated at dose level 2, "
+                   "with 0 DLTs and complete follow-up before the trial opens. "
+                   "They are pre-loaded into the CRM as fully weighted observations "
+                   "at dose index 1 with no toxicities. They count toward Max sample "
+                   "size (CRM).")
         )
         st.session_state["n_safe_d1"] = st.session_state["wl_n_safe_d1"]
 
@@ -2954,7 +2971,7 @@ elif view == "Playground":
     if run:
         rng_master = np.random.default_rng(int(_cfg("seed")))
         ns         = int(_cfg("n_sims"))
-        start_0b   = int(np.clip(int(_cfg("start_level_1b")) - 1, 0, 4))
+        start_0b   = int(np.clip(int(_cfg("start_level_1b")) - 1, 0, len(true_t1) - 1))
 
         sel_63  = np.zeros(5, dtype=int)
         sel_crm = np.zeros(5, dtype=int)
