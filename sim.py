@@ -416,13 +416,12 @@ def run_tite_crm(
       cohort update (posteriors, weights, allowed doses, decision reason).
       Adds negligible runtime; used only for the first simulated trial.
 
-    n_safe_d1: number of patients already safely treated at dose level 2 (0-indexed:
-      dose index 1) with complete follow-up before the trial opens (day 0).  Their
-      records are pre-loaded into the patient list so the CRM sees them as
-      fully-weighted observations at dose index 1 with no DLTs.  Surgery status for
-      these patients is drawn from p_surgery.  These patients count toward max_n —
-      if you want max_n new patients in addition to the pre-treated cohort, increase
-      max_n by n_safe_d1.
+    n_safe_d1: number of patients already safely treated at L1 with complete follow-up
+      before the trial opens (day 0).  Their records are pre-loaded into the patient
+      list so the CRM sees them as fully-weighted observations at L1 (dose index 1)
+      with no DLTs.  Surgery status for these patients is drawn from p_surgery.
+      These patients count toward max_n — if you want max_n new patients in addition
+      to the pre-treated cohort, increase max_n by n_safe_d1.
 
     p_stop: early-stopping threshold (0 < p_stop <= 1).  After each CRM cohort
       decision (burn-in excluded), the posterior probability that the recommended
@@ -455,7 +454,7 @@ def run_tite_crm(
     stopped_early = False
     _p_stop       = float(p_stop)
 
-    # Pre-populate with historically safe patients at dose level 2 (index 1).
+    # Pre-populate with historically safe patients at L1 (dose index 1).
     # Arrivals are placed far enough before day 0 that every follow-up window —
     # including the tox2 window for surgery patients — is already closed.
     if n_safe_d1 > 0:
@@ -1299,7 +1298,7 @@ R_DEFAULTS = {
     "target_t1":          0.15,
     "target_t2":          0.33,
     "p_surgery":          0.80,
-    "start_level_1b":     2,
+    "start_level_1b":     1,    # L-level (0-based): L1 default when no pre-treated patients
     # Simulation
     "n_sims":             200,
     "seed":               123,
@@ -1314,7 +1313,7 @@ R_DEFAULTS = {
     "max_n_63":           27,
     "max_n_crm":          27,
     "cohort_size":        3,
-    # Pre-treated patients at dose level 2 (0-indexed: level 1)
+    # Pre-treated patients at L1 (dose index 1)
     "n_safe_d1":          0,
     # Priors — shared model
     "prior_model":        "empiric",
@@ -1719,13 +1718,13 @@ def _sync_n_safe_d1():
     """Sync n_safe_d1 widget → canonical, and auto-adjust start_level_1b default."""
     new_val = int(st.session_state.get("wl_n_safe_d1", R_DEFAULTS["n_safe_d1"]))
     st.session_state["n_safe_d1"] = new_val
-    # Auto-adjust start_level_1b: if user hasn't set it away from the base defaults
-    # (2 when no pretreated, 3 when pretreated), keep it in sync.
+    # Auto-adjust start_level_1b (L-level, 0-based): if user hasn't set it away from
+    # the base defaults (L1 when no pretreated, L2 when pretreated), keep it in sync.
     cur = int(st.session_state.get("start_level_1b", R_DEFAULTS["start_level_1b"]))
-    if new_val > 0 and cur == 2:
-        st.session_state["start_level_1b"] = 3
-    elif new_val == 0 and cur == 3:
+    if new_val > 0 and cur == 1:
         st.session_state["start_level_1b"] = 2
+    elif new_val == 0 and cur == 2:
+        st.session_state["start_level_1b"] = 1
 # Essentials right column
 _sync_gh_n              = _make_sync("gh_n",              int,   "wl_gh_n")
 _sync_max_step          = _make_sync("max_step",          int,   "wl_max_step")
@@ -2270,20 +2269,25 @@ if view == "Essentials":
         )
         st.session_state["p_surgery"] = st.session_state["wl_p_surgery"]
 
-        # Smart default: level 3 when pre-treated patients exist, level 2 otherwise.
+        # Smart default: L2 when pre-treated patients exist, L1 otherwise.
         # Only applied when start_level_1b has not yet been stored in session state.
         if "start_level_1b" not in st.session_state:
             _n_pretreated_init = int(_cfg("n_safe_d1"))
-            st.session_state["start_level_1b"] = 3 if _n_pretreated_init > 0 else 2
+            st.session_state["start_level_1b"] = 2 if _n_pretreated_init > 0 else 1
+        _dose_opts = ["L0", "L1", "L2", "L3", "L4"]
         st.session_state["wl_start_level_1b"] = int(_cfg("start_level_1b"))
-        st.number_input(
-            "Start dose level (1-based)",
-            min_value=1, max_value=5, step=1, key="wl_start_level_1b",
+        st.selectbox(
+            "Start dose level",
+            options=list(range(5)),
+            format_func=lambda i: _dose_opts[i],
+            index=int(_cfg("start_level_1b")),
+            key="wl_start_level_1b",
             on_change=_sync_start_level_1b,
             help=h("start_level_1b",
-                   "Starting dose level (1 = lowest). Default is 2 when no pre-treated "
-                   "patients exist; auto-adjusts to 3 when pre-treated patients are present "
-                   "at dose level 2, since that level is already established as safe.")
+                   "CRM starting dose level (L0 = lowest, L4 = highest). "
+                   "Default is L1 when no pre-treated patients exist; "
+                   "auto-adjusts to L2 when pre-treated patients are present at L1, "
+                   "since L1 is already established as safe.")
         )
         st.session_state["start_level_1b"] = st.session_state["wl_start_level_1b"]
 
@@ -2399,14 +2403,13 @@ if view == "Essentials":
 
         st.session_state["wl_n_safe_d1"] = int(_cfg("n_safe_d1"))
         st.number_input(
-            "Pre-treated patients at dose level 2",
+            "Pre-treated patients at L1",
             min_value=0, max_value=50, step=1, key="wl_n_safe_d1",
             on_change=_sync_n_safe_d1,
             help=h("n_safe_d1",
-                   "These patients were already safely treated at dose level 2, "
-                   "with 0 DLTs and complete follow-up before the trial opens. "
-                   "They are pre-loaded into the CRM as fully weighted observations "
-                   "at dose index 1 with no toxicities. They count toward Max sample "
+                   "Patients already safely treated at L1 (0 DLTs, complete follow-up) "
+                   "before the trial opens. Pre-loaded into the CRM as fully weighted "
+                   "observations at L1 with no toxicities. They count toward Max sample "
                    "size (CRM).")
         )
         st.session_state["n_safe_d1"] = st.session_state["wl_n_safe_d1"]
@@ -2808,12 +2811,12 @@ elif view == "Playground":
 
                 # ── Prior MTD level ────────────────────────────────────────
                 st.session_state["sl_prior_nu_t1"] = int(_cfg("prior_nu_t1"))
-                st.slider("Prior MTD level (tox1, 1-based)", 1, 5, step=1,
+                st.slider("Prior MTD level (tox1)", 1, 5, step=1,
                           key="sl_prior_nu_t1",
                           on_change=_sync_prior_nu_t1,
                           help=h("prior_nu_t1",
                                  "Dose level that is a priori closest to the tox1 target. "
-                                 "L1 = most cautious, L5 = most optimistic."))
+                                 "1 = most cautious (L0), 5 = most optimistic (L4)."))
                 st.session_state["prior_nu_t1"] = st.session_state["sl_prior_nu_t1"]
 
             else:
@@ -2842,7 +2845,7 @@ elif view == "Playground":
 
                 # ── Prior MTD level (tox2) ─────────────────────────────────
                 st.session_state["sl_prior_nu_t2"] = int(_cfg("prior_nu_t2"))
-                st.slider("Prior MTD level (tox2, 1-based)", 1, 5, step=1,
+                st.slider("Prior MTD level (tox2)", 1, 5, step=1,
                           key="sl_prior_nu_t2",
                           on_change=_sync_prior_nu_t2,
                           help=h("prior_nu_t2",
@@ -2971,7 +2974,7 @@ elif view == "Playground":
     if run:
         rng_master = np.random.default_rng(int(_cfg("seed")))
         ns         = int(_cfg("n_sims"))
-        start_0b   = int(np.clip(int(_cfg("start_level_1b")) - 1, 0, len(true_t1) - 1))
+        start_0b   = int(np.clip(int(_cfg("start_level_1b")), 0, len(true_t1) - 1))
 
         sel_63  = np.zeros(5, dtype=int)
         sel_crm = np.zeros(5, dtype=int)
@@ -3512,7 +3515,7 @@ if view == "Playground" and "_tite_results" in st.session_state and "sel_crm_per
                 target1=float(get_config_value("target_t1")),
                 target2=float(get_config_value("target_t2")),
                 sigma=float(_cfg("sigma")),
-                start_level=int(_cfg("start_level_1b")) - 1,
+                start_level=int(_cfg("start_level_1b")),
                 max_n=int(_cfg("max_n_crm")),
                 cohort_size=int(_cfg("cohort_size")),
                 accrual_per_month=float(_cfg("accrual_per_month")),
@@ -5682,7 +5685,7 @@ def _plot_prior_mtd_context(true_tox, pv_list, tox_label, title,
 #             ewoc_alpha=st.session_state["ewoc_alpha"],
 #             max_n=st.session_state["max_n_crm"],
 #             cohort_size=st.session_state["cohort_size"],
-#             start_level=st.session_state["start_level_1b"] - 1,
+#             start_level=st.session_state["start_level_1b"],
 #             accrual_per_month=st.session_state["accrual_per_month"],
 #             incl_to_rt=st.session_state["incl_to_rt"],
 #             rt_dur=st.session_state["rt_dur"],
@@ -6383,7 +6386,7 @@ if view == "Design Exploration":
             ewoc_alpha           = float(get_config_value("ewoc_alpha")),
             max_n                = int(_cfg("max_n_crm")),
             cohort_size          = int(_cfg("cohort_size")),
-            start_level          = int(_cfg("start_level_1b")) - 1,
+            start_level          = int(_cfg("start_level_1b")),
             accrual_per_month    = float(_cfg("accrual_per_month")),
             incl_to_rt           = int(_cfg("incl_to_rt")),
             rt_dur               = int(_cfg("rt_dur")),
@@ -6512,7 +6515,7 @@ if view == "Design Exploration":
             ewoc_alpha              = float(get_config_value("ewoc_alpha")),
             max_n                   = int(_cfg("max_n_crm")),
             cohort_size             = int(_cfg("cohort_size")),
-            start_level             = int(_cfg("start_level_1b")) - 1,
+            start_level             = int(_cfg("start_level_1b")),
             accrual_per_month       = float(_cfg("accrual_per_month")),
             incl_to_rt              = int(_cfg("incl_to_rt")),
             rt_dur                  = int(_cfg("rt_dur")),
@@ -6681,7 +6684,7 @@ if view == "Design Exploration":
             ewoc_alpha              = float(get_config_value("ewoc_alpha")),
             max_n                   = int(_cfg("max_n_crm")),
             cohort_size             = int(_cfg("cohort_size")),
-            start_level             = int(_cfg("start_level_1b")) - 1,
+            start_level             = int(_cfg("start_level_1b")),
             accrual_per_month       = float(_cfg("accrual_per_month")),
             incl_to_rt              = int(_cfg("incl_to_rt")),
             rt_dur                  = int(_cfg("rt_dur")),
