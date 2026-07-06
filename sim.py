@@ -484,6 +484,34 @@ def crm_mtd_posterior_probs(sigma, skel1, skel2,
 # TITE-CRM trial runner
 # ==============================================================================
 
+# EWOC application modes — where the EWOC joint overdose filter is applied.
+EWOC_APP_BOTH  = "Dose assignment + final MTD"   # current/default behaviour
+EWOC_APP_FINAL = "Final MTD only"
+EWOC_APP_OFF   = "Off"
+EWOC_APP_OPTIONS = [EWOC_APP_BOTH, EWOC_APP_FINAL, EWOC_APP_OFF]
+
+
+def ewoc_effective_alphas(ewoc_application, ewoc_alpha, ewoc_on=True):
+    """Map an EWOC application mode to (ewoc_decision_eff, ewoc_final_eff).
+
+    ewoc_decision_eff — alpha passed to crm_choose_next() during the trial
+                        (None = no EWOC filter for dose assignment)
+    ewoc_final_eff    — alpha passed to crm_select_mtd() at study end
+                        (None = no EWOC filter for final MTD selection)
+
+    Backward compatibility: ewoc_on=False (the legacy boolean) forces both
+    to None regardless of ewoc_application, so older callers that only pass
+    ewoc_on/ewoc_alpha keep their previous behaviour.
+    """
+    app = str(ewoc_application)
+    if not ewoc_on or app == EWOC_APP_OFF:
+        return None, None
+    if app == EWOC_APP_FINAL:
+        return None, float(ewoc_alpha)
+    # EWOC_APP_BOTH (and any unrecognised value defaults to current behaviour)
+    return float(ewoc_alpha), float(ewoc_alpha)
+
+
 def run_tite_crm(
     true_t1, p_surgery, true_t2,
     target1, target2,
@@ -494,6 +522,7 @@ def run_tite_crm(
     max_step=1, gh_n=61,
     enforce_guardrail=True, restrict_final_to_tried=True,
     ewoc_on=True, ewoc_alpha=0.25,
+    ewoc_application=EWOC_APP_BOTH,
     burn_in=True, rng=None,
     collect_trace=False,
     n_safe_d1=0,
@@ -514,6 +543,15 @@ def run_tite_crm(
     collect_trace: when True, record a decision-level trace dict for every
       cohort update (posteriors, weights, allowed doses, decision reason).
       Adds negligible runtime; used only for the first simulated trial.
+
+    ewoc_application: where the EWOC joint overdose filter is applied.
+      - "Dose assignment + final MTD" (default): EWOC used both by
+        crm_choose_next() during the trial and by crm_select_mtd() at the end
+        (preserves the historical ewoc_on=True behaviour).
+      - "Final MTD only": dose assignment runs WITHOUT EWOC; only the final
+        MTD selection applies the EWOC filter.
+      - "Off": EWOC is never applied.
+      ewoc_on=False (legacy) forces "Off" regardless of ewoc_application.
 
     n_safe_d1: number of patients already safely treated at L1 with complete follow-up
       before the trial opens (day 0).  Their records are pre-loaded into the patient
@@ -554,7 +592,8 @@ def run_tite_crm(
     highest_tried = -1
     current_day   = 0.0
     burn_active   = bool(burn_in)
-    ewoc_eff      = float(ewoc_alpha) if ewoc_on else None
+    ewoc_decision_eff, ewoc_final_eff = ewoc_effective_alphas(
+        ewoc_application, ewoc_alpha, ewoc_on=ewoc_on)
     trace         = []
     cohort_step   = 0
     stopped_early = False
@@ -681,7 +720,7 @@ def run_tite_crm(
                 sigma, skel1, skel2,
                 n1, y1, n2, y2,
                 level, target1, target2,
-                ewoc_alpha=ewoc_eff, max_step=max_step, gh_n=gh_n,
+                ewoc_alpha=ewoc_decision_eff, max_step=max_step, gh_n=gh_n,
                 enforce_guardrail=enforce_guardrail,
                 highest_tried=highest_tried, n_levels=n_levels,
             )
@@ -705,16 +744,24 @@ def run_tite_crm(
             pm2, od2 = crm_posterior_summaries(
                 sigma, skel2, n2, y2, target2, gh_n=gh_n)
 
-            # EWOC mode label for the trace
-            ewoc_mode = "OFF" if ewoc_eff is None else f"ON (α={ewoc_eff:.2f})"
+            # EWOC mode label for the trace — describes dose ASSIGNMENT only.
+            # In "Final MTD only" mode, make explicit that EWOC was not used
+            # for this per-cohort decision (it applies only at final selection).
+            if ewoc_decision_eff is not None:
+                ewoc_mode = f"ON (α={ewoc_decision_eff:.2f})"
+            elif ewoc_final_eff is not None:
+                ewoc_mode = "OFF for dose assignment (EWOC at final MTD only)"
+            else:
+                ewoc_mode = "OFF"
 
-            # Which doses pass the joint EWOC safety filter?
-            if ewoc_eff is None:
-                # EWOC OFF: all doses are candidates
+            # Which doses pass the joint EWOC safety filter (dose assignment)?
+            if ewoc_decision_eff is None:
+                # EWOC OFF for dose assignment: all doses are candidates
                 allowed_arr = list(range(n_levels))
             else:
                 allowed_arr = [int(d) for d in
-                               np.where((od1 < ewoc_eff) & (od2 < ewoc_eff))[0]]
+                               np.where((od1 < ewoc_decision_eff)
+                                        & (od2 < ewoc_decision_eff))[0]]
 
             # Human-readable reason for the dose selected
             if burn_was_active:
@@ -753,8 +800,8 @@ def run_tite_crm(
                               f"observed yet → L{next_level})")
             elif not allowed_arr:
                 reason = "No dose within joint safety bounds → fallback to L0"
-            elif ewoc_eff is None:
-                # EWOC OFF: closest-to-target1 rule
+            elif ewoc_decision_eff is None:
+                # EWOC OFF for dose assignment: closest-to-target1 rule
                 cands     = np.arange(n_levels)
                 dist      = np.abs(pm1[cands] - float(target1))
                 k_target  = int(cands[int(np.argmin(dist))])
@@ -764,7 +811,9 @@ def run_tite_crm(
                 k_guard   = (int(min(k_step, highest_tried + 1))
                              if enforce_guardrail and highest_tried >= 0
                              else k_step)
-                parts = [f"EWOC OFF → argmin|pm1−target1| = L{k_target}"]
+                _ewoc_off_lbl = ("EWOC OFF for dose assignment"
+                                 if ewoc_final_eff is not None else "EWOC OFF")
+                parts = [f"{_ewoc_off_lbl} → argmin|pm1−target1| = L{k_target}"]
                 if k_step != k_target:
                     parts.append(f"step-limit → L{k_step}")
                 if k_guard != k_step:
@@ -837,7 +886,7 @@ def run_tite_crm(
         sigma, skel1, skel2,
         n1f, y1f, n2f, y2f,
         target1, target2,
-        ewoc_alpha=ewoc_eff, gh_n=gh_n,
+        ewoc_alpha=ewoc_final_eff, gh_n=gh_n,
         restrict_to_tried=restrict_final_to_tried,
     )
     return int(selected), patients, float(study_days), trace, stopped_early
@@ -1518,6 +1567,7 @@ R_DEFAULTS = {
     "require_full_tox1_fu": True,
     "ewoc_on":            True,
     "ewoc_alpha":         0.25,
+    "ewoc_application":   "Dose assignment + final MTD",
     # Early stopping
     "early_stop_on":      False,
     "p_stop":             0.80,
@@ -1653,7 +1703,7 @@ _PRIOR_SCENARIOS: dict = {
 # Single-source-of-truth state management
 # ==============================================================================
 
-_STATE_VERSION = "2026-05-13b"
+_STATE_VERSION = "2026-07-06a"
 
 def init_state() -> None:
     """Seed EVERY canonical config key exactly once per session.
@@ -1920,8 +1970,15 @@ _sync_enforce_guardrail = _make_sync("enforce_guardrail", bool,  "wl_enforce_gua
 _sync_restrict_final_mtd= _make_sync("restrict_final_mtd",bool,  "wl_restrict_final_mtd")
 _sync_burn_in              = _make_sync("burn_in",              bool, "wl_burn_in")
 _sync_require_full_tox1_fu = _make_sync("require_full_tox1_fu", bool, "wl_require_full_tox1_fu")
-_sync_ewoc_on           = _make_sync("ewoc_on",           bool,  "wl_ewoc_on")
 _sync_ewoc_alpha        = _make_sync("ewoc_alpha",        float, "wl_ewoc_alpha")
+def _sync_ewoc_application():
+    """Sync EWOC application selectbox → canonical, keeping the legacy
+    ewoc_on boolean consistent (True unless the mode is Off) so helper code
+    and exported configs that still read ewoc_on keep working."""
+    app = str(st.session_state.get("wl_ewoc_application",
+                                   R_DEFAULTS["ewoc_application"]))
+    st.session_state["ewoc_application"] = app
+    st.session_state["ewoc_on"] = (app != EWOC_APP_OFF)
 _sync_early_stop_on     = _make_sync("early_stop_on",     bool,  "wl_early_stop_on")
 _sync_p_stop            = _make_sync("p_stop",            float, "wl_p_stop")
 _sync_show_crm_trace    = _make_sync("show_crm_trace",    bool,  "wl_show_crm_trace")
@@ -2135,6 +2192,7 @@ _CFG_ESSENTIALS_KEYS: list[tuple[str, type]] = [
     ("require_full_tox1_fu", bool),
     ("ewoc_on",             bool),
     ("ewoc_alpha",          float),
+    ("ewoc_application",    str),
     ("early_stop_on",       bool),
     ("p_stop",              float),
     # CRM decision trace
@@ -2695,17 +2753,33 @@ if view == "Essentials":
         )
         st.session_state["require_full_tox1_fu"] = st.session_state["wl_require_full_tox1_fu"]
 
-        # ── ewoc_on ───────────────────────────────────────────────────────
-        st.session_state["wl_ewoc_on"] = bool(_cfg("ewoc_on"))
-        st.toggle(
-            "Enable EWOC joint overdose control",
-            key="wl_ewoc_on",
-            on_change=_sync_ewoc_on,
-            help=h("ewoc_on",
-                   "Restrict doses where BOTH P(tox1 OD) and P(tox2 OD) < EWOC alpha.")
+        # ── ewoc_application ──────────────────────────────────────────────
+        # Reconcile with legacy state/imports: an old config may carry
+        # ewoc_on=False without an ewoc_application key, or an invalid string.
+        _ewoc_app_cur = str(_cfg("ewoc_application"))
+        if _ewoc_app_cur not in EWOC_APP_OPTIONS:
+            _ewoc_app_cur = R_DEFAULTS["ewoc_application"]
+        if not bool(_cfg("ewoc_on")) and _ewoc_app_cur == EWOC_APP_BOTH:
+            _ewoc_app_cur = EWOC_APP_OFF   # legacy "EWOC disabled" checkbox
+        st.session_state["ewoc_application"] = _ewoc_app_cur
+
+        st.session_state["wl_ewoc_application"] = _ewoc_app_cur
+        st.selectbox(
+            "EWOC application",
+            options=EWOC_APP_OPTIONS,
+            key="wl_ewoc_application",
+            on_change=_sync_ewoc_application,
+            help=h("ewoc_application",
+                   "Choose whether EWOC is used during cohort-by-cohort dose "
+                   "assignment, only when selecting the final MTD, or not at all. "
+                   "EWOC restricts doses to those where BOTH P(tox1 OD) and "
+                   "P(tox2 OD) < EWOC alpha.")
         )
-        # Post-read immediately so ewoc_alpha disabled= sees the updated value.
-        st.session_state["ewoc_on"] = st.session_state["wl_ewoc_on"]
+        # Post-read immediately so ewoc_alpha disabled= sees the updated value;
+        # keep the legacy ewoc_on boolean consistent for helper code.
+        st.session_state["ewoc_application"] = st.session_state["wl_ewoc_application"]
+        st.session_state["ewoc_on"] = (
+            st.session_state["ewoc_application"] != EWOC_APP_OFF)
 
         # ── ewoc_alpha ────────────────────────────────────────────────────
         st.session_state["wl_ewoc_alpha"] = float(_cfg("ewoc_alpha"))
@@ -2713,7 +2787,7 @@ if view == "Essentials":
             "EWOC alpha",
             min_value=0.01, max_value=0.99, step=0.01, key="wl_ewoc_alpha",
             on_change=_sync_ewoc_alpha,
-            disabled=(not bool(_cfg("ewoc_on"))),
+            disabled=(str(_cfg("ewoc_application")) == EWOC_APP_OFF),
             help=h("ewoc_alpha",
                    "EWOC threshold applied to both endpoints independently.")
         )
@@ -3258,6 +3332,7 @@ elif view == "Playground":
                 restrict_final_to_tried= bool(_cfg("restrict_final_mtd")),
                 ewoc_on      = bool(_cfg("ewoc_on")),
                 ewoc_alpha   = float(_cfg("ewoc_alpha")),
+                ewoc_application = str(_cfg("ewoc_application")),
                 burn_in      = bool(_cfg("burn_in")),
                 require_full_tox1_fu_before_escalation = bool(_cfg("require_full_tox1_fu")),
                 n_safe_d1    = int(_cfg("n_safe_d1")),
@@ -3289,19 +3364,24 @@ elif view == "Playground":
                     "gh_n":       int(_cfg("gh_n")),
                     "ewoc_on":    bool(_cfg("ewoc_on")),
                     "ewoc_alpha": float(_cfg("ewoc_alpha")),
+                    "ewoc_application": str(_cfg("ewoc_application")),
                     "restrict_final_mtd": bool(_cfg("restrict_final_mtd")),
                 }
             sel_crm[selc] += 1
             sel_crm_per_trial[s] = selc
 
-            # Compute posterior support for the selected MTD using final follow-up weights
+            # Compute posterior support for the selected MTD using final follow-up weights.
+            # Uses ewoc_final_eff — the same alpha crm_select_mtd() applied for this trial.
             _n1f_s, _y1f_s, _n2f_s, _y2f_s = tite_weights(
                 ptsc, sdc, _tox1_win_derived, int(_cfg("tox2_win")), len(true_t1))
+            _, _ewoc_final_eff_s = ewoc_effective_alphas(
+                str(_cfg("ewoc_application")), float(_cfg("ewoc_alpha")),
+                ewoc_on=bool(_cfg("ewoc_on")))
             _supp_probs = crm_mtd_posterior_probs(
                 float(_cfg("sigma")), skel_t1, skel_t2,
                 _n1f_s, _y1f_s, _n2f_s, _y2f_s,
                 target_t1_val, target_t2_val,
-                ewoc_alpha=(float(_cfg("ewoc_alpha")) if bool(_cfg("ewoc_on")) else None),
+                ewoc_alpha=_ewoc_final_eff_s,
                 gh_n=int(_cfg("gh_n")),
                 restrict_to_tried=bool(_cfg("restrict_final_mtd")),
             )
@@ -4269,14 +4349,17 @@ if view == "Playground" and "_tite_results" in st.session_state:
         _final_mtd_for_supp = _post_tr.get("final_mtd")
         _ewoc_on_ps  = bool(_post_tr.get("ewoc_on",  _cfg("ewoc_on")))
         _ewoc_alp_ps = float(_post_tr.get("ewoc_alpha", _cfg("ewoc_alpha")))
+        _ewoc_app_ps = str(_post_tr.get("ewoc_application", _cfg("ewoc_application")))
         _restrict_ps = bool(_post_tr.get("restrict_final_mtd", _cfg("restrict_final_mtd")))
+        _, _ewoc_final_eff_ps = ewoc_effective_alphas(
+            _ewoc_app_ps, _ewoc_alp_ps, ewoc_on=_ewoc_on_ps)
         _supp_probs_tr = crm_mtd_posterior_probs(
             _sigma_pt,
             _skel_t1_pt, _skel_t2_pt,
             _n1_end, _y1_end, _n2_end, _y2_end,
             float(_post_tr.get("target_t1", _cfg("target_t1"))),
             float(_post_tr.get("target_t2", _cfg("target_t2"))),
-            ewoc_alpha=(_ewoc_alp_ps if _ewoc_on_ps else None),
+            ewoc_alpha=_ewoc_final_eff_ps,
             gh_n=_gh_n_pt,
             restrict_to_tried=_restrict_ps,
         )
@@ -4335,6 +4418,10 @@ if view == "Playground" and "_tite_results" in st.session_state:
         _n_steps_el  = len(_post_decs)
         _final_mtd_v = _post_tr.get("final_mtd")
         _elig_border = _ewoc_alpha_pt - 0.05    # lower bound of borderline zone
+        _ewoc_decision_eff_el, _ = ewoc_effective_alphas(
+            str(_post_tr.get("ewoc_application", _cfg("ewoc_application"))),
+            _ewoc_alpha_pt,
+            ewoc_on=bool(_post_tr.get("ewoc_on", _cfg("ewoc_on"))))
 
         fig3, ax3 = plt.subplots(
             figsize=(max(8.0, _n_steps_el * 0.90 + 1.5), 4.2), dpi=150)
@@ -4420,6 +4507,11 @@ if view == "Playground" and "_tite_results" in st.session_state:
             f"red = excluded (either OD > α = {_ewoc_alpha_pt:.2f}). "
             "Silver border = dose being given to that cohort; "
             "gold border = final MTD selected after full follow-up."
+            + ("" if _ewoc_decision_eff_el is not None else
+               " **Note:** EWOC was NOT applied to dose assignment in this trial "
+               "(mode = Final MTD only / Off) — the colouring above shows where each "
+               "dose stands relative to α for reference only; it did not drive the "
+               "cohort-by-cohort dose decisions.")
         )
 
 # ==============================================================================
@@ -4455,22 +4547,27 @@ if (view == "Playground"
 
     st.markdown("---")
     st.subheader("First CRM trial — decision walkthrough")
-    _ewoc_on_flag = bool(_cfg("ewoc_on"))
     _ewoc_alpha   = float(_cfg("ewoc_alpha"))
-    if _ewoc_on_flag:
+    _ewoc_decision_eff_wt, _ewoc_final_eff_wt = ewoc_effective_alphas(
+        str(_cfg("ewoc_application")), _ewoc_alpha, ewoc_on=bool(_cfg("ewoc_on")))
+    if _ewoc_decision_eff_wt is not None:
         st.caption(
-            f"**EWOC ON (α = {_ewoc_alpha:.2f})** — At each decision the model filters "
-            "doses to those where P(tox1 > target) < α **and** P(tox2 > target) < α "
-            "(joint safety rule). The **highest** jointly admissible dose is then selected, "
-            "subject to max-step and guardrail constraints."
+            f"**EWOC ON for dose assignment (α = {_ewoc_alpha:.2f})** — At each decision "
+            "the model filters doses to those where P(tox1 > target) < α **and** "
+            "P(tox2 > target) < α (joint safety rule). The **highest** jointly admissible "
+            "dose is then selected, subject to max-step and guardrail constraints."
         )
     else:
+        _off_note = (
+            " EWOC is still applied when selecting the **final MTD** at study end."
+            if _ewoc_final_eff_wt is not None else ""
+        )
         st.caption(
-            "**EWOC OFF** — No overdose-probability filter is applied. "
-            "Among all doses (subject to step and guardrail constraints), the model picks "
-            "the dose whose posterior mean P(tox1) is **closest to target1** "
+            "**EWOC OFF for dose assignment** — No overdose-probability filter is applied "
+            "during the trial. Among all doses (subject to step and guardrail constraints), "
+            "the model picks the dose whose posterior mean P(tox1) is **closest to target1** "
             "(standard CRM argmin rule). This is target-based and does not automatically "
-            "escalate to the highest dose."
+            "escalate to the highest dose." + _off_note
         )
 
     # ── helper: compute per-patient TITE weight at a given decision day ───────
@@ -4584,9 +4681,16 @@ if (view == "Playground"
     _tgt1_tr     = _tr.get("target_t1", float(_cfg("target_t1")))
     _tgt2_tr     = _tr.get("target_t2", float(_cfg("target_t2")))
     _gh_n_tr     = _tr.get("gh_n",     int(_cfg("gh_n")))
-    _ewoc_on_tr  = _tr.get("ewoc_on",  bool(_cfg("ewoc_on")))
-    _ewoc_a_tr   = _tr.get("ewoc_alpha", float(_cfg("ewoc_alpha")))
+    _ewoc_on_raw_tr = _tr.get("ewoc_on",  bool(_cfg("ewoc_on")))
+    _ewoc_a_tr      = _tr.get("ewoc_alpha", float(_cfg("ewoc_alpha")))
+    _ewoc_app_tr    = _tr.get("ewoc_application", str(_cfg("ewoc_application")))
     _restr_tr    = _tr.get("restrict_final_mtd", bool(_cfg("restrict_final_mtd")))
+    # Final MTD selection always uses the FINAL-selection effective alpha,
+    # which is ON under "Dose assignment + final MTD" and "Final MTD only",
+    # and OFF only under "Off".
+    _, _ewoc_final_eff_tr = ewoc_effective_alphas(
+        _ewoc_app_tr, _ewoc_a_tr, ewoc_on=_ewoc_on_raw_tr)
+    _ewoc_on_tr = _ewoc_final_eff_tr is not None
     _sd_tr       = _tr.get("study_days", 0.0)
 
     if _final_mtd is not None and _skel_t1_tr is not None:
@@ -4647,14 +4751,14 @@ if (view == "Playground"
         # Step 3: Selection rule
         if _ewoc_on_tr:
             _sel_rule_str = (
-                f"**EWOC ON (α = {_ewoc_a_tr:.2f})**: doses admitted only where "
-                f"P(tox1 OD) < α **and** P(tox2 OD) < α.  "
+                f"**EWOC ON for final MTD selection (α = {_ewoc_a_tr:.2f})**: doses "
+                f"admitted only where P(tox1 OD) < α **and** P(tox2 OD) < α.  "
                 f"Among admitted {'tried ' if _restr_tr else ''}doses, "
                 f"the **highest** is selected."
             )
         else:
             _sel_rule_str = (
-                "**EWOC OFF**: no overdose-probability filter.  "
+                "**EWOC OFF for final MTD selection**: no overdose-probability filter.  "
                 f"Among {'tried ' if _restr_tr else ''}doses, the one with "
                 f"posterior mean P(tox1) **closest to target ({_tgt1_tr:.2f})** "
                 "is selected (standard CRM argmin rule)."
@@ -4779,7 +4883,9 @@ if (view == "Playground"
             ax.plot(_steps, _od2_curr, "s-", color="#ffaa44",
                     lw=1.8, ms=4, label="OD prob tox2")
             ewoc_a = float(_cfg("ewoc_alpha"))
-            if bool(_cfg("ewoc_on")):
+            _ewoc_decision_eff_plt, _ = ewoc_effective_alphas(
+                str(_cfg("ewoc_application")), ewoc_a, ewoc_on=bool(_cfg("ewoc_on")))
+            if _ewoc_decision_eff_plt is not None:
                 ax.axhline(ewoc_a, lw=1, ls="--", color="#80ff80",
                            alpha=0.7, label=f"EWOC α={ewoc_a:.2f}")
             ax.set_title("Safety evolution at current dose", fontsize=9)
@@ -4993,6 +5099,7 @@ def run_truth_stress_test(scenarios, base_ss, skel_t1, skel_t2, n_sim, seed):
         restrict_final_to_tried=bool(base_ss["restrict_final_to_tried"]),
         ewoc_on=bool(base_ss["ewoc_on"]),
         ewoc_alpha=float(base_ss["ewoc_alpha"]),
+        ewoc_application=str(base_ss.get("ewoc_application", EWOC_APP_BOTH)),
         n_safe_d1=int(base_ss.get("n_safe_d1", 0)),
         require_full_tox1_fu_before_escalation=bool(base_ss.get("require_full_tox1_fu", False)),
         p_stop=float(base_ss.get("p_stop", 1.0)),
@@ -5100,6 +5207,7 @@ def run_parameter_sweep(param_name, param_values, base_ss,
         restrict_final_to_tried=bool(base_ss["restrict_final_to_tried"]),
         ewoc_on=bool(base_ss["ewoc_on"]),
         ewoc_alpha=float(base_ss["ewoc_alpha"]),
+        ewoc_application=str(base_ss.get("ewoc_application", EWOC_APP_BOTH)),
         n_safe_d1=int(base_ss.get("n_safe_d1", 0)),
         require_full_tox1_fu_before_escalation=bool(base_ss.get("require_full_tox1_fu", False)),
         p_stop=float(base_ss.get("p_stop", 1.0)),
@@ -5223,6 +5331,7 @@ def run_prior_nu_sweep(nu1_values, nu2_values, base_ss,
         restrict_final_to_tried=bool(base_ss["restrict_final_to_tried"]),
         ewoc_on=bool(base_ss["ewoc_on"]),
         ewoc_alpha=float(base_ss["ewoc_alpha"]),
+        ewoc_application=str(base_ss.get("ewoc_application", EWOC_APP_BOTH)),
     )
 
     rows = []
@@ -5320,8 +5429,8 @@ def _generate_de_html_report(param_name, param_label, result_df,
         ("Target tox1 (acute)",           f"{base_ss['target_tox1']:.3f}"),
         ("Target tox2 (surgery/subacute)", f"{base_ss['target_tox2']:.3f}"),
         ("Prior sigma (σ)",                f"{base_ss['sigma']:.3g}"),
-        ("EWOC enabled",                   yn(base_ss["ewoc_on"])),
-        ("EWOC α",  f"{base_ss['ewoc_alpha']:.3g}" if base_ss["ewoc_on"] else "N/A"),
+        ("EWOC application",               base_ss.get("ewoc_application", EWOC_APP_BOTH)),
+        ("EWOC alpha",  f"{base_ss['ewoc_alpha']:.3g}" if base_ss["ewoc_on"] else "N/A"),
         ("Max patients (max N)",           str(base_ss["max_n"])),
         ("Cohort size",                    str(base_ss["cohort_size"])),
         ("Start level",                    f"L{base_ss['start_level'] + 1}"),
@@ -5514,8 +5623,8 @@ def _generate_de_all_html_report(results_list, base_ss, n_sim, seed,
         ("Target tox1 (acute)",            f"{base_ss['target_tox1']:.3f}"),
         ("Target tox2 (surgery/subacute)",  f"{base_ss['target_tox2']:.3f}"),
         ("Prior sigma (σ)",                 f"{base_ss['sigma']:.3g}"),
-        ("EWOC enabled",                    yn(base_ss["ewoc_on"])),
-        ("EWOC α",
+        ("EWOC application",                base_ss.get("ewoc_application", EWOC_APP_BOTH)),
+        ("EWOC alpha",
          f"{base_ss['ewoc_alpha']:.3g}" if base_ss["ewoc_on"] else "N/A"),
         ("Max patients (max N)",            str(base_ss["max_n"])),
         ("Cohort size",                     str(base_ss["cohort_size"])),
@@ -6768,6 +6877,7 @@ if view == "Design Exploration":
             sigma                = float(_cfg("sigma")),
             ewoc_on              = bool(_cfg("ewoc_on")),
             ewoc_alpha           = float(get_config_value("ewoc_alpha")),
+            ewoc_application     = str(_cfg("ewoc_application")),
             max_n                = int(_cfg("max_n_crm")),
             cohort_size          = int(_cfg("cohort_size")),
             start_level          = int(_cfg("start_level_1b")),
@@ -6898,6 +7008,7 @@ if view == "Design Exploration":
             sigma                   = float(_cfg("sigma")),
             ewoc_on                 = bool(_cfg("ewoc_on")),
             ewoc_alpha              = float(get_config_value("ewoc_alpha")),
+            ewoc_application        = str(_cfg("ewoc_application")),
             max_n                   = int(_cfg("max_n_crm")),
             cohort_size             = int(_cfg("cohort_size")),
             start_level             = int(_cfg("start_level_1b")),
@@ -7068,6 +7179,7 @@ if view == "Design Exploration":
             sigma                   = float(_cfg("sigma")),
             ewoc_on                 = bool(_cfg("ewoc_on")),
             ewoc_alpha              = float(get_config_value("ewoc_alpha")),
+            ewoc_application        = str(_cfg("ewoc_application")),
             max_n                   = int(_cfg("max_n_crm")),
             cohort_size             = int(_cfg("cohort_size")),
             start_level             = int(_cfg("start_level_1b")),
