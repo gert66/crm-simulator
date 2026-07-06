@@ -278,6 +278,135 @@ def crm_posterior_summaries(sigma, skeleton, n_per, dlt_per, target, gh_n=61):
     overdose_prob = (post_w[:, None] * (P > float(target))).sum(axis=0)
     return post_mean, overdose_prob
 
+def weighted_quantile(values, weights, quantiles):
+    """
+    Weighted quantiles of a 1-D sample (no interpolation between unweighted
+    ranks — sorts values, forms the weighted CDF, and reads off each quantile).
+    """
+    values  = np.asarray(values,  dtype=float)
+    weights = np.asarray(weights, dtype=float)
+    quantiles = np.asarray(quantiles, dtype=float)
+    order   = np.argsort(values)
+    v_sort  = values[order]
+    w_sort  = weights[order]
+    w_sort  = w_sort / w_sort.sum()
+    cdf     = np.cumsum(w_sort) - 0.5 * w_sort
+    return np.interp(quantiles, cdf, v_sort, left=v_sort[0], right=v_sort[-1])
+
+def compute_posterior_curve_data(sigma, skeleton, n_per, y_per, target,
+                                  gh_n=61, dose_labels=None, n_draw_curves=40,
+                                  ci=0.80, rng=None):
+    """
+    Posterior dose-toxicity curve data for one endpoint, computed with the
+    same GH-quadrature posterior used by the CRM decision logic
+    (posterior_via_gh). Returns per-dose posterior mean, weighted credible
+    band, optional posterior curve samples, and the prior skeleton — all at
+    the discrete dose levels used for CRM decisions.
+    """
+    skeleton = np.asarray(skeleton, dtype=float)
+    n_levels = len(skeleton)
+    if dose_labels is None:
+        dose_labels = [f"L{i}" for i in range(n_levels)]
+
+    n_per = np.zeros(n_levels) if n_per is None else np.asarray(n_per, dtype=float)
+    y_per = np.zeros(n_levels) if y_per is None else np.asarray(y_per, dtype=float)
+
+    post_w, P = posterior_via_gh(sigma, skeleton, n_per, y_per, gh_n=gh_n)
+    post_mean = (post_w[:, None] * P).sum(axis=0)
+
+    lo_q = (1.0 - float(ci)) / 2.0
+    hi_q = 1.0 - lo_q
+    q_lo  = np.empty(n_levels)
+    q_med = np.empty(n_levels)
+    q_hi  = np.empty(n_levels)
+    for d in range(n_levels):
+        q_lo[d], q_med[d], q_hi[d] = weighted_quantile(
+            P[:, d], post_w, [lo_q, 0.5, hi_q])
+
+    sample_curves = None
+    if n_draw_curves and n_draw_curves > 0:
+        rng = np.random.default_rng() if rng is None else rng
+        idx = rng.choice(len(post_w), size=int(n_draw_curves), p=post_w, replace=True)
+        sample_curves = P[idx, :]
+
+    overdose_prob = (post_w[:, None] * (P > float(target))).sum(axis=0)
+
+    return {
+        "dose_labels":    list(dose_labels),
+        "skeleton":       skeleton,
+        "post_mean":      post_mean,
+        "q_lo":           q_lo,
+        "q_med":          q_med,
+        "q_hi":           q_hi,
+        "ci":             float(ci),
+        "sample_curves":  sample_curves,
+        "overdose_prob":  overdose_prob,
+        "target":         float(target),
+        "n_per":          n_per,
+        "y_per":          y_per,
+    }
+
+def plot_posterior_dose_toxicity_curves(curve_data, ewoc_alpha=None, color="#4a9eff",
+                                         show_samples=True, title=None,
+                                         figsize=None, dpi=150):
+    """
+    Plot the posterior dose-toxicity relationship for one endpoint, using the
+    per-dose summaries from compute_posterior_curve_data(). Lines connecting
+    dose levels are visual interpolation only — CRM decisions are made at the
+    discrete dose levels shown as markers.
+    """
+    dose_labels   = curve_data["dose_labels"]
+    n_levels      = len(dose_labels)
+    x             = np.arange(n_levels)
+    skeleton      = curve_data["skeleton"]
+    post_mean     = curve_data["post_mean"]
+    q_lo, q_hi    = curve_data["q_lo"], curve_data["q_hi"]
+    target        = curve_data["target"]
+    overdose_prob = curve_data["overdose_prob"]
+    ci_pct        = int(round(curve_data["ci"] * 100))
+
+    fig, ax = plt.subplots(figsize=figsize or (6.0, 4.0), dpi=dpi)
+    _apply_dark_fig(fig, ax)
+
+    if show_samples and curve_data.get("sample_curves") is not None:
+        for i, curve in enumerate(curve_data["sample_curves"]):
+            ax.plot(x, curve, color=color, alpha=0.10, lw=0.8, zorder=1,
+                    label="Posterior samples (interpolated)" if i == 0 else None)
+
+    ax.fill_between(x, q_lo, q_hi, color=color, alpha=0.22, zorder=2,
+                     label=f"{ci_pct}% credible interval")
+
+    ax.plot(x, skeleton, ls="--", marker="D", ms=5, lw=1.2,
+            color=color, alpha=0.6, zorder=3, label="Prior skeleton")
+
+    ax.plot(x, post_mean, ls="-", marker="o", ms=6, lw=2.0,
+            color=color, zorder=4, label="Posterior mean (interpolated)")
+
+    ax.axhline(target, ls=":", lw=1.3, color="#ff6666", alpha=0.9, zorder=3,
+               label=f"Target = {target:.2f}")
+
+    if ewoc_alpha is not None:
+        unsafe = np.where(overdose_prob >= float(ewoc_alpha))[0]
+        if len(unsafe):
+            ax.scatter(unsafe, post_mean[unsafe], marker="x", s=90, lw=2.2,
+                       color="#ff3333", zorder=5,
+                       label=f"P(tox > target) ≥ α={float(ewoc_alpha):.2f} (EWOC)")
+
+    ax.set_xticks(x)
+    ax.set_xticklabels([f"L{i} {lab}" for i, lab in enumerate(dose_labels)],
+                        fontsize=8, rotation=15)
+    ax.set_xlabel("Dose level", fontsize=9, color=_DARK_FG)
+    ax.set_ylabel("Toxicity probability", fontsize=9, color=_DARK_FG)
+    y_max = max(0.6, float(np.max(q_hi)) * 1.15 + 0.02, float(target) * 1.3)
+    ax.set_ylim(0, min(1.0, y_max))
+    if title:
+        ax.set_title(title, fontsize=10, color=_DARK_FG)
+    compact_style(ax)
+    ax.legend(fontsize=7, frameon=True, loc="upper left", labelcolor=_DARK_FG,
+              facecolor=_DARK_AX, edgecolor=_DARK_GRD)
+    fig.tight_layout(pad=0.5)
+    return fig
+
 def crm_stopping_prob(sigma, skel1, n1, y1, target1, rec_dose, gh_n=61):
     """
     Posterior probability that rec_dose minimises |P(tox1|d) - target1| over
@@ -3441,6 +3570,133 @@ elif view == "Playground":
             "yscrm_raw":        yscrm.tolist(),
             "dur_crm_raw":      dur_crm.tolist(),
         }
+
+    # ==============================================================================
+    # Posterior dose-toxicity curves
+    # ==============================================================================
+    st.write("")
+    st.markdown("#### Posterior dose-toxicity curves")
+    st.caption(
+        "Shows the posterior dose-toxicity relationship implied by the current "
+        "skeleton, prior variance, and observed data. Smooth lines are visual "
+        "interpolation only — CRM decisions are based on the discrete dose-level "
+        "posterior probabilities shown as markers."
+    )
+
+    _pc_l, _pc_m, _pc_r = st.columns([1.2, 1.0, 1.0], gap="large")
+    with _pc_l:
+        pc_endpoint = st.radio(
+            "Endpoint", options=["Tox1 acute", "Tox2 subacute", "Both"],
+            horizontal=True, key="pc_endpoint",
+        )
+    with _pc_m:
+        pc_show_samples = st.checkbox(
+            "Show posterior sample curves", value=True, key="pc_show_samples")
+    with _pc_r:
+        pc_ci_pct = st.selectbox(
+            "Credible interval", options=[50, 80, 90], index=1, key="pc_ci_pct")
+
+    _pc_trace = st.session_state.get("_tite_results", {}).get("crm_trace")
+    pc_source = "Playground manual data"
+    pc_step_idx = None
+    if _pc_trace and _pc_trace.get("decisions"):
+        pc_source = st.selectbox(
+            "Posterior source",
+            options=["Playground manual data",
+                     "First simulated CRM trial, last decision",
+                     "First simulated CRM trial, choose decision step"],
+            key="pc_source",
+        )
+        if pc_source == "First simulated CRM trial, choose decision step":
+            _n_steps = len(_pc_trace["decisions"])
+            pc_step_idx = st.slider(
+                "Decision step", 1, _n_steps, _n_steps, key="pc_step_idx") - 1
+
+    _need_t1 = pc_endpoint in ("Tox1 acute", "Both")
+    _need_t2 = pc_endpoint in ("Tox2 subacute", "Both")
+
+    if pc_source == "Playground manual data":
+        st.caption(
+            "Enter observed n treated and DLT count per dose "
+            "(all zero = prior only). DLT count is capped at n.")
+        n1_curve = np.zeros(5); y1_curve = np.zeros(5)
+        n2_curve = np.zeros(5); y2_curve = np.zeros(5)
+
+        if _need_t1:
+            st.markdown(
+                "<div style='font-size:0.82rem;font-weight:600;'>Tox1 acute — observed data</div>",
+                unsafe_allow_html=True)
+            _cols1 = st.columns(5)
+            for i in range(5):
+                with _cols1[i]:
+                    n1_curve[i] = st.number_input(
+                        f"n L{i}", min_value=0.0, step=1.0, key=f"pc_n1_{i}")
+                    y1_curve[i] = st.number_input(
+                        f"DLT L{i}", min_value=0.0, step=1.0, key=f"pc_y1_{i}")
+            y1_curve = np.minimum(y1_curve, n1_curve)
+
+        if _need_t2:
+            st.markdown(
+                "<div style='font-size:0.82rem;font-weight:600;'>Tox2 subacute — observed data</div>",
+                unsafe_allow_html=True)
+            _cols2 = st.columns(5)
+            for i in range(5):
+                with _cols2[i]:
+                    n2_curve[i] = st.number_input(
+                        f"n L{i}", min_value=0.0, step=1.0, key=f"pc_n2_{i}")
+                    y2_curve[i] = st.number_input(
+                        f"DLT L{i}", min_value=0.0, step=1.0, key=f"pc_y2_{i}")
+            y2_curve = np.minimum(y2_curve, n2_curve)
+    else:
+        _dec = (_pc_trace["decisions"][-1] if pc_step_idx is None
+                else _pc_trace["decisions"][pc_step_idx])
+        n1_curve = np.array(_dec["n1"], dtype=float)
+        y1_curve = np.array(_dec["y1"], dtype=float)
+        n2_curve = np.array(_dec["n2"], dtype=float)
+        y2_curve = np.array(_dec["y2"], dtype=float)
+        st.caption(
+            f"Using first-trial trace step {_dec['step']} "
+            f"(decision day {_dec['decision_day']:.0f}).")
+
+    _sigma_val  = float(_cfg("sigma"))
+    _gh_n_val   = int(_cfg("gh_n"))
+    _ewoc_a_val = float(_cfg("ewoc_alpha")) if bool(_cfg("ewoc_on")) else None
+    _pc_rng     = np.random.default_rng(12345)
+    _pc_n_draw  = 40 if pc_show_samples else 0
+
+    _pc_plot_cols = st.columns(2) if pc_endpoint == "Both" else [st.container()]
+
+    if _need_t1:
+        _cd1 = compute_posterior_curve_data(
+            sigma=_sigma_val, skeleton=skel_t1, n_per=n1_curve, y_per=y1_curve,
+            target=target_t1_val, gh_n=_gh_n_val, dose_labels=dose_labels,
+            n_draw_curves=_pc_n_draw, ci=pc_ci_pct / 100.0, rng=_pc_rng,
+        )
+        _fig1 = plot_posterior_dose_toxicity_curves(
+            _cd1, ewoc_alpha=_ewoc_a_val, color="#4a9eff",
+            show_samples=pc_show_samples, title="Tox1 acute — posterior",
+        )
+        with _pc_plot_cols[0]:
+            st.image(fig_to_png_bytes(_fig1), use_container_width=True)
+
+    if _need_t2:
+        _cd2 = compute_posterior_curve_data(
+            sigma=_sigma_val, skeleton=skel_t2, n_per=n2_curve, y_per=y2_curve,
+            target=target_t2_val, gh_n=_gh_n_val, dose_labels=dose_labels,
+            n_draw_curves=_pc_n_draw, ci=pc_ci_pct / 100.0, rng=_pc_rng,
+        )
+        _fig2 = plot_posterior_dose_toxicity_curves(
+            _cd2, ewoc_alpha=_ewoc_a_val, color="#ffaa44",
+            show_samples=pc_show_samples, title="Tox2 subacute — posterior",
+        )
+        with (_pc_plot_cols[1] if pc_endpoint == "Both" else _pc_plot_cols[0]):
+            st.image(fig_to_png_bytes(_fig2), use_container_width=True)
+
+    st.caption(
+        "The CRM decision is based on the discrete dose-level posterior "
+        "probabilities. The curve is a visual aid to show the implied "
+        "monotone dose-toxicity relationship."
+    )
 
 # ==============================================================================
 # Results
