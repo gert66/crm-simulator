@@ -27,6 +27,6 @@ python metc_simulation_report.py --n-sim 200
 The batch script uses the existing TITE-CRM engine and initializes every trial
 with the current study state: six fully followed patients at L1 (5x5 Gy), zero
 acute and subacute toxicity, and the first new cohort of three patients fixed at
-L2 (5x6 Gy).  It evaluates six toxicity scenarios, three EWOC application modes,
+L2 (5x6 Gy).  It evaluates five acute toxicity scenarios with the subacute probabilities held fixed, three EWOC application modes,
 and burn-in on/off, then writes the HTML report, summary CSV, per-simulation CSV,
 and selected-MTD distribution figures to `metc_outputs/`.

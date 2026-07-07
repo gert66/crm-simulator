@@ -27,7 +27,6 @@ with contextlib.redirect_stderr(io.StringIO()):
 DOSE_LABELS = ["5x4 Gy", "5x5 Gy", "5x6 Gy", "5x7 Gy", "5x8 Gy"]
 TRUE_SUBACUTE = [0.02, 0.05, 0.10, 0.15, 0.25]
 ACUTE_SCENARIOS = {
-    "Subacute reference": [0.01, 0.04, 0.12, 0.17, 0.27],
     "Acute low": [0.01, 0.02, 0.06, 0.10, 0.15],
     "Acute middle": [0.01, 0.04, 0.12, 0.17, 0.27],
     "Acute high": [0.01, 0.05, 0.15, 0.22, 0.30],
@@ -255,7 +254,7 @@ img {{ max-width: 100%; border: 1px solid #d6dde5; margin: 12px 0 28px; }}
 <h2>Design settings</h2>
 <ul>
 <li>Simulations per combination: {int(summary['n_sim'].iloc[0])}</li>
-<li>Scenario grid: 6 toxicity scenarios × 3 EWOC modes × 2 burn-in settings = {len(summary)} combinations.</li>
+<li>Scenario grid: 5 acute toxicity scenarios × 3 EWOC modes × 2 burn-in settings = {len(summary)} combinations.</li>
 <li>Acute target: {settings['target1']:.2f}; subacute target: {settings['target2']:.2f}; EWOC alpha: {settings['ewoc_alpha']:.2f}.</li>
 <li>Prior skeleton acute: {', '.join(f'{v:.3f}' for v in settings['skel1'])}; subacute: {', '.join(f'{v:.3f}' for v in settings['skel2'])}.</li>
 <li>Trial duration is reported as one patient per four weeks: additional duration = new patients × 4 weeks.</li>
