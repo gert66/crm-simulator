@@ -15,9 +15,9 @@ img { max-width: 100%; border: 1px solid #d6dde5; margin: 12px 0 28px; }
 <h2>Design settings</h2>
 <ul>
 <li>Simulations per combination: 200</li>
-<li>Scenario grid: 6 toxicity scenarios × 3 EWOC modes × 2 burn-in settings = 36 combinations.</li>
+<li>Scenario grid: 5 acute toxicity scenarios × 3 EWOC modes × 2 burn-in settings = 30 combinations.</li>
 <li>Acute target: 0.20; subacute target: 0.33; EWOC alpha: 0.35.</li>
-<li>Prior skeleton acute: 0.021, 0.066, 0.150, 0.266, 0.396; subacute: 0.036, 0.084, 0.157, 0.250, 0.355.</li>
+<li>Prior skeleton acute: 0.004, 0.021, 0.066, 0.150, 0.266; subacute: 0.012, 0.036, 0.084, 0.157, 0.250.</li>
 <li>Trial duration is reported as one patient per four weeks: additional duration = new patients × 4 weeks.</li>
 <li>True MTD is defined as the highest dose level with true acute toxicity ≤ target acute toxicity.</li>
 </ul>
@@ -43,13 +43,13 @@ img { max-width: 100%; border: 1px solid #d6dde5; margin: 12px 0 28px; }
     <tr>
       <td>Acute low</td>
       <td>EWOC off</td>
-      <td>False</td>
+      <td>True</td>
       <td>L4 (5x8 Gy)</td>
-      <td>81.5</td>
+      <td>77.0</td>
       <td>0.0</td>
-      <td>18.5</td>
-      <td>2.8</td>
-      <td>3.6</td>
+      <td>23.0</td>
+      <td>2.7</td>
+      <td>3.5</td>
       <td>24.0</td>
       <td>96.0</td>
       <td>0.0</td>
@@ -57,72 +57,72 @@ img { max-width: 100%; border: 1px solid #d6dde5; margin: 12px 0 28px; }
     <tr>
       <td>Acute low</td>
       <td>EWOC off</td>
-      <td>True</td>
+      <td>False</td>
       <td>L4 (5x8 Gy)</td>
-      <td>73.5</td>
+      <td>76.0</td>
       <td>0.0</td>
-      <td>26.5</td>
-      <td>2.6</td>
-      <td>3.4</td>
+      <td>24.0</td>
+      <td>2.9</td>
+      <td>3.9</td>
       <td>24.0</td>
       <td>96.0</td>
       <td>0.0</td>
-    </tr>
-    <tr>
-      <td>Subacute reference</td>
-      <td>EWOC during + final</td>
-      <td>True</td>
-      <td>L3 (5x7 Gy)</td>
-      <td>37.5</td>
-      <td>0.0</td>
-      <td>62.5</td>
-      <td>3.3</td>
-      <td>2.4</td>
-      <td>24.0</td>
-      <td>96.0</td>
-      <td>37.5</td>
-    </tr>
-    <tr>
-      <td>Acute shallow</td>
-      <td>EWOC final only</td>
-      <td>True</td>
-      <td>L3 (5x7 Gy)</td>
-      <td>36.5</td>
-      <td>0.0</td>
-      <td>63.5</td>
-      <td>4.3</td>
-      <td>2.7</td>
-      <td>24.0</td>
-      <td>96.0</td>
-      <td>60.0</td>
-    </tr>
-    <tr>
-      <td>Acute low</td>
-      <td>EWOC during + final</td>
-      <td>True</td>
-      <td>L4 (5x8 Gy)</td>
-      <td>14.0</td>
-      <td>0.0</td>
-      <td>86.0</td>
-      <td>2.1</td>
-      <td>2.7</td>
-      <td>24.0</td>
-      <td>96.0</td>
-      <td>45.5</td>
     </tr>
     <tr>
       <td>Acute low</td>
       <td>EWOC final only</td>
       <td>False</td>
       <td>L4 (5x8 Gy)</td>
-      <td>14.0</td>
+      <td>37.0</td>
       <td>0.0</td>
-      <td>86.0</td>
-      <td>2.7</td>
-      <td>3.9</td>
+      <td>63.0</td>
+      <td>2.9</td>
+      <td>3.8</td>
       <td>24.0</td>
       <td>96.0</td>
-      <td>75.0</td>
+      <td>47.0</td>
+    </tr>
+    <tr>
+      <td>Acute low</td>
+      <td>EWOC during + final</td>
+      <td>False</td>
+      <td>L4 (5x8 Gy)</td>
+      <td>32.0</td>
+      <td>0.0</td>
+      <td>68.0</td>
+      <td>2.6</td>
+      <td>3.3</td>
+      <td>24.0</td>
+      <td>96.0</td>
+      <td>31.5</td>
+    </tr>
+    <tr>
+      <td>Acute low</td>
+      <td>EWOC final only</td>
+      <td>True</td>
+      <td>L4 (5x8 Gy)</td>
+      <td>30.5</td>
+      <td>0.0</td>
+      <td>69.5</td>
+      <td>2.7</td>
+      <td>3.5</td>
+      <td>24.0</td>
+      <td>96.0</td>
+      <td>48.0</td>
+    </tr>
+    <tr>
+      <td>Acute low</td>
+      <td>EWOC during + final</td>
+      <td>True</td>
+      <td>L4 (5x8 Gy)</td>
+      <td>26.5</td>
+      <td>0.0</td>
+      <td>73.5</td>
+      <td>2.3</td>
+      <td>3.1</td>
+      <td>24.0</td>
+      <td>96.0</td>
+      <td>24.5</td>
     </tr>
   </tbody>
 </table>
@@ -146,505 +146,421 @@ img { max-width: 100%; border: 1px solid #d6dde5; margin: 12px 0 28px; }
   </thead>
   <tbody>
     <tr>
-      <td>Subacute reference</td>
+      <td>Acute low</td>
       <td>EWOC during + final</td>
       <td>True</td>
-      <td>L3 (5x7 Gy)</td>
-      <td>37.5</td>
+      <td>L4 (5x8 Gy)</td>
+      <td>26.5</td>
       <td>0.0</td>
-      <td>62.5</td>
-      <td>3.3</td>
-      <td>2.4</td>
-      <td>24.0</td>
-      <td>96.0</td>
-      <td>37.5</td>
-    </tr>
-    <tr>
-      <td>Subacute reference</td>
-      <td>EWOC during + final</td>
-      <td>False</td>
-      <td>L3 (5x7 Gy)</td>
-      <td>35.5</td>
-      <td>2.0</td>
-      <td>62.5</td>
-      <td>3.4</td>
+      <td>73.5</td>
       <td>2.3</td>
-      <td>24.0</td>
-      <td>96.0</td>
-      <td>42.5</td>
-    </tr>
-    <tr>
-      <td>Subacute reference</td>
-      <td>EWOC final only</td>
-      <td>True</td>
-      <td>L3 (5x7 Gy)</td>
-      <td>41.0</td>
-      <td>0.5</td>
-      <td>58.5</td>
-      <td>4.2</td>
       <td>3.1</td>
       <td>24.0</td>
       <td>96.0</td>
-      <td>68.0</td>
+      <td>24.5</td>
     </tr>
     <tr>
-      <td>Subacute reference</td>
-      <td>EWOC final only</td>
+      <td>Acute low</td>
+      <td>EWOC during + final</td>
       <td>False</td>
-      <td>L3 (5x7 Gy)</td>
-      <td>43.0</td>
-      <td>2.5</td>
-      <td>54.5</td>
-      <td>4.5</td>
+      <td>L4 (5x8 Gy)</td>
+      <td>32.0</td>
+      <td>0.0</td>
+      <td>68.0</td>
+      <td>2.6</td>
       <td>3.3</td>
       <td>24.0</td>
       <td>96.0</td>
-      <td>68.5</td>
+      <td>31.5</td>
     </tr>
     <tr>
-      <td>Subacute reference</td>
-      <td>EWOC off</td>
+      <td>Acute low</td>
+      <td>EWOC final only</td>
       <td>True</td>
-      <td>L3 (5x7 Gy)</td>
-      <td>47.0</td>
-      <td>32.5</td>
-      <td>20.5</td>
-      <td>4.1</td>
-      <td>2.9</td>
+      <td>L4 (5x8 Gy)</td>
+      <td>30.5</td>
+      <td>0.0</td>
+      <td>69.5</td>
+      <td>2.7</td>
+      <td>3.5</td>
       <td>24.0</td>
       <td>96.0</td>
-      <td>0.0</td>
+      <td>48.0</td>
     </tr>
     <tr>
-      <td>Subacute reference</td>
-      <td>EWOC off</td>
+      <td>Acute low</td>
+      <td>EWOC final only</td>
       <td>False</td>
-      <td>L3 (5x7 Gy)</td>
-      <td>43.0</td>
-      <td>32.5</td>
-      <td>24.5</td>
-      <td>4.6</td>
-      <td>3.1</td>
+      <td>L4 (5x8 Gy)</td>
+      <td>37.0</td>
+      <td>0.0</td>
+      <td>63.0</td>
+      <td>2.9</td>
+      <td>3.8</td>
+      <td>24.0</td>
+      <td>96.0</td>
+      <td>47.0</td>
+    </tr>
+    <tr>
+      <td>Acute low</td>
+      <td>EWOC off</td>
+      <td>True</td>
+      <td>L4 (5x8 Gy)</td>
+      <td>77.0</td>
+      <td>0.0</td>
+      <td>23.0</td>
+      <td>2.7</td>
+      <td>3.5</td>
       <td>24.0</td>
       <td>96.0</td>
       <td>0.0</td>
     </tr>
     <tr>
       <td>Acute low</td>
+      <td>EWOC off</td>
+      <td>False</td>
+      <td>L4 (5x8 Gy)</td>
+      <td>76.0</td>
+      <td>0.0</td>
+      <td>24.0</td>
+      <td>2.9</td>
+      <td>3.9</td>
+      <td>24.0</td>
+      <td>96.0</td>
+      <td>0.0</td>
+    </tr>
+    <tr>
+      <td>Acute middle</td>
       <td>EWOC during + final</td>
       <td>True</td>
-      <td>L4 (5x8 Gy)</td>
-      <td>14.0</td>
-      <td>0.0</td>
-      <td>86.0</td>
-      <td>2.1</td>
-      <td>2.7</td>
+      <td>L3 (5x7 Gy)</td>
+      <td>54.5</td>
+      <td>9.5</td>
+      <td>36.0</td>
+      <td>3.6</td>
+      <td>2.4</td>
+      <td>24.0</td>
+      <td>96.0</td>
+      <td>23.0</td>
+    </tr>
+    <tr>
+      <td>Acute middle</td>
+      <td>EWOC during + final</td>
+      <td>False</td>
+      <td>L3 (5x7 Gy)</td>
+      <td>67.5</td>
+      <td>8.5</td>
+      <td>24.0</td>
+      <td>3.7</td>
+      <td>2.6</td>
+      <td>24.0</td>
+      <td>96.0</td>
+      <td>30.0</td>
+    </tr>
+    <tr>
+      <td>Acute middle</td>
+      <td>EWOC final only</td>
+      <td>True</td>
+      <td>L3 (5x7 Gy)</td>
+      <td>56.5</td>
+      <td>7.0</td>
+      <td>36.5</td>
+      <td>4.4</td>
+      <td>2.9</td>
+      <td>24.0</td>
+      <td>96.0</td>
+      <td>34.5</td>
+    </tr>
+    <tr>
+      <td>Acute middle</td>
+      <td>EWOC final only</td>
+      <td>False</td>
+      <td>L3 (5x7 Gy)</td>
+      <td>65.5</td>
+      <td>8.0</td>
+      <td>26.5</td>
+      <td>4.4</td>
+      <td>3.3</td>
       <td>24.0</td>
       <td>96.0</td>
       <td>45.5</td>
     </tr>
     <tr>
-      <td>Acute low</td>
-      <td>EWOC during + final</td>
-      <td>False</td>
-      <td>L4 (5x8 Gy)</td>
-      <td>10.5</td>
-      <td>0.0</td>
-      <td>89.5</td>
-      <td>2.0</td>
-      <td>2.5</td>
-      <td>24.0</td>
-      <td>96.0</td>
-      <td>37.0</td>
-    </tr>
-    <tr>
-      <td>Acute low</td>
-      <td>EWOC final only</td>
-      <td>True</td>
-      <td>L4 (5x8 Gy)</td>
-      <td>8.0</td>
-      <td>0.0</td>
-      <td>92.0</td>
-      <td>2.9</td>
-      <td>3.3</td>
-      <td>24.0</td>
-      <td>96.0</td>
-      <td>77.5</td>
-    </tr>
-    <tr>
-      <td>Acute low</td>
-      <td>EWOC final only</td>
-      <td>False</td>
-      <td>L4 (5x8 Gy)</td>
-      <td>14.0</td>
-      <td>0.0</td>
-      <td>86.0</td>
-      <td>2.7</td>
-      <td>3.9</td>
-      <td>24.0</td>
-      <td>96.0</td>
-      <td>75.0</td>
-    </tr>
-    <tr>
-      <td>Acute low</td>
+      <td>Acute middle</td>
       <td>EWOC off</td>
       <td>True</td>
-      <td>L4 (5x8 Gy)</td>
-      <td>73.5</td>
-      <td>0.0</td>
-      <td>26.5</td>
-      <td>2.6</td>
-      <td>3.4</td>
-      <td>24.0</td>
-      <td>96.0</td>
-      <td>0.0</td>
-    </tr>
-    <tr>
-      <td>Acute low</td>
-      <td>EWOC off</td>
-      <td>False</td>
-      <td>L4 (5x8 Gy)</td>
-      <td>81.5</td>
-      <td>0.0</td>
-      <td>18.5</td>
-      <td>2.8</td>
-      <td>3.6</td>
-      <td>24.0</td>
-      <td>96.0</td>
-      <td>0.0</td>
-    </tr>
-    <tr>
-      <td>Acute middle</td>
-      <td>EWOC during + final</td>
-      <td>True</td>
       <td>L3 (5x7 Gy)</td>
-      <td>34.0</td>
-      <td>2.5</td>
-      <td>63.5</td>
-      <td>3.3</td>
-      <td>2.5</td>
-      <td>24.0</td>
-      <td>96.0</td>
-      <td>39.5</td>
-    </tr>
-    <tr>
-      <td>Acute middle</td>
-      <td>EWOC during + final</td>
-      <td>False</td>
-      <td>L3 (5x7 Gy)</td>
-      <td>38.0</td>
-      <td>1.0</td>
-      <td>61.0</td>
-      <td>3.2</td>
-      <td>2.3</td>
-      <td>24.0</td>
-      <td>96.0</td>
-      <td>47.5</td>
-    </tr>
-    <tr>
-      <td>Acute middle</td>
-      <td>EWOC final only</td>
-      <td>True</td>
-      <td>L3 (5x7 Gy)</td>
-      <td>39.0</td>
-      <td>1.5</td>
-      <td>59.5</td>
-      <td>4.2</td>
+      <td>47.0</td>
+      <td>30.5</td>
+      <td>22.5</td>
+      <td>4.3</td>
       <td>3.0</td>
       <td>24.0</td>
       <td>96.0</td>
-      <td>67.0</td>
+      <td>0.0</td>
     </tr>
     <tr>
       <td>Acute middle</td>
-      <td>EWOC final only</td>
+      <td>EWOC off</td>
       <td>False</td>
       <td>L3 (5x7 Gy)</td>
-      <td>43.5</td>
-      <td>2.0</td>
-      <td>54.5</td>
+      <td>44.0</td>
+      <td>40.0</td>
+      <td>16.0</td>
       <td>4.6</td>
+      <td>3.3</td>
+      <td>24.0</td>
+      <td>96.0</td>
+      <td>0.0</td>
+    </tr>
+    <tr>
+      <td>Acute high</td>
+      <td>EWOC during + final</td>
+      <td>True</td>
+      <td>L2 (5x6 Gy)</td>
+      <td>51.0</td>
+      <td>47.5</td>
+      <td>1.5</td>
+      <td>4.0</td>
+      <td>2.6</td>
+      <td>24.0</td>
+      <td>96.0</td>
+      <td>22.0</td>
+    </tr>
+    <tr>
+      <td>Acute high</td>
+      <td>EWOC during + final</td>
+      <td>False</td>
+      <td>L2 (5x6 Gy)</td>
+      <td>53.5</td>
+      <td>46.5</td>
+      <td>0.0</td>
+      <td>4.6</td>
+      <td>2.5</td>
+      <td>24.0</td>
+      <td>96.0</td>
+      <td>28.5</td>
+    </tr>
+    <tr>
+      <td>Acute high</td>
+      <td>EWOC final only</td>
+      <td>True</td>
+      <td>L2 (5x6 Gy)</td>
+      <td>48.0</td>
+      <td>51.0</td>
+      <td>1.0</td>
+      <td>4.8</td>
+      <td>2.7</td>
+      <td>24.0</td>
+      <td>96.0</td>
+      <td>33.5</td>
+    </tr>
+    <tr>
+      <td>Acute high</td>
+      <td>EWOC final only</td>
+      <td>False</td>
+      <td>L2 (5x6 Gy)</td>
+      <td>46.0</td>
+      <td>53.0</td>
+      <td>1.0</td>
+      <td>5.3</td>
+      <td>3.0</td>
+      <td>24.0</td>
+      <td>96.0</td>
+      <td>29.5</td>
+    </tr>
+    <tr>
+      <td>Acute high</td>
+      <td>EWOC off</td>
+      <td>True</td>
+      <td>L2 (5x6 Gy)</td>
+      <td>28.0</td>
+      <td>70.5</td>
+      <td>1.5</td>
+      <td>4.8</td>
+      <td>2.7</td>
+      <td>24.0</td>
+      <td>96.0</td>
+      <td>0.0</td>
+    </tr>
+    <tr>
+      <td>Acute high</td>
+      <td>EWOC off</td>
+      <td>False</td>
+      <td>L2 (5x6 Gy)</td>
+      <td>32.5</td>
+      <td>65.5</td>
+      <td>2.0</td>
+      <td>5.3</td>
       <td>3.1</td>
       <td>24.0</td>
       <td>96.0</td>
-      <td>63.0</td>
-    </tr>
-    <tr>
-      <td>Acute middle</td>
-      <td>EWOC off</td>
-      <td>True</td>
-      <td>L3 (5x7 Gy)</td>
-      <td>44.5</td>
-      <td>35.0</td>
-      <td>20.5</td>
-      <td>4.2</td>
-      <td>3.0</td>
-      <td>24.0</td>
-      <td>96.0</td>
       <td>0.0</td>
     </tr>
     <tr>
-      <td>Acute middle</td>
-      <td>EWOC off</td>
-      <td>False</td>
-      <td>L3 (5x7 Gy)</td>
-      <td>44.5</td>
-      <td>31.5</td>
+      <td>Acute steep</td>
+      <td>EWOC during + final</td>
+      <td>True</td>
+      <td>L2 (5x6 Gy)</td>
+      <td>37.5</td>
+      <td>62.5</td>
+      <td>0.0</td>
+      <td>3.9</td>
+      <td>2.5</td>
       <td>24.0</td>
-      <td>4.7</td>
+      <td>96.0</td>
+      <td>25.5</td>
+    </tr>
+    <tr>
+      <td>Acute steep</td>
+      <td>EWOC during + final</td>
+      <td>False</td>
+      <td>L2 (5x6 Gy)</td>
+      <td>40.0</td>
+      <td>60.0</td>
+      <td>0.0</td>
+      <td>4.3</td>
+      <td>2.7</td>
+      <td>24.0</td>
+      <td>96.0</td>
+      <td>32.5</td>
+    </tr>
+    <tr>
+      <td>Acute steep</td>
+      <td>EWOC final only</td>
+      <td>True</td>
+      <td>L2 (5x6 Gy)</td>
+      <td>45.5</td>
+      <td>54.0</td>
+      <td>0.5</td>
+      <td>4.8</td>
+      <td>3.1</td>
+      <td>24.0</td>
+      <td>96.0</td>
+      <td>37.5</td>
+    </tr>
+    <tr>
+      <td>Acute steep</td>
+      <td>EWOC final only</td>
+      <td>False</td>
+      <td>L2 (5x6 Gy)</td>
+      <td>49.5</td>
+      <td>49.0</td>
+      <td>1.5</td>
+      <td>5.6</td>
       <td>3.3</td>
       <td>24.0</td>
       <td>96.0</td>
-      <td>0.0</td>
+      <td>43.0</td>
     </tr>
     <tr>
-      <td>Acute high</td>
-      <td>EWOC during + final</td>
-      <td>True</td>
-      <td>L2 (5x6 Gy)</td>
-      <td>65.5</td>
-      <td>26.0</td>
-      <td>8.5</td>
-      <td>3.8</td>
-      <td>2.3</td>
-      <td>24.0</td>
-      <td>96.0</td>
-      <td>40.5</td>
-    </tr>
-    <tr>
-      <td>Acute high</td>
-      <td>EWOC during + final</td>
-      <td>False</td>
-      <td>L2 (5x6 Gy)</td>
-      <td>72.0</td>
-      <td>20.0</td>
-      <td>8.0</td>
-      <td>4.0</td>
-      <td>2.3</td>
-      <td>24.0</td>
-      <td>96.0</td>
-      <td>41.5</td>
-    </tr>
-    <tr>
-      <td>Acute high</td>
-      <td>EWOC final only</td>
-      <td>True</td>
-      <td>L2 (5x6 Gy)</td>
-      <td>56.0</td>
-      <td>30.5</td>
-      <td>13.5</td>
-      <td>4.7</td>
-      <td>2.8</td>
-      <td>24.0</td>
-      <td>96.0</td>
-      <td>56.5</td>
-    </tr>
-    <tr>
-      <td>Acute high</td>
-      <td>EWOC final only</td>
-      <td>False</td>
-      <td>L2 (5x6 Gy)</td>
-      <td>64.0</td>
-      <td>31.0</td>
-      <td>5.0</td>
-      <td>5.1</td>
-      <td>3.0</td>
-      <td>24.0</td>
-      <td>96.0</td>
-      <td>58.0</td>
-    </tr>
-    <tr>
-      <td>Acute high</td>
+      <td>Acute steep</td>
       <td>EWOC off</td>
       <td>True</td>
       <td>L2 (5x6 Gy)</td>
-      <td>36.5</td>
-      <td>63.0</td>
+      <td>21.5</td>
+      <td>78.0</td>
       <td>0.5</td>
-      <td>4.6</td>
-      <td>2.8</td>
-      <td>24.0</td>
-      <td>96.0</td>
-      <td>0.0</td>
-    </tr>
-    <tr>
-      <td>Acute high</td>
-      <td>EWOC off</td>
-      <td>False</td>
-      <td>L2 (5x6 Gy)</td>
-      <td>42.0</td>
-      <td>57.0</td>
-      <td>1.0</td>
-      <td>5.1</td>
-      <td>2.9</td>
-      <td>24.0</td>
-      <td>96.0</td>
-      <td>0.0</td>
-    </tr>
-    <tr>
-      <td>Acute steep</td>
-      <td>EWOC during + final</td>
-      <td>True</td>
-      <td>L2 (5x6 Gy)</td>
-      <td>64.0</td>
-      <td>35.0</td>
-      <td>1.0</td>
-      <td>3.4</td>
-      <td>2.4</td>
-      <td>24.0</td>
-      <td>96.0</td>
-      <td>50.5</td>
-    </tr>
-    <tr>
-      <td>Acute steep</td>
-      <td>EWOC during + final</td>
-      <td>False</td>
-      <td>L2 (5x6 Gy)</td>
-      <td>71.0</td>
-      <td>28.0</td>
-      <td>1.0</td>
-      <td>3.5</td>
-      <td>2.2</td>
-      <td>24.0</td>
-      <td>96.0</td>
-      <td>51.5</td>
-    </tr>
-    <tr>
-      <td>Acute steep</td>
-      <td>EWOC final only</td>
-      <td>True</td>
-      <td>L2 (5x6 Gy)</td>
-      <td>70.5</td>
-      <td>26.5</td>
-      <td>3.0</td>
       <td>4.8</td>
       <td>2.8</td>
       <td>24.0</td>
       <td>96.0</td>
-      <td>57.0</td>
+      <td>0.0</td>
     </tr>
     <tr>
       <td>Acute steep</td>
+      <td>EWOC off</td>
+      <td>False</td>
+      <td>L2 (5x6 Gy)</td>
+      <td>26.5</td>
+      <td>73.5</td>
+      <td>0.0</td>
+      <td>5.3</td>
+      <td>3.0</td>
+      <td>24.0</td>
+      <td>96.0</td>
+      <td>0.0</td>
+    </tr>
+    <tr>
+      <td>Acute shallow</td>
+      <td>EWOC during + final</td>
+      <td>True</td>
+      <td>L3 (5x7 Gy)</td>
+      <td>48.0</td>
+      <td>4.5</td>
+      <td>47.5</td>
+      <td>4.1</td>
+      <td>2.5</td>
+      <td>24.0</td>
+      <td>96.0</td>
+      <td>24.5</td>
+    </tr>
+    <tr>
+      <td>Acute shallow</td>
+      <td>EWOC during + final</td>
+      <td>False</td>
+      <td>L3 (5x7 Gy)</td>
+      <td>48.5</td>
+      <td>7.0</td>
+      <td>44.5</td>
+      <td>4.2</td>
+      <td>2.5</td>
+      <td>24.0</td>
+      <td>96.0</td>
+      <td>34.0</td>
+    </tr>
+    <tr>
+      <td>Acute shallow</td>
+      <td>EWOC final only</td>
+      <td>True</td>
+      <td>L3 (5x7 Gy)</td>
+      <td>44.0</td>
+      <td>10.0</td>
+      <td>46.0</td>
+      <td>4.3</td>
+      <td>2.8</td>
+      <td>24.0</td>
+      <td>96.0</td>
+      <td>38.0</td>
+    </tr>
+    <tr>
+      <td>Acute shallow</td>
       <td>EWOC final only</td>
       <td>False</td>
-      <td>L2 (5x6 Gy)</td>
-      <td>76.5</td>
-      <td>21.0</td>
-      <td>2.5</td>
-      <td>5.4</td>
+      <td>L3 (5x7 Gy)</td>
+      <td>57.0</td>
+      <td>9.0</td>
+      <td>34.0</td>
+      <td>4.7</td>
       <td>3.3</td>
-      <td>24.0</td>
-      <td>96.0</td>
-      <td>68.0</td>
-    </tr>
-    <tr>
-      <td>Acute steep</td>
-      <td>EWOC off</td>
-      <td>True</td>
-      <td>L2 (5x6 Gy)</td>
-      <td>22.0</td>
-      <td>78.0</td>
-      <td>0.0</td>
-      <td>4.5</td>
-      <td>2.9</td>
-      <td>24.0</td>
-      <td>96.0</td>
-      <td>0.0</td>
-    </tr>
-    <tr>
-      <td>Acute steep</td>
-      <td>EWOC off</td>
-      <td>False</td>
-      <td>L2 (5x6 Gy)</td>
-      <td>22.5</td>
-      <td>77.0</td>
-      <td>0.5</td>
-      <td>5.1</td>
-      <td>3.1</td>
-      <td>24.0</td>
-      <td>96.0</td>
-      <td>0.0</td>
-    </tr>
-    <tr>
-      <td>Acute shallow</td>
-      <td>EWOC during + final</td>
-      <td>True</td>
-      <td>L3 (5x7 Gy)</td>
-      <td>27.5</td>
-      <td>0.5</td>
-      <td>72.0</td>
-      <td>3.9</td>
-      <td>2.3</td>
-      <td>24.0</td>
-      <td>96.0</td>
-      <td>44.5</td>
-    </tr>
-    <tr>
-      <td>Acute shallow</td>
-      <td>EWOC during + final</td>
-      <td>False</td>
-      <td>L3 (5x7 Gy)</td>
-      <td>28.5</td>
-      <td>1.0</td>
-      <td>70.5</td>
-      <td>3.8</td>
-      <td>2.2</td>
       <td>24.0</td>
       <td>96.0</td>
       <td>42.5</td>
     </tr>
     <tr>
       <td>Acute shallow</td>
-      <td>EWOC final only</td>
+      <td>EWOC off</td>
       <td>True</td>
       <td>L3 (5x7 Gy)</td>
-      <td>36.5</td>
-      <td>0.0</td>
-      <td>63.5</td>
-      <td>4.3</td>
-      <td>2.7</td>
+      <td>45.5</td>
+      <td>35.0</td>
+      <td>19.5</td>
+      <td>4.1</td>
+      <td>3.0</td>
       <td>24.0</td>
       <td>96.0</td>
-      <td>60.0</td>
+      <td>0.0</td>
     </tr>
     <tr>
       <td>Acute shallow</td>
-      <td>EWOC final only</td>
+      <td>EWOC off</td>
       <td>False</td>
       <td>L3 (5x7 Gy)</td>
       <td>39.0</td>
-      <td>1.5</td>
-      <td>59.5</td>
-      <td>4.6</td>
-      <td>2.8</td>
-      <td>24.0</td>
-      <td>96.0</td>
-      <td>66.0</td>
-    </tr>
-    <tr>
-      <td>Acute shallow</td>
-      <td>EWOC off</td>
-      <td>True</td>
-      <td>L3 (5x7 Gy)</td>
-      <td>41.5</td>
-      <td>27.5</td>
-      <td>31.0</td>
-      <td>4.2</td>
-      <td>2.6</td>
-      <td>24.0</td>
-      <td>96.0</td>
-      <td>0.0</td>
-    </tr>
-    <tr>
-      <td>Acute shallow</td>
-      <td>EWOC off</td>
-      <td>False</td>
-      <td>L3 (5x7 Gy)</td>
-      <td>38.0</td>
-      <td>37.5</td>
+      <td>36.5</td>
       <td>24.5</td>
-      <td>4.4</td>
-      <td>3.3</td>
+      <td>4.6</td>
+      <td>3.2</td>
       <td>24.0</td>
       <td>96.0</td>
       <td>0.0</td>
@@ -653,7 +569,6 @@ img { max-width: 100%; border: 1px solid #d6dde5; margin: 12px 0 28px; }
 </table>
 <h2>Final selected dose distributions</h2>
 <p>Bars show the percentage of simulations selecting each final dose level. Green indicates the scenario-specific true MTD, blue lower selections, and red higher selections. The dashed vertical line marks the true MTD.</p>
-<section><img src="selected_mtd_subacute_reference.svg" alt="selected_mtd_subacute_reference.svg"></section>
 <section><img src="selected_mtd_acute_low.svg" alt="selected_mtd_acute_low.svg"></section>
 <section><img src="selected_mtd_acute_middle.svg" alt="selected_mtd_acute_middle.svg"></section>
 <section><img src="selected_mtd_acute_high.svg" alt="selected_mtd_acute_high.svg"></section>
@@ -676,81 +591,15 @@ img { max-width: 100%; border: 1px solid #d6dde5; margin: 12px 0 28px; }
   </thead>
   <tbody>
     <tr>
-      <td>Subacute reference</td>
-      <td>EWOC during + final</td>
-      <td>True</td>
-      <td>L3 (5x7 Gy)</td>
-      <td>0.0</td>
-      <td>3.5</td>
-      <td>59.0</td>
-      <td>37.5</td>
-      <td>0.0</td>
-    </tr>
-    <tr>
-      <td>Subacute reference</td>
-      <td>EWOC during + final</td>
-      <td>False</td>
-      <td>L3 (5x7 Gy)</td>
-      <td>0.0</td>
-      <td>2.0</td>
-      <td>60.5</td>
-      <td>35.5</td>
-      <td>2.0</td>
-    </tr>
-    <tr>
-      <td>Subacute reference</td>
-      <td>EWOC final only</td>
-      <td>True</td>
-      <td>L3 (5x7 Gy)</td>
-      <td>0.0</td>
-      <td>4.0</td>
-      <td>54.5</td>
-      <td>41.0</td>
-      <td>0.5</td>
-    </tr>
-    <tr>
-      <td>Subacute reference</td>
-      <td>EWOC final only</td>
-      <td>False</td>
-      <td>L3 (5x7 Gy)</td>
-      <td>0.0</td>
-      <td>2.5</td>
-      <td>52.0</td>
-      <td>43.0</td>
-      <td>2.5</td>
-    </tr>
-    <tr>
-      <td>Subacute reference</td>
-      <td>EWOC off</td>
-      <td>True</td>
-      <td>L3 (5x7 Gy)</td>
-      <td>0.0</td>
-      <td>0.0</td>
-      <td>20.5</td>
-      <td>47.0</td>
-      <td>32.5</td>
-    </tr>
-    <tr>
-      <td>Subacute reference</td>
-      <td>EWOC off</td>
-      <td>False</td>
-      <td>L3 (5x7 Gy)</td>
-      <td>0.0</td>
-      <td>2.0</td>
-      <td>22.5</td>
-      <td>43.0</td>
-      <td>32.5</td>
-    </tr>
-    <tr>
       <td>Acute low</td>
       <td>EWOC during + final</td>
       <td>True</td>
       <td>L4 (5x8 Gy)</td>
       <td>0.0</td>
       <td>0.0</td>
-      <td>25.0</td>
-      <td>61.0</td>
-      <td>14.0</td>
+      <td>7.0</td>
+      <td>66.5</td>
+      <td>26.5</td>
     </tr>
     <tr>
       <td>Acute low</td>
@@ -759,295 +608,295 @@ img { max-width: 100%; border: 1px solid #d6dde5; margin: 12px 0 28px; }
       <td>L4 (5x8 Gy)</td>
       <td>0.0</td>
       <td>0.0</td>
-      <td>17.5</td>
-      <td>72.0</td>
-      <td>10.5</td>
-    </tr>
-    <tr>
-      <td>Acute low</td>
-      <td>EWOC final only</td>
-      <td>True</td>
-      <td>L4 (5x8 Gy)</td>
-      <td>0.0</td>
-      <td>0.0</td>
-      <td>20.5</td>
-      <td>71.5</td>
       <td>8.0</td>
-    </tr>
-    <tr>
-      <td>Acute low</td>
-      <td>EWOC final only</td>
-      <td>False</td>
-      <td>L4 (5x8 Gy)</td>
-      <td>0.0</td>
-      <td>0.0</td>
-      <td>11.0</td>
-      <td>75.0</td>
-      <td>14.0</td>
-    </tr>
-    <tr>
-      <td>Acute low</td>
-      <td>EWOC off</td>
-      <td>True</td>
-      <td>L4 (5x8 Gy)</td>
-      <td>0.0</td>
-      <td>0.0</td>
-      <td>5.5</td>
-      <td>21.0</td>
-      <td>73.5</td>
-    </tr>
-    <tr>
-      <td>Acute low</td>
-      <td>EWOC off</td>
-      <td>False</td>
-      <td>L4 (5x8 Gy)</td>
-      <td>0.0</td>
-      <td>0.0</td>
-      <td>1.0</td>
-      <td>17.5</td>
-      <td>81.5</td>
-    </tr>
-    <tr>
-      <td>Acute middle</td>
-      <td>EWOC during + final</td>
-      <td>True</td>
-      <td>L3 (5x7 Gy)</td>
-      <td>0.0</td>
-      <td>3.5</td>
       <td>60.0</td>
-      <td>34.0</td>
-      <td>2.5</td>
+      <td>32.0</td>
+    </tr>
+    <tr>
+      <td>Acute low</td>
+      <td>EWOC final only</td>
+      <td>True</td>
+      <td>L4 (5x8 Gy)</td>
+      <td>0.0</td>
+      <td>0.0</td>
+      <td>3.0</td>
+      <td>66.5</td>
+      <td>30.5</td>
+    </tr>
+    <tr>
+      <td>Acute low</td>
+      <td>EWOC final only</td>
+      <td>False</td>
+      <td>L4 (5x8 Gy)</td>
+      <td>0.0</td>
+      <td>0.0</td>
+      <td>3.5</td>
+      <td>59.5</td>
+      <td>37.0</td>
+    </tr>
+    <tr>
+      <td>Acute low</td>
+      <td>EWOC off</td>
+      <td>True</td>
+      <td>L4 (5x8 Gy)</td>
+      <td>0.0</td>
+      <td>0.0</td>
+      <td>2.0</td>
+      <td>21.0</td>
+      <td>77.0</td>
+    </tr>
+    <tr>
+      <td>Acute low</td>
+      <td>EWOC off</td>
+      <td>False</td>
+      <td>L4 (5x8 Gy)</td>
+      <td>0.0</td>
+      <td>0.0</td>
+      <td>3.0</td>
+      <td>21.0</td>
+      <td>76.0</td>
+    </tr>
+    <tr>
+      <td>Acute middle</td>
+      <td>EWOC during + final</td>
+      <td>True</td>
+      <td>L3 (5x7 Gy)</td>
+      <td>1.5</td>
+      <td>0.0</td>
+      <td>34.5</td>
+      <td>54.5</td>
+      <td>9.5</td>
     </tr>
     <tr>
       <td>Acute middle</td>
       <td>EWOC during + final</td>
       <td>False</td>
       <td>L3 (5x7 Gy)</td>
-      <td>0.0</td>
-      <td>2.5</td>
-      <td>58.5</td>
-      <td>38.0</td>
       <td>1.0</td>
-    </tr>
-    <tr>
-      <td>Acute middle</td>
-      <td>EWOC final only</td>
-      <td>True</td>
-      <td>L3 (5x7 Gy)</td>
       <td>0.0</td>
-      <td>6.5</td>
-      <td>53.0</td>
-      <td>39.0</td>
-      <td>1.5</td>
-    </tr>
-    <tr>
-      <td>Acute middle</td>
-      <td>EWOC final only</td>
-      <td>False</td>
-      <td>L3 (5x7 Gy)</td>
-      <td>0.0</td>
-      <td>4.5</td>
-      <td>50.0</td>
-      <td>43.5</td>
-      <td>2.0</td>
-    </tr>
-    <tr>
-      <td>Acute middle</td>
-      <td>EWOC off</td>
-      <td>True</td>
-      <td>L3 (5x7 Gy)</td>
-      <td>0.0</td>
-      <td>1.5</td>
-      <td>19.0</td>
-      <td>44.5</td>
-      <td>35.0</td>
-    </tr>
-    <tr>
-      <td>Acute middle</td>
-      <td>EWOC off</td>
-      <td>False</td>
-      <td>L3 (5x7 Gy)</td>
-      <td>0.0</td>
-      <td>1.0</td>
       <td>23.0</td>
-      <td>44.5</td>
-      <td>31.5</td>
-    </tr>
-    <tr>
-      <td>Acute high</td>
-      <td>EWOC during + final</td>
-      <td>True</td>
-      <td>L2 (5x6 Gy)</td>
-      <td>0.0</td>
+      <td>67.5</td>
       <td>8.5</td>
-      <td>65.5</td>
-      <td>26.0</td>
-      <td>0.0</td>
     </tr>
     <tr>
-      <td>Acute high</td>
-      <td>EWOC during + final</td>
-      <td>False</td>
-      <td>L2 (5x6 Gy)</td>
-      <td>0.0</td>
-      <td>8.0</td>
-      <td>72.0</td>
-      <td>19.0</td>
-      <td>1.0</td>
-    </tr>
-    <tr>
-      <td>Acute high</td>
+      <td>Acute middle</td>
       <td>EWOC final only</td>
       <td>True</td>
-      <td>L2 (5x6 Gy)</td>
+      <td>L3 (5x7 Gy)</td>
       <td>0.0</td>
-      <td>13.5</td>
-      <td>56.0</td>
-      <td>28.5</td>
-      <td>2.0</td>
+      <td>0.0</td>
+      <td>36.5</td>
+      <td>56.5</td>
+      <td>7.0</td>
     </tr>
     <tr>
-      <td>Acute high</td>
+      <td>Acute middle</td>
       <td>EWOC final only</td>
       <td>False</td>
-      <td>L2 (5x6 Gy)</td>
+      <td>L3 (5x7 Gy)</td>
       <td>0.0</td>
-      <td>5.0</td>
-      <td>64.0</td>
-      <td>29.5</td>
-      <td>1.5</td>
+      <td>0.0</td>
+      <td>26.5</td>
+      <td>65.5</td>
+      <td>8.0</td>
     </tr>
     <tr>
-      <td>Acute high</td>
+      <td>Acute middle</td>
       <td>EWOC off</td>
       <td>True</td>
-      <td>L2 (5x6 Gy)</td>
+      <td>L3 (5x7 Gy)</td>
       <td>0.0</td>
       <td>0.5</td>
-      <td>36.5</td>
-      <td>44.5</td>
+      <td>22.0</td>
+      <td>47.0</td>
+      <td>30.5</td>
+    </tr>
+    <tr>
+      <td>Acute middle</td>
+      <td>EWOC off</td>
+      <td>False</td>
+      <td>L3 (5x7 Gy)</td>
+      <td>0.0</td>
+      <td>0.5</td>
+      <td>15.5</td>
+      <td>44.0</td>
+      <td>40.0</td>
+    </tr>
+    <tr>
+      <td>Acute high</td>
+      <td>EWOC during + final</td>
+      <td>True</td>
+      <td>L2 (5x6 Gy)</td>
+      <td>1.0</td>
+      <td>0.5</td>
+      <td>51.0</td>
+      <td>44.0</td>
+      <td>3.5</td>
+    </tr>
+    <tr>
+      <td>Acute high</td>
+      <td>EWOC during + final</td>
+      <td>False</td>
+      <td>L2 (5x6 Gy)</td>
+      <td>0.0</td>
+      <td>0.0</td>
+      <td>53.5</td>
+      <td>44.0</td>
+      <td>2.5</td>
+    </tr>
+    <tr>
+      <td>Acute high</td>
+      <td>EWOC final only</td>
+      <td>True</td>
+      <td>L2 (5x6 Gy)</td>
+      <td>0.5</td>
+      <td>0.5</td>
+      <td>48.0</td>
+      <td>49.5</td>
+      <td>1.5</td>
+    </tr>
+    <tr>
+      <td>Acute high</td>
+      <td>EWOC final only</td>
+      <td>False</td>
+      <td>L2 (5x6 Gy)</td>
+      <td>0.5</td>
+      <td>0.5</td>
+      <td>46.0</td>
+      <td>50.5</td>
+      <td>2.5</td>
+    </tr>
+    <tr>
+      <td>Acute high</td>
+      <td>EWOC off</td>
+      <td>True</td>
+      <td>L2 (5x6 Gy)</td>
+      <td>0.0</td>
+      <td>1.5</td>
+      <td>28.0</td>
+      <td>52.5</td>
+      <td>18.0</td>
+    </tr>
+    <tr>
+      <td>Acute high</td>
+      <td>EWOC off</td>
+      <td>False</td>
+      <td>L2 (5x6 Gy)</td>
+      <td>0.0</td>
+      <td>2.0</td>
+      <td>32.5</td>
+      <td>47.0</td>
       <td>18.5</td>
     </tr>
     <tr>
-      <td>Acute high</td>
-      <td>EWOC off</td>
-      <td>False</td>
-      <td>L2 (5x6 Gy)</td>
-      <td>0.0</td>
-      <td>1.0</td>
-      <td>42.0</td>
-      <td>38.0</td>
-      <td>19.0</td>
-    </tr>
-    <tr>
       <td>Acute steep</td>
       <td>EWOC during + final</td>
       <td>True</td>
       <td>L2 (5x6 Gy)</td>
       <td>0.0</td>
-      <td>1.0</td>
-      <td>64.0</td>
-      <td>34.5</td>
-      <td>0.5</td>
-    </tr>
-    <tr>
-      <td>Acute steep</td>
-      <td>EWOC during + final</td>
-      <td>False</td>
-      <td>L2 (5x6 Gy)</td>
       <td>0.0</td>
-      <td>1.0</td>
-      <td>71.0</td>
-      <td>28.0</td>
-      <td>0.0</td>
-    </tr>
-    <tr>
-      <td>Acute steep</td>
-      <td>EWOC final only</td>
-      <td>True</td>
-      <td>L2 (5x6 Gy)</td>
-      <td>0.0</td>
-      <td>3.0</td>
-      <td>70.5</td>
-      <td>26.0</td>
-      <td>0.5</td>
-    </tr>
-    <tr>
-      <td>Acute steep</td>
-      <td>EWOC final only</td>
-      <td>False</td>
-      <td>L2 (5x6 Gy)</td>
-      <td>0.0</td>
-      <td>2.5</td>
-      <td>76.5</td>
-      <td>21.0</td>
-      <td>0.0</td>
-    </tr>
-    <tr>
-      <td>Acute steep</td>
-      <td>EWOC off</td>
-      <td>True</td>
-      <td>L2 (5x6 Gy)</td>
-      <td>0.0</td>
-      <td>0.0</td>
-      <td>22.0</td>
-      <td>56.5</td>
-      <td>21.5</td>
-    </tr>
-    <tr>
-      <td>Acute steep</td>
-      <td>EWOC off</td>
-      <td>False</td>
-      <td>L2 (5x6 Gy)</td>
-      <td>0.0</td>
-      <td>0.5</td>
-      <td>22.5</td>
+      <td>37.5</td>
       <td>59.5</td>
-      <td>17.5</td>
+      <td>3.0</td>
     </tr>
     <tr>
-      <td>Acute shallow</td>
-      <td>EWOC during + final</td>
-      <td>True</td>
-      <td>L3 (5x7 Gy)</td>
-      <td>0.5</td>
-      <td>15.0</td>
-      <td>56.5</td>
-      <td>27.5</td>
-      <td>0.5</td>
-    </tr>
-    <tr>
-      <td>Acute shallow</td>
+      <td>Acute steep</td>
       <td>EWOC during + final</td>
       <td>False</td>
-      <td>L3 (5x7 Gy)</td>
+      <td>L2 (5x6 Gy)</td>
       <td>0.0</td>
-      <td>13.5</td>
-      <td>57.0</td>
-      <td>28.5</td>
-      <td>1.0</td>
+      <td>0.0</td>
+      <td>40.0</td>
+      <td>57.5</td>
+      <td>2.5</td>
     </tr>
     <tr>
-      <td>Acute shallow</td>
+      <td>Acute steep</td>
       <td>EWOC final only</td>
       <td>True</td>
-      <td>L3 (5x7 Gy)</td>
+      <td>L2 (5x6 Gy)</td>
       <td>0.0</td>
-      <td>11.5</td>
-      <td>52.0</td>
-      <td>36.5</td>
-      <td>0.0</td>
+      <td>0.5</td>
+      <td>45.5</td>
+      <td>49.5</td>
+      <td>4.5</td>
     </tr>
     <tr>
-      <td>Acute shallow</td>
+      <td>Acute steep</td>
       <td>EWOC final only</td>
       <td>False</td>
-      <td>L3 (5x7 Gy)</td>
+      <td>L2 (5x6 Gy)</td>
       <td>0.0</td>
-      <td>7.0</td>
-      <td>52.5</td>
-      <td>39.0</td>
       <td>1.5</td>
+      <td>49.5</td>
+      <td>46.0</td>
+      <td>3.0</td>
+    </tr>
+    <tr>
+      <td>Acute steep</td>
+      <td>EWOC off</td>
+      <td>True</td>
+      <td>L2 (5x6 Gy)</td>
+      <td>0.0</td>
+      <td>0.5</td>
+      <td>21.5</td>
+      <td>62.0</td>
+      <td>16.0</td>
+    </tr>
+    <tr>
+      <td>Acute steep</td>
+      <td>EWOC off</td>
+      <td>False</td>
+      <td>L2 (5x6 Gy)</td>
+      <td>0.0</td>
+      <td>0.0</td>
+      <td>26.5</td>
+      <td>58.5</td>
+      <td>15.0</td>
+    </tr>
+    <tr>
+      <td>Acute shallow</td>
+      <td>EWOC during + final</td>
+      <td>True</td>
+      <td>L3 (5x7 Gy)</td>
+      <td>4.5</td>
+      <td>0.5</td>
+      <td>42.5</td>
+      <td>48.0</td>
+      <td>4.5</td>
+    </tr>
+    <tr>
+      <td>Acute shallow</td>
+      <td>EWOC during + final</td>
+      <td>False</td>
+      <td>L3 (5x7 Gy)</td>
+      <td>4.0</td>
+      <td>0.0</td>
+      <td>40.5</td>
+      <td>48.5</td>
+      <td>7.0</td>
+    </tr>
+    <tr>
+      <td>Acute shallow</td>
+      <td>EWOC final only</td>
+      <td>True</td>
+      <td>L3 (5x7 Gy)</td>
+      <td>0.0</td>
+      <td>0.0</td>
+      <td>46.0</td>
+      <td>44.0</td>
+      <td>10.0</td>
+    </tr>
+    <tr>
+      <td>Acute shallow</td>
+      <td>EWOC final only</td>
+      <td>False</td>
+      <td>L3 (5x7 Gy)</td>
+      <td>0.0</td>
+      <td>0.0</td>
+      <td>34.0</td>
+      <td>57.0</td>
+      <td>9.0</td>
     </tr>
     <tr>
       <td>Acute shallow</td>
@@ -1055,10 +904,10 @@ img { max-width: 100%; border: 1px solid #d6dde5; margin: 12px 0 28px; }
       <td>True</td>
       <td>L3 (5x7 Gy)</td>
       <td>0.0</td>
-      <td>7.5</td>
-      <td>23.5</td>
-      <td>41.5</td>
-      <td>27.5</td>
+      <td>2.0</td>
+      <td>17.5</td>
+      <td>45.5</td>
+      <td>35.0</td>
     </tr>
     <tr>
       <td>Acute shallow</td>
@@ -1068,8 +917,8 @@ img { max-width: 100%; border: 1px solid #d6dde5; margin: 12px 0 28px; }
       <td>0.0</td>
       <td>3.5</td>
       <td>21.0</td>
-      <td>38.0</td>
-      <td>37.5</td>
+      <td>39.0</td>
+      <td>36.5</td>
     </tr>
   </tbody>
 </table>
