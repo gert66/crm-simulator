@@ -1,0 +1,71 @@
+{
+  "seed": 20260805,
+  "scenario": "Acute middle",
+  "true_t1_acute": [
+    0.01,
+    0.04,
+    0.12,
+    0.17,
+    0.27
+  ],
+  "true_t2_subacute": [
+    0.02,
+    0.05,
+    0.1,
+    0.15,
+    0.25
+  ],
+  "prior_skeleton_t1": [
+    0.004,
+    0.021,
+    0.066,
+    0.15,
+    0.266
+  ],
+  "prior_skeleton_t2": [
+    0.012,
+    0.036,
+    0.084,
+    0.157,
+    0.25
+  ],
+  "dose_labels": [
+    "5x4 Gy",
+    "5x5 Gy",
+    "5x6 Gy",
+    "5x7 Gy",
+    "5x8 Gy"
+  ],
+  "settings": {
+    "p_surgery": 0.8,
+    "target1": 0.2,
+    "target2": 0.33,
+    "sigma": 1.0,
+    "start_level": 2,
+    "max_n": 30,
+    "cohort_size": 3,
+    "accrual_per_month": 0.75,
+    "incl_to_rt": 21,
+    "rt_dur": 14,
+    "rt_to_surg": 42,
+    "tox1_win": 56,
+    "tox2_win": 30,
+    "max_step": 1,
+    "gh_n": 61,
+    "enforce_guardrail": true,
+    "restrict_final_to_tried": true,
+    "ewoc_on": true,
+    "ewoc_alpha": 0.35,
+    "ewoc_application": "Dose assignment + final MTD",
+    "n_safe_d1": 6,
+    "p_stop": 1.0,
+    "require_full_tox1_fu_before_escalation": true,
+    "collect_trace": true
+  },
+  "n_patients_total": 30,
+  "n_patients_new": 24,
+  "study_days": 1009.66,
+  "stopped_early": false,
+  "selected_mtd_level": 2,
+  "selected_mtd_label": "5x6 Gy"
+}
