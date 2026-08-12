@@ -210,6 +210,10 @@ def tite_weights(patients, current_day, tox1_win, tox2_win, n_levels):
 
     Weights are capped at 1.  Observed events always contribute weight = 1.
     Patients who have not yet entered their relevant window contribute 0.
+
+    A patient may carry an optional "weight" key (default 1.0) that scales its
+    entire contribution to n and y — a per-patient discount factor used to
+    down-weight pre-amendment (historical) observations power-prior style.
     """
     n1 = np.zeros(n_levels, dtype=float)
     y1 = np.zeros(n_levels, dtype=float)
@@ -218,7 +222,8 @@ def tite_weights(patients, current_day, tox1_win, tox2_win, n_levels):
     t  = float(current_day)
 
     for p in patients:
-        d = p["dose"]
+        d  = p["dose"]
+        wt = float(p.get("weight", 1.0))
 
         # ── tox1 weight ──────────────────────────────────────────────────────
         if t < p["rt_start"]:
@@ -230,9 +235,9 @@ def tite_weights(patients, current_day, tox1_win, tox2_win, n_levels):
         else:
             w1 = (t - p["rt_start"]) / float(tox1_win)
         w1 = float(np.clip(w1, 0.0, 1.0))
-        n1[d] += w1
+        n1[d] += w1 * wt
         if p["has_tox1"] and p["tox1_day"] is not None and p["tox1_day"] <= t:
-            y1[d] += 1.0
+            y1[d] += 1.0 * wt
 
         # ── tox2 weight (surgery patients only) ──────────────────────────────
         if p["has_surgery"] and p["surgery_day"] is not None:
@@ -246,9 +251,9 @@ def tite_weights(patients, current_day, tox1_win, tox2_win, n_levels):
             else:
                 w2 = (t - sd) / float(tox2_win)
             w2 = float(np.clip(w2, 0.0, 1.0))
-            n2[d] += w2
+            n2[d] += w2 * wt
             if p["has_tox2"] and p["tox2_day"] is not None and p["tox2_day"] <= t:
-                y2[d] += 1.0
+                y2[d] += 1.0 * wt
 
     return n1, y1, n2, y2
 
@@ -656,6 +661,8 @@ def run_tite_crm(
     collect_trace=False,
     n_safe_d1=0,
     n_safe_d1_dlt=0,
+    hist_weight=1.0,
+    escalation_override_n=0,
     p_stop=1.0,
     require_full_tox1_fu_before_escalation=True,
 ):
@@ -697,6 +704,26 @@ def run_tite_crm(
       the DLT is observed from day 0 onward and ends burn-in immediately if active.
       Must be <= n_safe_d1.  Has no effect on tox2 (these patients contribute no
       subacute observation either way, matching the historical no-DLT behaviour).
+
+    hist_weight: discount factor (0..1) applied to every pre-treated patient's
+      contribution to the CRM likelihood — a power-prior style down-weighting of
+      pre-amendment data.  1.0 (default) counts them as full observations;
+      0.5 counts the whole block as half an observation each; 0.0 removes their
+      information entirely (both the DLT and the DLT-free patients).  Note this
+      discounts the safe patients as well as the toxic one — it lowers the
+      certainty of the historical block, it does not selectively drop the DLT.
+
+    escalation_override_n: if > 0, a protocol-level escalation override applied
+      after the CRM decision (CRM phase only, never during burn-in).  When the
+      model would keep the cohort at the current level or de-escalate, but at
+      least this many patients at the current level have completed full acute
+      follow-up with no tox1 DLT, escalation by exactly one level is permitted
+      anyway.  This gives the model-based design the "local memory" of the 6+3
+      rules — a dose level is judged on its own accumulated data — and prevents
+      a single early DLT from permanently locking out the upper dose levels.
+      0 (default) disables the override.  The override bypasses the model's
+      recommendation, so when EWOC is active it should be reviewed jointly with
+      the EWOC filter rather than assumed safe.
 
     require_full_tox1_fu_before_escalation: when True, burn-in escalation from
       the current dose Lx to Lx+1 is only allowed if at least cohort_size patients
@@ -765,6 +792,7 @@ def run_tite_crm(
                 "has_tox2":     False,
                 "tox2_day":     None,
                 "is_bridging":  False,
+                "weight":       float(hist_weight),
             })
         highest_tried = 1
 
@@ -863,6 +891,23 @@ def run_tite_crm(
                 enforce_guardrail=enforce_guardrail,
                 highest_tried=highest_tried, n_levels=n_levels,
             )
+
+            # ── Protocol escalation override ─────────────────────────────────
+            # The CRM's single shared curve parameter lets one early DLT hold
+            # every higher level down indefinitely.  When the current level has
+            # accumulated enough fully-followed patients with no acute DLT,
+            # allow a one-level escalation regardless — the "local memory" the
+            # 6+3 rules have by construction.
+            if int(escalation_override_n) > 0 and next_level <= level:
+                _clean_at_level = sum(
+                    1 for p in patients
+                    if p["dose"] == level
+                    and float(decision_day) >= p["tox1_win_end"]
+                    and not p["has_tox1"]
+                )
+                if (_clean_at_level >= int(escalation_override_n)
+                        and level < n_levels - 1):
+                    next_level = level + 1
 
         # ── Early-stopping check (CRM phase only) ────────────────────────────
         # Compute P(next_level is the optimal MTD | current data) and stop if

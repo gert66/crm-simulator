@@ -1,0 +1,108 @@
+{
+  "n_sim": 1000,
+  "seed": 20260812,
+  "target_acute": 0.2,
+  "target_subacute": 0.33,
+  "dose_labels": [
+    "5x4 Gy",
+    "5x5 Gy",
+    "5x6 Gy",
+    "5x7 Gy",
+    "5x8 Gy"
+  ],
+  "scenarios": {
+    "Acute low": [
+      0.01,
+      0.02,
+      0.06,
+      0.1,
+      0.15
+    ],
+    "Acute middle": [
+      0.01,
+      0.04,
+      0.12,
+      0.17,
+      0.27
+    ],
+    "Acute high": [
+      0.01,
+      0.05,
+      0.15,
+      0.22,
+      0.3
+    ],
+    "Acute steep": [
+      0.01,
+      0.02,
+      0.08,
+      0.24,
+      0.34
+    ],
+    "Acute shallow": [
+      0.1,
+      0.13,
+      0.15,
+      0.18,
+      0.24
+    ]
+  },
+  "true_subacute": [
+    0.02,
+    0.05,
+    0.1,
+    0.15,
+    0.25
+  ],
+  "options": [
+    {
+      "code": "A",
+      "label": "DLT telt volledig mee (huidige situatie)",
+      "dlt": 1,
+      "hist_weight": 1.0,
+      "override_n": 0
+    },
+    {
+      "code": "B",
+      "label": "Downweging historie naar 50%",
+      "dlt": 1,
+      "hist_weight": 0.5,
+      "override_n": 0
+    },
+    {
+      "code": "C",
+      "label": "Downweging historie naar 25%",
+      "dlt": 1,
+      "hist_weight": 0.25,
+      "override_n": 0
+    },
+    {
+      "code": "E",
+      "label": "Escalatie-override na 3 schone pati\u00ebnten",
+      "dlt": 1,
+      "hist_weight": 1.0,
+      "override_n": 3
+    },
+    {
+      "code": "E+B",
+      "label": "Override 3 + downweging 50%",
+      "dlt": 1,
+      "hist_weight": 0.5,
+      "override_n": 3
+    },
+    {
+      "code": "E+C",
+      "label": "Override 3 + downweging 25%",
+      "dlt": 1,
+      "hist_weight": 0.25,
+      "override_n": 3
+    },
+    {
+      "code": "H",
+      "label": "DLT telt niet mee (geadjudiceerd unrelated)",
+      "dlt": 0,
+      "hist_weight": 1.0,
+      "override_n": 0
+    }
+  ]
+}

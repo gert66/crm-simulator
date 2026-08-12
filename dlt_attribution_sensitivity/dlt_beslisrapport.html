@@ -1,0 +1,459 @@
+<title>Dosisescalatie na de eerste DLT</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+:root{
+  --paper:#FAFCFD; --surface:#FFFFFF; --ink:#101B26; --slate:#1E3A52;
+  --muted:#5C6B7A; --line:#DCE4EA; --line-soft:#EAEFF3;
+  --accent:#0E7C86; --accent-soft:#E3F1F2;
+  --safe:#2F7D5B; --risk:#B4472F; --warn:#8A6A1F;
+  --serif:Georgia,"Iowan Old Style","Palatino Linotype",Palatino,serif;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,Arial,sans-serif;
+  --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --paper:#0D141C; --surface:#151F29; --ink:#DCE4EB; --slate:#AFC4D4;
+    --muted:#8A9AA9; --line:#25333F; --line-soft:#1C2833;
+    --accent:#3AAEB6; --accent-soft:#14262C;
+    --safe:#5BAE84; --risk:#D97A5E; --warn:#C8A24A;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#0D141C; --surface:#151F29; --ink:#DCE4EB; --slate:#AFC4D4;
+  --muted:#8A9AA9; --line:#25333F; --line-soft:#1C2833;
+  --accent:#3AAEB6; --accent-soft:#14262C;
+  --safe:#5BAE84; --risk:#D97A5E; --warn:#C8A24A;
+}
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:var(--sans); font-size:16.5px; line-height:1.65;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:1080px;margin:0 auto;padding:0 24px 96px}
+.col{max-width:68ch}
+header.masthead{padding:64px 0 34px;border-bottom:1px solid var(--line)}
+.kicker{
+  font-family:var(--mono); font-size:11.5px; letter-spacing:.14em;
+  text-transform:uppercase; color:var(--accent); margin:0 0 16px;
+}
+h1{
+  font-family:var(--serif); font-weight:400; font-size:clamp(31px,4.4vw,46px);
+  line-height:1.14; letter-spacing:-.012em; margin:0 0 18px;
+  text-wrap:balance; color:var(--ink);
+}
+.standfirst{font-size:19px;line-height:1.6;color:var(--muted);margin:0;max-width:60ch}
+.meta{
+  display:flex;flex-wrap:wrap;gap:10px 26px;margin:26px 0 0;
+  font-family:var(--mono);font-size:11.5px;letter-spacing:.05em;
+  text-transform:uppercase;color:var(--muted);
+}
+.meta b{color:var(--ink);font-weight:600}
+section.step{padding:52px 0 0}
+.steph{display:flex;gap:16px;align-items:baseline;margin:0 0 20px}
+.num{
+  font-family:var(--mono);font-size:12px;font-weight:600;color:var(--accent);
+  border:1px solid var(--accent);border-radius:3px;padding:3px 7px;
+  flex:none;letter-spacing:.06em;
+}
+h2{
+  font-family:var(--serif);font-weight:400;font-size:clamp(23px,2.7vw,30px);
+  line-height:1.22;margin:0;letter-spacing:-.008em;text-wrap:balance;
+}
+h3{
+  font-family:var(--sans);font-size:14px;font-weight:650;letter-spacing:.02em;
+  margin:34px 0 10px;color:var(--slate);
+}
+p{margin:0 0 15px}
+a{color:var(--accent)}
+strong{font-weight:650}
+.lede{font-size:17.5px;color:var(--ink)}
+ul,ol{margin:0 0 15px;padding-left:22px}
+li{margin:0 0 8px}
+.pull{
+  border-left:2px solid var(--accent);padding:2px 0 2px 20px;margin:26px 0;
+  font-family:var(--serif);font-size:19.5px;line-height:1.5;color:var(--slate);
+}
+.callout{
+  background:var(--surface);border:1px solid var(--line);border-radius:5px;
+  padding:20px 22px;margin:26px 0;
+}
+.callout.rec{border-color:var(--accent);background:var(--accent-soft)}
+.callout .ct{
+  font-family:var(--mono);font-size:11px;letter-spacing:.13em;text-transform:uppercase;
+  color:var(--accent);margin:0 0 9px;
+}
+.callout p:last-child{margin-bottom:0}
+figure{margin:32px 0 0}
+.figbox{
+  background:var(--surface);border:1px solid var(--line);border-radius:5px;
+  padding:22px 20px 14px;overflow-x:auto;
+}
+figcaption{
+  font-size:13.5px;color:var(--muted);margin:12px 0 0;max-width:70ch;line-height:1.55;
+}
+svg.chart{display:block;width:100%;min-width:600px;height:auto;overflow:visible}
+.grid{stroke:var(--line-soft);stroke-width:1}
+.axis{stroke:var(--line);stroke-width:1}
+.tick,.leg,.cat,.val,.hint{font-family:var(--mono);fill:var(--muted)}
+.tick{font-size:10.5px}
+.cat{font-size:10.5px}
+.cat.rec{fill:var(--accent);font-weight:600}
+.val{font-size:10px;fill:var(--muted)}
+.leg{font-size:10.5px}
+.hint{font-size:10px;fill:var(--muted);letter-spacing:.08em}
+.axlbl{font-family:var(--sans);font-size:12px;fill:var(--muted)}
+.lbl{font-family:var(--sans);font-size:12.5px;fill:var(--ink)}
+.lbl.rec{fill:var(--accent);font-weight:650}
+.pt{fill:var(--surface);stroke:var(--muted);stroke-width:1.8}
+.pt.rec{fill:var(--accent);stroke:var(--accent)}
+.halo{fill:none;stroke:var(--accent);stroke-width:1;opacity:.32}
+.leader{stroke:var(--line);stroke-width:1}
+.bar.reach{fill:var(--line);stroke:var(--muted);stroke-width:.8}
+.bar.sel{fill:var(--muted)}
+.bar.sel.rec{fill:var(--accent)}
+.bar.reach.rec{fill:var(--accent-soft);stroke:var(--accent)}
+.tablewrap{overflow-x:auto;margin:30px 0 0;border:1px solid var(--line);border-radius:5px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;min-width:660px;font-size:13.5px}
+caption{
+  text-align:left;padding:16px 18px 0;font-family:var(--mono);font-size:11px;
+  letter-spacing:.12em;text-transform:uppercase;color:var(--accent);
+}
+th,td{padding:9px 14px;text-align:right;border-bottom:1px solid var(--line-soft)}
+th:first-child,td:first-child{text-align:left}
+thead th{
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;
+  color:var(--muted);font-weight:500;border-bottom:1px solid var(--line);vertical-align:bottom;
+}
+tbody td{font-family:var(--mono);font-variant-numeric:tabular-nums}
+tbody td:first-child{font-family:var(--sans)}
+tbody tr:last-child td{border-bottom:none}
+tr.rec td{background:var(--accent-soft)}
+tr.rec td:first-child{font-weight:650;color:var(--accent)}
+.good{color:var(--safe)}
+.bad{color:var(--risk)}
+.optlist{display:grid;gap:1px;background:var(--line);border:1px solid var(--line);border-radius:5px;margin:30px 0 0}
+.opt{background:var(--surface);padding:18px 20px;display:grid;grid-template-columns:auto 1fr;gap:4px 16px}
+.opt.rec{background:var(--accent-soft)}
+.opt .tag{
+  font-family:var(--mono);font-size:11.5px;font-weight:600;color:var(--accent);
+  border:1px solid var(--accent);border-radius:3px;padding:2px 7px;height:fit-content;
+}
+.opt .on{font-weight:650;font-size:15px}
+.opt .od{grid-column:2;color:var(--muted);font-size:14.5px;line-height:1.55}
+footer{margin-top:64px;padding-top:26px;border-top:1px solid var(--line);
+  font-size:13px;color:var(--muted)}
+footer p{margin:0 0 8px}
+@media (max-width:640px){
+  body{font-size:16px}
+  header.masthead{padding-top:44px}
+  .steph{gap:12px}
+}
+@media (prefers-reduced-motion:no-preference){
+  .pt,.bar{transition:none}
+}
+</style>
+<div class="wrap">
+<header class="masthead">
+  <p class="kicker">Simulatieanalyse · dosisescalatie MERGE</p>
+  <h1>Wat één betwiste DLT doet met het TITE-CRM ontwerp</h1>
+  <p class="standfirst">De zesde patiënt op dosisniveau L1 kreeg een toxiciteit die als
+  &ldquo;possible&rdquo; is beoordeeld. Dat ene gegeven verandert het gedrag van het
+  voorgestelde model ingrijpend. Deze analyse laat zien hoe, wat de opties zijn, en welke
+  we aanraden.</p>
+  <div class="meta">
+    <span>Simulaties <b>1000</b> per arm</span>
+    <span>Doel acuut <b>0.20</b></span>
+    <span>Doel subacuut <b>0.33</b></span>
+    <span>Configuratie <b>EWOC uit, burn-in uit</b></span>
+  </div>
+</header>
+
+<section class="step"><div class="col">
+  <div class="steph"><span class="num">1</span><h2>Het uitgangspunt is veranderd</h2></div>
+  <p class="lede">Het amendement was opgezet als een overgang van het huidige 6+3 design
+  naar TITE-CRM. Die keuze rustte op simulaties waarin de zes patiënten op L1 gestart waren
+  zonder enige DLT. Dat uitgangspunt geldt niet meer.</p>
+  <p>De toxiciteit bij de zesde patiënt is op het SAE-formulier beoordeeld als
+  <strong>&ldquo;possible&rdquo;</strong> gerelateerd aan de behandeling — niet als
+  &ldquo;unrelated&rdquo;, niet als &ldquo;definite&rdquo;. De behandelaars noemen
+  ziekteprogressie de primaire differentiaaldiagnose en de dosis op de maag bleef ruim
+  binnen de planningsconstraints, maar een verband met de bestraling is niet volledig
+  uit te sluiten.</p>
+  <p>Onder de gangbare conventie in fase 1-oncologie telt &ldquo;possible&rdquo; of hoger
+  mee als DLT. Het model krijgt dus één DLT op zes patiënten op het laagste niveau te zien,
+  voordat de eerste nieuwe patiënt is ingesloten.</p>
+</div></section>
+
+<section class="step"><div class="col">
+  <div class="steph"><span class="num">2</span><h2>Waarom dat het model zo raakt</h2></div>
+  <p>De CRM schat de hele dosis-toxiciteitscurve met <strong>één gedeelde parameter</strong>.
+  Er is geen aparte schatting per dosisniveau. Eén DLT op L1 verhoogt daardoor ook de geschatte
+  toxiciteit van L3 en L4 — niveaus waar nog geen enkele patiënt is behandeld. En die verhoging
+  blijft de hele trial staan.</p>
+  <p>Het 6+3 design werkt fundamenteel anders. Bij één DLT op zes patiënten escaleert het niet,
+  maar het stopt ook niet: het breidt uit naar negen patiënten, en escaleert alsnog als er geen
+  tweede DLT bij komt. Daarna wordt het volgende niveau beoordeeld op <em>zijn eigen</em> cohort.
+  De DLT op L1 speelt geen rol meer.</p>
+  <div class="pull">Het 6+3 design heeft een kort geheugen per dosisniveau. De CRM heeft
+  één lang geheugen over alle niveaus heen. Dat lange geheugen is normaal juist de kracht —
+  hier verspreidt het een waarschijnlijk niet-behandelgerelateerd event over de hele curve.</div>
+  <p>Dit is geen fout in de code. Het model doet precies wat het hoort te doen met de data die
+  we het geven. De vraag is dus niet hoe we het model repareren, maar hoe dit ene gegeven
+  het model in hoort te gaan.</p>
+</div></section>
+
+<section class="step"><div class="col">
+  <div class="steph"><span class="num">3</span><h2>Het effect is niet overal negatief</h2></div>
+  <p>De DLT maakt het model <strong>conservatiever</strong>. Of dat goed of slecht uitpakt,
+  hangt volledig af van waar de werkelijke MTD ligt — en dat weten we niet. Vandaar de vijf
+  scenario&rsquo;s.</p>
+  <p>Waar de werkelijke MTD op het hoogste niveau ligt (Acute low) is de schade groot: de
+  correcte MTD-selectie zakt van 80.3% naar
+  <strong>18.9%</strong>. Maar waar de werkelijke MTD laag ligt,
+  verbetert het model juist, omdat het voorheen te hoog uitkwam. En in álle scenario&rsquo;s
+  daalt de kans op een te hoge, onveilige MTD.</p>
+  <p>Dat is precies het gedrag dat je van een veiligheidsontwerp wilt zien na een waargenomen
+  toxiciteit. Het probleem is dus specifiek, niet algemeen: het zit in het scenario waarin de
+  hoogste dosis werkelijk de juiste is.</p>
+</div>
+
+<figure>
+  <div class="figbox"><svg viewBox="0 0 720 330" role="img" aria-label="Acute low scenario per optie" class="chart">
+<line class="grid" x1="56" y1="256.0" x2="700" y2="256.0"/>
+<text class="tick" x="46" y="260.0" text-anchor="end">0%</text>
+<line class="grid" x1="56" y1="210.8" x2="700" y2="210.8"/>
+<text class="tick" x="46" y="214.8" text-anchor="end">20%</text>
+<line class="grid" x1="56" y1="165.6" x2="700" y2="165.6"/>
+<text class="tick" x="46" y="169.6" text-anchor="end">40%</text>
+<line class="grid" x1="56" y1="120.4" x2="700" y2="120.4"/>
+<text class="tick" x="46" y="124.4" text-anchor="end">60%</text>
+<line class="grid" x1="56" y1="75.2" x2="700" y2="75.2"/>
+<text class="tick" x="46" y="79.2" text-anchor="end">80%</text>
+<line class="grid" x1="56" y1="30.0" x2="700" y2="30.0"/>
+<text class="tick" x="46" y="34.0" text-anchor="end">100%</text>
+<line class="axis" x1="56" y1="256" x2="700" y2="256"/>
+<rect class="bar reach" x="72.6" y="200.9" width="29.4" height="55.1" rx="2"/>
+<text class="val" x="87.3" y="194.9" text-anchor="middle">24</text>
+<rect class="bar sel" x="105.0" y="213.3" width="29.4" height="42.7" rx="2"/>
+<text class="val" x="119.7" y="207.3" text-anchor="middle">19</text>
+<text class="cat" x="102.0" y="276" text-anchor="middle">DLT</text>
+<text class="cat" x="102.0" y="290" text-anchor="middle">volledig</text>
+<rect class="bar reach" x="164.6" y="136.9" width="29.4" height="119.1" rx="2"/>
+<text class="val" x="179.3" y="130.9" text-anchor="middle">53</text>
+<rect class="bar sel" x="197.0" y="153.8" width="29.4" height="102.2" rx="2"/>
+<text class="val" x="211.7" y="147.8" text-anchor="middle">45</text>
+<text class="cat" x="194.0" y="276" text-anchor="middle">Downweging</text>
+<text class="cat" x="194.0" y="290" text-anchor="middle">50%</text>
+<rect class="bar reach" x="256.6" y="93.7" width="29.4" height="162.3" rx="2"/>
+<text class="val" x="271.3" y="87.7" text-anchor="middle">72</text>
+<rect class="bar sel" x="289.0" y="119.0" width="29.4" height="137.0" rx="2"/>
+<text class="val" x="303.7" y="113.0" text-anchor="middle">61</text>
+<text class="cat" x="286.0" y="276" text-anchor="middle">Downweging</text>
+<text class="cat" x="286.0" y="290" text-anchor="middle">25%</text>
+<rect class="bar reach rec" x="348.6" y="42.7" width="29.4" height="213.3" rx="2"/>
+<text class="val" x="363.3" y="36.7" text-anchor="middle">94</text>
+<rect class="bar sel rec" x="381.0" y="185.9" width="29.4" height="70.1" rx="2"/>
+<text class="val" x="395.7" y="179.9" text-anchor="middle">31</text>
+<text class="cat rec" x="378.0" y="276" text-anchor="middle">Override</text>
+<rect class="bar reach" x="440.6" y="36.1" width="29.4" height="219.9" rx="2"/>
+<text class="val" x="455.3" y="30.1" text-anchor="middle">97</text>
+<rect class="bar sel" x="473.0" y="135.3" width="29.4" height="120.7" rx="2"/>
+<text class="val" x="487.7" y="129.3" text-anchor="middle">53</text>
+<text class="cat" x="470.0" y="276" text-anchor="middle">Override +</text>
+<text class="cat" x="470.0" y="290" text-anchor="middle">50%</text>
+<rect class="bar reach" x="532.6" y="35.0" width="29.4" height="221.0" rx="2"/>
+<text class="val" x="547.3" y="29.0" text-anchor="middle">98</text>
+<rect class="bar sel" x="565.0" y="104.1" width="29.4" height="151.9" rx="2"/>
+<text class="val" x="579.7" y="98.1" text-anchor="middle">67</text>
+<text class="cat" x="562.0" y="276" text-anchor="middle">Override +</text>
+<text class="cat" x="562.0" y="290" text-anchor="middle">25%</text>
+<rect class="bar reach" x="624.6" y="55.1" width="29.4" height="200.9" rx="2"/>
+<text class="val" x="639.3" y="49.1" text-anchor="middle">89</text>
+<rect class="bar sel" x="657.0" y="74.5" width="29.4" height="181.5" rx="2"/>
+<text class="val" x="671.7" y="68.5" text-anchor="middle">80</text>
+<text class="cat" x="654.0" y="276" text-anchor="middle">DLT niet</text>
+<text class="cat" x="654.0" y="290" text-anchor="middle">geteld</text>
+<rect class="bar reach" x="56" y="305" width="11" height="11" rx="2"/>
+<text class="leg" x="73" y="314">L4 tijdens de trial bereikt</text>
+<rect class="bar sel" x="271" y="305" width="11" height="11" rx="2"/>
+<text class="leg" x="288" y="314">L4 als finale MTD gekozen (= correct)</text>
+</svg></div>
+  <figcaption><strong>Het Acute low scenario, waar de werkelijke MTD L4 (5&times;8 Gy) is.</strong>
+  De lichte balk laat zien in hoeveel simulaties L4 überhaupt bereikt wordt tijdens de trial;
+  de volle balk in hoeveel simulaties L4 ook als finale MTD gekozen wordt. Bij de huidige
+  instelling wordt L4 in 24% van de trials nog bereikt,
+  maar slechts in 19% ook gekozen. De escalatie-override tilt het
+  bereiken naar 94% — de finale keuze blijft echter
+  modelgestuurd en volgt maar deels.</figcaption>
+</figure>
+</section>
+
+<section class="step"><div class="col">
+  <div class="steph"><span class="num">4</span><h2>Zeven manieren om ermee om te gaan</h2></div>
+  <p>We hebben zeven varianten doorgerekend, over alle vijf scenario&rsquo;s. Ze vallen in
+  twee families: de data anders <em>wegen</em>, of een <em>ontwerpregel</em> toevoegen.</p>
+</div>
+<div class="optlist"><div class="opt"><span class="tag">A</span><span class="on">DLT volledig</span><span class="od">De zes patiënten op L1 gaan mee als volledige observaties, inclusief de DLT. Dit is wat de code nu doet.</span></div><div class="opt"><span class="tag">B</span><span class="on">Downweging 50%</span><span class="od">Zelfde data, maar het hele historische blok telt voor de helft mee — een gangbare Bayesiaanse korting op data van vóór het amendement.</span></div><div class="opt"><span class="tag">C</span><span class="on">Downweging 25%</span><span class="od">Zelfde idee, maar het blok telt nog maar voor een kwart mee.</span></div><div class="opt rec"><span class="tag">E</span><span class="on">Override — advies</span><span class="od">De DLT blijft volledig meetellen. Daarnaast mag er één niveau omhoog zodra drie patiënten op het huidige niveau hun volledige acute follow-up zonder DLT hebben afgerond — ook als het model dat nog niet aanraadt.</span></div><div class="opt"><span class="tag">E+B</span><span class="on">Override + 50%</span><span class="od">De override, gecombineerd met een korting van 50% op het historische blok.</span></div><div class="opt"><span class="tag">E+C</span><span class="on">Override + 25%</span><span class="od">De override, gecombineerd met een korting van 75% op het historische blok.</span></div><div class="opt"><span class="tag">H</span><span class="on">DLT niet geteld</span><span class="od">De DLT telt niet mee, bijvoorbeeld omdat het event formeel als niet-behandelgerelateerd wordt beoordeeld. Opgenomen als referentiepunt.</span></div></div>
+<div class="col">
+  <h3>De escalatie-override, in gewone taal</h3>
+  <p>Als drie patiënten op het huidige dosisniveau hun volledige acute follow-up hebben
+  afgerond zonder DLT, mag er één niveau omhoog — ook als het model dat nog niet aanraadt.
+  Dat is exact de logica die het 6+3 design al heeft, en die de METC dus al heeft goedgekeurd.
+  De DLT blijft volledig meetellen; nieuwe schone data op een niveau kan zich alleen omhoog
+  verdienen.</p>
+</div></section>
+
+<section class="step"><div class="col">
+  <div class="steph"><span class="num">5</span><h2>Er is geen gratis oplossing</h2></div>
+  <p>Elke variant die het Acute low scenario herstelt, kost nauwkeurigheid in de scenario&rsquo;s
+  waar de werkelijke MTD laag ligt, en verhoogt de kans op een te hoge dosis. Die uitruil is
+  onvermijdelijk: de DLT is echte informatie. Hoe minder gewicht je hem geeft, hoe vaker je te
+  hoog uitkomt als de toxiciteit werkelijk hoog is.</p>
+</div>
+
+<figure>
+  <div class="figbox"><svg viewBox="0 0 720 430" role="img" aria-label="Nauwkeurigheid tegen overschattingsrisico per optie" class="chart">
+<line class="grid" x1="66.0" y1="26" x2="66.0" y2="374"/>
+<text class="tick" x="66.0" y="394" text-anchor="middle">0%</text>
+<line class="grid" x1="170.4" y1="26" x2="170.4" y2="374"/>
+<text class="tick" x="170.4" y="394" text-anchor="middle">10%</text>
+<line class="grid" x1="274.8" y1="26" x2="274.8" y2="374"/>
+<text class="tick" x="274.8" y="394" text-anchor="middle">20%</text>
+<line class="grid" x1="379.2" y1="26" x2="379.2" y2="374"/>
+<text class="tick" x="379.2" y="394" text-anchor="middle">30%</text>
+<line class="grid" x1="483.6" y1="26" x2="483.6" y2="374"/>
+<text class="tick" x="483.6" y="394" text-anchor="middle">40%</text>
+<line class="grid" x1="588.0" y1="26" x2="588.0" y2="374"/>
+<text class="tick" x="588.0" y="394" text-anchor="middle">50%</text>
+<line class="grid" x1="66" y1="287.0" x2="588" y2="287.0"/>
+<text class="tick" x="56" y="291.0" text-anchor="end">40%</text>
+<line class="grid" x1="66" y1="113.0" x2="588" y2="113.0"/>
+<text class="tick" x="56" y="117.0" text-anchor="end">50%</text>
+<line class="axis" x1="66" y1="374" x2="588" y2="374"/>
+<line class="axis" x1="66" y1="26" x2="66" y2="374"/>
+<circle class="pt" cx="244.7" cy="280.0" r="6.5"/>
+<circle class="pt" cx="335.1" cy="235.8" r="6.5"/>
+<circle class="pt" cx="388.0" cy="197.9" r="6.5"/>
+<circle class="halo" cx="286.1" cy="208.4" r="16.0"/>
+<circle class="pt rec" cx="286.1" cy="208.4" r="9.0"/>
+<circle class="pt" cx="351.8" cy="147.8" r="6.5"/>
+<circle class="pt" cx="418.0" cy="161.4" r="6.5"/>
+<circle class="pt" cx="530.4" cy="219.8" r="6.5"/>
+<line class="leader" x1="358.8" y1="147.8" x2="363.8" y2="147.8"/>
+<text class="lbl" x="367.8" y="151.8">Override + 50%</text>
+<line class="leader" x1="425.0" y1="161.4" x2="430.0" y2="178.4"/>
+<text class="lbl" x="434.0" y="182.4">Override + 25%</text>
+<line class="leader" x1="395.0" y1="197.9" x2="400.0" y2="197.9"/>
+<text class="lbl" x="404.0" y="201.9">Downweging 25%</text>
+<line class="leader" x1="293.1" y1="208.4" x2="298.1" y2="225.4"/>
+<text class="lbl rec" x="302.1" y="229.4">Override</text>
+<line class="leader" x1="537.4" y1="219.8" x2="542.4" y2="253.8"/>
+<text class="lbl" x="546.4" y="257.8">DLT niet geteld</text>
+<line class="leader" x1="342.1" y1="235.8" x2="347.1" y2="286.8"/>
+<text class="lbl" x="351.1" y="290.8">Downweging 50%</text>
+<line class="leader" x1="251.7" y1="280.0" x2="256.7" y2="314.0"/>
+<text class="lbl" x="260.7" y="318.0">DLT volledig</text>
+<text class="axlbl" x="327.0" y="418" text-anchor="middle">Kans op een te hoge (onveilige) MTD →</text>
+<text class="axlbl" transform="rotate(-90 16 200.0)" x="16" y="200.0" text-anchor="middle">Correcte MTD gekozen →</text>
+</svg></div>
+  <figcaption><strong>De uitruil, gemiddeld over alle vijf scenario&rsquo;s.</strong>
+  Naar boven is nauwkeuriger, naar links is veiliger — linksboven is dus het beste.
+  De override ligt gunstiger dan beide downwegingsvarianten: vergelijkbaar nauwkeurig als
+  25% downweging (44.5% tegen 45.1%), maar met een
+  aanzienlijk kleiner risico op een te hoge MTD (21.1% tegen
+  30.8%). De twee combinatievarianten rechtsboven kopen extra
+  nauwkeurigheid met een duidelijk hoger risico.</figcaption>
+</figure>
+
+<div class="tablewrap"><table><caption>Correcte MTD-selectie per scenario (%)</caption><thead><tr><th>Optie</th><th>low</th><th>middle</th><th>high</th><th>steep</th><th>shallow</th><th>Gemiddeld</th><th>Te hoog<br>(gem.)</th></tr></thead><tbody><tr><td>DLT volledig</td><td>18.9</td><td>42.2</td><td>64.9</td><td>46.0</td><td>30.0</td><td><b>40.4</b></td><td class="good">17.1</td></tr><tr><td>Downweging 50%</td><td>45.2</td><td>47.7</td><td>51.2</td><td>36.1</td><td>34.5</td><td><b>42.9</b></td><td class="bad">25.8</td></tr><tr><td>Downweging 25%</td><td>60.6</td><td>47.6</td><td>45.2</td><td>31.6</td><td>40.6</td><td><b>45.1</b></td><td class="bad">30.8</td></tr><tr class="rec"><td>Override</td><td>31.0</td><td>53.3</td><td>51.2</td><td>46.0</td><td>41.1</td><td><b>44.5</b></td><td class="good">21.1</td></tr><tr><td>Override + 50%</td><td>53.4</td><td>54.3</td><td>43.8</td><td>39.6</td><td>48.9</td><td><b>48.0</b></td><td class="bad">27.4</td></tr><tr><td>Override + 25%</td><td>67.2</td><td>54.2</td><td>37.4</td><td>31.7</td><td>45.6</td><td><b>47.2</b></td><td class="bad">33.7</td></tr><tr><td>DLT niet geteld</td><td>80.3</td><td>47.5</td><td>29.1</td><td>22.7</td><td>39.7</td><td><b>43.9</b></td><td class="bad">44.5</td></tr><tr><td>Huidig 6+3</td><td>2.9</td><td>19.5</td><td>42.6</td><td>62.4</td><td>13.8</td><td><b>28.2</b></td><td>5.3</td></tr></tbody></table></div>
+<div class="col">
+  <p style="margin-top:18px">Twee dingen vallen op. Ten eerste wint de override het van downwegen: de override is nauwkeuriger dan 50% downweging (44.5% tegen 42.9%) en veiliger (21.1% tegen 25.8% kans op een te hoge MTD), en tegenover 25% downweging levert hij vergelijkbare nauwkeurigheid (44.5% tegen 45.1%) bij een fors lager risico (21.1% tegen 30.8%). Ten tweede — en dat is het opvallendst — de override is even nauwkeurig dan het volledig negeren van de DLT (44.5% tegen 43.9%) en veiliger (21.1% tegen 44.5% kans op een te hoge MTD). De ontwerpregel verslaat dus zelfs de variant waarin het event helemaal niet meetelt.</p>
+  <div class="callout">
+    <p class="ct">Belangrijke consequentie</p>
+    <p>De ontwerpaanpassing levert meer op dan de uitkomst van de causaliteitsbeoordeling.
+    Zelfs als het event formeel als niet-behandelgerelateerd zou worden beoordeeld, blijft de
+    override het betere ontwerp: 44.5% correcte selectie bij
+    21.1% risico, tegen 43.9% bij
+    44.5% wanneer de DLT simpelweg niet meetelt. Het advies hangt dus
+    <strong>niet</strong> af van die beoordeling — en daarmee ook niet van een vervolgrapport
+    dat er misschien nooit komt.</p>
+  </div>
+</div></section>
+
+<section class="step"><div class="col">
+  <div class="steph"><span class="num">6</span><h2>Advies</h2></div>
+  <div class="callout rec">
+    <p class="ct">Voorstel voor het amendement</p>
+    <p><strong>Laat de DLT volledig meetellen en voeg de escalatie-override toe</strong>
+    (optie E). Geen statistische korting op de data, maar één transparante, vooraf
+    vastgelegde ontwerpregel die de lokale veiligheidslogica van het 6+3 design behoudt.</p>
+  </div>
+  <ul>
+    <li><strong>Gemiddeld nauwkeuriger dan de huidige opzet</strong>
+    (44.5% tegen 40.4%) voor een beperkte toename van
+    het risico op een te hoge MTD (21.1% tegen 17.1%).</li>
+    <li><strong>Lost het kernprobleem op:</strong> in Acute low wordt L4 weer bereikt in
+    94% van de trials, tegen
+    24% nu.</li>
+    <li><strong>Goed uit te leggen:</strong> de regel is inhoudelijk dezelfde
+    veiligheidswaarborg die in het huidige protocol al is goedgekeurd.</li>
+    <li><strong>Niet afhankelijk van de causaliteitsbeoordeling</strong>, en dus niet van een
+    vervolgrapport dat er misschien nooit komt.</li>
+  </ul>
+  <h3>Voor het amendement betekent dit</h3>
+  <p>Het amendement beschrijft dan niet alleen de overgang van 6+3 naar TITE-CRM, maar ook
+  expliciet hoe de bestaande L1-data meegaat en welke escalatiewaarborg daarbij hoort. Dat is
+  een sterker stuk dan het oorspronkelijke voorstel, omdat het het scenario behandelt dat zich
+  daadwerkelijk heeft voorgedaan.</p>
+</div></section>
+
+<section class="step"><div class="col">
+  <div class="steph"><span class="num">7</span><h2>Wat nog open staat</h2></div>
+  <p>Drie punten die eerlijk op tafel moeten, voordat hier een protocoltekst van wordt gemaakt.</p>
+  <div class="callout">
+    <p class="ct">1 · Onze code en die van Sama geven andere uitkomsten</p>
+    <p>Alle cijfers hier komen uit onze eigen simulator. Voor het 6+3 design vinden wij in
+    Acute low 2.9% correcte selectie, waar Sama&rsquo;s slides
+    32,3% laten zien. Ook de trialduur verschilt sterk. De vergelijking <em>binnen</em> onze
+    code is betrouwbaar — daar verandert per variant maar één ding — maar de vergelijking
+    tussen beide implementaties is dat nog niet. Zodra Sama&rsquo;s R-code beschikbaar is,
+    zouden we die regel voor regel naast de onze moeten leggen.</p>
+  </div>
+  <div class="callout">
+    <p class="ct">2 · De override is onze eigen constructie</p>
+    <p>De regel is conceptueel dezelfde waarborg die het 6+3 design heeft, maar het is geen
+    gepubliceerde methode die we uit de literatuur overnemen. Sama zou hier statistisch naar
+    moeten kijken, en het is verstandig te controleren of vergelijkbare lokale
+    escalatieregels in de CRM-literatuur beschreven zijn voordat dit een protocoltekst wordt.</p>
+  </div>
+  <div class="callout">
+    <p class="ct">3 · De causaliteitsbeoordeling verdient een formele plek</p>
+    <p>Of een SAE een protocol-gedefinieerde DLT is voor escalatiebeslissingen, is formeel een
+    andere vraag dan de causaliteitsclassificatie op het SAE-formulier. Het is verstandig die
+    beoordeling expliciet te beleggen en vast te leggen — welke kant het ook op valt. Zoals
+    hierboven blijkt verandert het het advies niet, maar het maakt het dossier wel navolgbaar.</p>
+  </div>
+</div></section>
+
+<section class="step"><div class="col">
+  <div class="steph"><span class="num">8</span><h2>De scenario&rsquo;s</h2></div>
+  <p>De vijf scenario&rsquo;s voor de werkelijke acute toxiciteit, met de subacute kansen
+  vast op 0.02, 0.05, 0.10, 0.15, 0.25. De werkelijke MTD is het
+  hoogste niveau met een acute toxiciteit op of onder het doel van 0.20.</p>
+</div>
+<div class="tablewrap">
+  <table><caption>Werkelijke acute toxiciteitskansen per scenario</caption>
+  <thead><tr><th>Scenario</th><th>L0<br>5x4 Gy</th><th>L1<br>5x5 Gy</th><th>L2<br>5x6 Gy</th><th>L3<br>5x7 Gy</th><th>L4<br>5x8 Gy</th><th>Werkelijke<br>MTD</th></tr></thead>
+  <tbody><tr><td>low</td><td>0.01</td><td>0.02</td><td>0.06</td><td>0.10</td><td>0.15</td><td><b>L4</b></td></tr><tr><td>middle</td><td>0.01</td><td>0.04</td><td>0.12</td><td>0.17</td><td>0.27</td><td><b>L3</b></td></tr><tr><td>high</td><td>0.01</td><td>0.05</td><td>0.15</td><td>0.22</td><td>0.30</td><td><b>L2</b></td></tr><tr><td>steep</td><td>0.01</td><td>0.02</td><td>0.08</td><td>0.24</td><td>0.34</td><td><b>L2</b></td></tr><tr><td>shallow</td><td>0.10</td><td>0.13</td><td>0.15</td><td>0.18</td><td>0.24</td><td><b>L3</b></td></tr></tbody></table>
+</div></section>
+
+<footer><div class="col">
+  <p>Gegenereerd uit <span style="font-family:var(--mono);font-size:12px">dlt_mitigation_analysis.py</span>
+  (1000 simulaties per scenario per variant, seed 20260812). Configuratie: TITE-CRM
+  zonder EWOC en zonder burn-in, start op L2, maximaal 30 patiënten inclusief de zes bestaande,
+  cohortgrootte 3, één nieuwe patiënt per vier weken.</p>
+  <p>Deze pagina bevat uitsluitend geaggregeerde simulatie-uitkomsten. Er zijn geen
+  patiëntgegevens in opgenomen.</p>
+</div></footer>
+</div>
