@@ -1,0 +1,16 @@
+scenario,design,dlt_at_init,n_sim,true_mtd,true_mtd_label,correct_mtd_pct,too_high_pct,too_low_pct,mean_acute_tox,mean_subacute_tox,mean_duration_weeks,sel_L0_pct,sel_L1_pct,sel_L2_pct,sel_L3_pct,sel_L4_pct,alloc_L0_pct,alloc_L1_pct,alloc_L2_pct,alloc_L3_pct,alloc_L4_pct
+Acute low,"TITE-CRM (EWOC off, burn-in off)",False,400,4,L4 (5x8 Gy),80.5,0.0,19.5,2.8875,3.7225,96.0,0.0,0.0,1.0,18.5,80.5,0.0,0.0,15.84375,28.21875,55.9375
+Acute low,"TITE-CRM (EWOC off, burn-in off)",True,400,4,L4 (5x8 Gy),18.5,0.0,81.5,1.79,2.3675,96.0,0.0,0.0,20.0,61.5,18.5,0.0,5.65625,52.28125,38.25,3.8125
+Acute low,"6+3 (reference, no fixed pre-history)",,400,4,L4 (5x8 Gy),3.25,0.0,96.75,1.94,2.4975,109.84,0.0,15.75,37.0,44.0,3.25,,,,,
+Acute middle,"TITE-CRM (EWOC off, burn-in off)",False,400,3,L3 (5x7 Gy),48.25,35.25,16.5,4.6775,3.1625,96.0,0.0,0.5,16.0,48.25,35.25,0.0,0.8125,25.71875,40.03125,33.4375
+Acute middle,"TITE-CRM (EWOC off, burn-in off)",True,400,3,L3 (5x7 Gy),41.5,1.25,57.25,2.955,2.1275,96.0,0.0,3.5000000000000004,53.75,41.5,1.25,0.0625,13.5,63.59375,22.09375,0.75
+Acute middle,"6+3 (reference, no fixed pre-history)",,400,3,L3 (5x7 Gy),18.0,0.25,81.75,2.82,1.9675,96.49,0.0,39.0,42.75,18.0,0.25,,,,,
+Acute high,"TITE-CRM (EWOC off, burn-in off)",False,400,2,L2 (5x6 Gy),25.75,71.75,2.5,5.1725,3.055,96.0,0.0,2.5,25.75,47.75,24.0,0.0,1.84375,31.5625,39.21875,27.375
+Acute high,"TITE-CRM (EWOC off, burn-in off)",True,400,2,L2 (5x6 Gy),63.0,29.5,7.5,3.505,1.85,96.0,0.0,7.5,63.0,28.999999999999996,0.5,0.1875,16.65625,67.0,15.84375,0.3125
+Acute high,"6+3 (reference, no fixed pre-history)",,400,2,L2 (5x6 Gy),39.75,14.000000000000002,46.25,3.2425,1.8475,91.14,0.0,46.25,39.75,14.000000000000002,0.0,,,,,
+Acute steep,"TITE-CRM (EWOC off, burn-in off)",False,400,2,L2 (5x6 Gy),23.0,77.0,0.0,5.3525,2.9825,96.0,0.0,0.0,23.0,56.00000000000001,21.0,0.0,0.5625,28.15625,44.21875,27.0625
+Acute steep,"TITE-CRM (EWOC off, burn-in off)",True,400,2,L2 (5x6 Gy),47.0,52.25,0.75,2.95,2.1425,96.0,0.0,0.75,47.0,50.0,2.25,0.0625,7.34375,63.875,28.03125,0.6875
+Acute steep,"6+3 (reference, no fixed pre-history)",,400,2,L2 (5x6 Gy),65.0,10.25,24.75,2.93,1.9275,100.48,0.0,24.75,65.0,10.25,0.0,,,,,
+Acute shallow,"TITE-CRM (EWOC off, burn-in off)",False,400,3,L3 (5x7 Gy),42.0,38.0,20.0,4.5025,3.2925,96.0,0.0,3.5000000000000004,16.5,42.0,38.0,0.0625,1.625,26.53125,40.4375,31.34375
+Acute shallow,"TITE-CRM (EWOC off, burn-in off)",True,400,3,L3 (5x7 Gy),30.5,1.5,68.0,3.54,1.8225,96.0,0.25,18.75,49.0,30.5,1.5,0.875,22.4375,59.75,16.65625,0.28125
+Acute shallow,"6+3 (reference, no fixed pre-history)",,400,3,L3 (5x7 Gy),13.25,0.0,86.75,3.475,1.87,88.93,0.0,56.49999999999999,30.25,13.25,0.0,,,,,
