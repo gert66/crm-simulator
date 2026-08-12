@@ -655,6 +655,7 @@ def run_tite_crm(
     burn_in=True, rng=None,
     collect_trace=False,
     n_safe_d1=0,
+    n_safe_d1_dlt=0,
     p_stop=1.0,
     require_full_tox1_fu_before_escalation=True,
 ):
@@ -684,10 +685,18 @@ def run_tite_crm(
 
     n_safe_d1: number of patients already safely treated at L1 with complete follow-up
       before the trial opens (day 0).  Their records are pre-loaded into the patient
-      list so the CRM sees them as fully-weighted observations at L1 (dose index 1)
-      with no DLTs.  Surgery status for these patients is drawn from p_surgery.
+      list so the CRM sees them as fully-weighted observations at L1 (dose index 1).
+      Surgery status for these patients is drawn from p_surgery.
       These patients count toward max_n — if you want max_n new patients in addition
       to the pre-treated cohort, increase max_n by n_safe_d1.
+
+    n_safe_d1_dlt: how many of the n_safe_d1 pre-treated patients had an observed
+      acute (tox1) DLT, applied to the LAST n_safe_d1_dlt patients in that block
+      (e.g. n_safe_d1=6, n_safe_d1_dlt=1 reproduces "DLT in the 6th patient").
+      Their tox1_day is set at their (already-elapsed) follow-up window end, so
+      the DLT is observed from day 0 onward and ends burn-in immediately if active.
+      Must be <= n_safe_d1.  Has no effect on tox2 (these patients contribute no
+      subacute observation either way, matching the historical no-DLT behaviour).
 
     require_full_tox1_fu_before_escalation: when True, burn-in escalation from
       the current dose Lx to Lx+1 is only allowed if at least cohort_size patients
@@ -742,13 +751,14 @@ def run_tite_crm(
             _has_surg = bool(rng.random() < float(p_surgery))
             _surg_day = float(_rt_end + float(rt_to_surg)) if _has_surg else None
             _t2w_end  = float(_surg_day + float(tox2_win)) if _has_surg else None
+            _has_dlt  = _i >= (int(n_safe_d1) - int(n_safe_d1_dlt))
             patients.append({
                 "dose":         1,
                 "arrival":      float(_arr),
                 "rt_start":     _rt_start,
                 "tox1_win_end": _t1w_end,
-                "has_tox1":     False,
-                "tox1_day":     None,
+                "has_tox1":     _has_dlt,
+                "tox1_day":     (_t1w_end if _has_dlt else None),
                 "has_surgery":  _has_surg,
                 "surgery_day":  _surg_day,
                 "tox2_win_end": _t2w_end,
