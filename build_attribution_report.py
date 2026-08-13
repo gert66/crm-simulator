@@ -102,53 +102,62 @@ def build_curve_svg(df: pd.DataFrame, p_grid: list[float], metric: str,
 
 
 def build_paired_svg(df: pd.DataFrame, p_grid: list[float]) -> str:
-    """Attribution vs block discount, averaged over scenarios."""
+    """Efficiency frontiers: risk of an overly toxic MTD against accuracy."""
     agg = (df[df["series"].isin(["attribution", "weight"])]
            .groupby(["series", "p"], as_index=False)
            .agg(correct=("correct_pct", "mean"), risk=("too_high_pct", "mean")))
-    W, H = 720, 380
-    ml, mr, mt, mb = 60, 150, 22, 62
+    W, H = 720, 400
+    ml, mr, mt, mb = 60, 150, 24, 60
     pw, ph = W - ml - mr, H - mt - mb
-    xs = _axis_x(p_grid, ml, pw)
-    vmax = min(100.0, ((float(agg["correct"].max()) + 6) // 5 + 1) * 5)
-    vmin = max(0.0, ((float(agg["correct"].min()) - 6) // 5) * 5)
+    xmax = min(100.0, ((float(agg["risk"].max()) + 5) // 10 + 1) * 10)
+    ymin = max(0.0, ((float(agg["correct"].min()) - 4) // 5) * 5)
+    ymax = min(100.0, ((float(agg["correct"].max()) + 4) // 5 + 1) * 5)
+
+    def px(v):
+        return ml + (float(v) / xmax) * pw
 
     def py(v):
-        return mt + ph - ((float(v) - vmin) / (vmax - vmin)) * ph
+        return mt + ph - ((float(v) - ymin) / (ymax - ymin)) * ph
 
     out = [f'<svg viewBox="0 0 {W} {H}" role="img" class="chart" '
-           f'aria-label="Attribution against block discount">']
-    g = int(vmin)
-    while g <= vmax:
+           f'aria-label="Efficiency frontier of both discounting schemes">']
+    for g in range(0, int(xmax) + 1, 10):
+        x = px(g)
+        out.append(f'<line class="grid" x1="{x:.1f}" y1="{mt}" x2="{x:.1f}" y2="{mt+ph}"/>')
+        out.append(f'<text class="tick" x="{x:.1f}" y="{mt+ph+19}" text-anchor="middle">{g}%</text>')
+    g = int(ymin)
+    while g <= ymax:
         if g % 5 == 0:
             y = py(g)
             out.append(f'<line class="grid" x1="{ml}" y1="{y:.1f}" x2="{ml+pw}" y2="{y:.1f}"/>')
             out.append(f'<text class="tick" x="{ml-10}" y="{y+4:.1f}" text-anchor="end">{g}%</text>')
         g += 5
-    for p in p_grid:
-        x = xs[p]
-        out.append(f'<line class="grid" x1="{x:.1f}" y1="{mt}" x2="{x:.1f}" y2="{mt+ph}"/>')
-        lab = "0" if p == 0 else ("1" if p == 1 else f"{p:g}")
-        out.append(f'<text class="tick" x="{x:.1f}" y="{mt+ph+19}" text-anchor="middle">{lab}</text>')
     out.append(f'<line class="axis" x1="{ml}" y1="{mt+ph}" x2="{ml+pw}" y2="{mt+ph}"/>')
+    out.append(f'<line class="axis" x1="{ml}" y1="{mt}" x2="{ml}" y2="{mt+ph}"/>')
 
-    style = {"attribution": ("var(--accent)", "none", "Non-binary DLT"),
-             "weight":      ("var(--muted)", "5 4", "Block discount")}
-    for skey, (col, dash, lab) in style.items():
-        s = agg[agg["series"] == skey].sort_values("p")
-        pts = [(xs[r["p"]], py(r["correct"])) for _, r in s.iterrows()]
-        path = " ".join(f"{'M' if i == 0 else 'L'}{x:.1f},{y:.1f}" for i, (x, y) in enumerate(pts))
-        out.append(f'<path d="{path}" fill="none" stroke="{col}" stroke-width="2.2" '
+    style = {"attribution": ("var(--accent)", "none", "Non-binary DLT", 2.4),
+             "weight":      ("var(--muted)", "5 4", "Block discount", 2.0)}
+    for skey, (col, dash, lab, lw) in style.items():
+        s2 = agg[agg["series"] == skey].sort_values("risk")
+        pts = [(px(r["risk"]), py(r["correct"])) for _, r in s2.iterrows()]
+        path = " ".join(f"{'M' if i == 0 else 'L'}{x:.1f},{y:.1f}"
+                        for i, (x, y) in enumerate(pts))
+        out.append(f'<path d="{path}" fill="none" stroke="{col}" stroke-width="{lw}" '
                    f'stroke-dasharray="{dash}" stroke-linejoin="round"/>')
-        for x, y in pts:
-            out.append(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="3.4" fill="{col}"/>')
-        out.append(f'<text class="lbl" x="{pts[-1][0]+11:.1f}" y="{pts[-1][1]+4:.1f}" '
-                   f'fill="{col}">{lab}</text>')
+        for (x, y), (_, r) in zip(pts, s2.iterrows()):
+            out.append(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="3.6" fill="{col}"/>')
+        lx, ly = pts[-1]
+        out.append(f'<text class="lbl" x="{lx+11:.1f}" y="{ly+4:.1f}" fill="{col}">{lab}</text>')
 
-    out.append(f'<text class="axlbl" x="{ml+pw/2:.1f}" y="{H-14}" text-anchor="middle">'
-               f'Fraction retained (attribution probability, or block weight)</text>')
+    # annotate the shared endpoint (p = 1, the conventional binary design)
+    b = agg[(agg["series"] == "attribution") & (agg["p"] == 1.0)].iloc[0]
+    out.append(f'<text class="lbl" x="{px(b["risk"])+9:.1f}" y="{py(b["correct"])+16:.1f}" '
+               f'fill="var(--ink)">p = 1 (binary)</text>')
+
+    out.append(f'<text class="axlbl" x="{ml+pw/2:.1f}" y="{H-12}" text-anchor="middle">'
+               f'Risk of selecting an overly toxic MTD &#8594;</text>')
     out.append(f'<text class="axlbl" transform="rotate(-90 15 {mt+ph/2:.1f})" x="15" '
-               f'y="{mt+ph/2:.1f}" text-anchor="middle">Correct MTD selected</text>')
+               f'y="{mt+ph/2:.1f}" text-anchor="middle">Correct MTD selected &#8594;</text>')
     out.append("</svg>")
     return "\n".join(out)
 
@@ -212,6 +221,26 @@ def main() -> None:
 
     curve = build_curve_svg(attr, p_grid, "correct_pct", "Correct MTD selected")
     paired = build_paired_svg(df, p_grid)
+
+    # Risk-matched comparison: the same numeric p means different things in the
+    # two schemes, so compare the frontiers at equal risk instead.
+    import numpy as _np
+    fa = (attr.groupby("p").agg(c=("correct_pct", "mean"), r=("too_high_pct", "mean"))
+          .sort_values("r"))
+    fw = (wgt.groupby("p").agg(c=("correct_pct", "mean"), r=("too_high_pct", "mean"))
+          .sort_values("r"))
+    gaps = []
+    for _p, _row in fw.iterrows():
+        if _row["r"] <= float(fa["r"].max()) and _row["r"] >= float(fa["r"].min()):
+            gaps.append(float(_np.interp(_row["r"], fa["r"], fa["c"]) - _row["c"]))
+    gap_lo, gap_hi = (min(gaps), max(gaps)) if gaps else (0.0, 0.0)
+    gap_mid = sum(gaps) / len(gaps) if gaps else 0.0
+
+    # best average accuracy over the attribution grid
+    _best = fa.sort_values("c", ascending=False).iloc[0]
+    best_p = float(fa[fa["c"] == _best["c"]].index[0])
+    best_c, best_r = float(_best["c"]), float(_best["r"])
+    low_best = at(best_p, "Acute low")
 
     low0, low1 = at(0.0, "Acute low"), at(1.0, "Acute low")
     high0, high1 = at(0.0, "Acute high"), at(1.0, "Acute high")
@@ -308,8 +337,16 @@ def main() -> None:
   <strong>five patients who had no event at all</strong> — patients about whom nothing is in
   doubt. Only the sixth is contested. Scaling <em>y</em> alone isolates the uncertainty where
   it actually sits, and keeps the reassuring information the other five provide.</p>
-  <p>The simulations below confirm this is not a purely conceptual point: at matched values
-  the non-binary DLT is the better instrument.</p>
+  <p>The two are not simply stronger and weaker versions of one another. Halving the block
+  leaves the apparent toxicity rate at L1 unchanged at one in six, but makes the design less
+  sure of it. Halving the event lowers the apparent rate itself, to half an event in six
+  patients, while keeping the design just as sure. The same number therefore means something
+  different in each scheme, and the two must be compared by what they buy, not by the label
+  on the dial.</p>
+  <p>Compared that way — at equal risk of selecting an overly toxic dose — the non-binary DLT
+  is worth {fmt(gap_mid)} percentage points of accuracy on average (range {fmt(gap_lo)} to
+  {fmt(gap_hi)}). The advantage is real but moderate, and it comes from keeping the five
+  event-free patients at full strength.</p>
 </div></section>
 
 <section class="step"><div class="col">
@@ -332,21 +369,35 @@ def main() -> None:
 
 <figure>
   <div class="figbox">{paired}</div>
-  <figcaption><strong>The non-binary DLT against the block discount, averaged over scenarios.</strong>
-  The two coincide at p = 1, where nothing is discounted. Below that they separate: retaining
-  the five event-free patients at full weight is worth a consistent margin. At p = 0.50 the
-  non-binary DLT gains {fmt(gain)} points over the binary design against {fmt(wgain)} for the
-  block discount, at {fmt(arisk)}% against {fmt(wrisk)}% risk of selecting too high a dose.</figcaption>
+  <figcaption><strong>What each scheme buys, averaged over scenarios.</strong>
+  Both curves start from the same point at the lower left — the conventional binary design,
+  which discounts nothing. As either dial is turned the design trades safety for accuracy, and
+  the non-binary DLT sits above the block discount over the whole useful range: at equal risk
+  it is worth {fmt(gap_mid)} percentage points of accuracy on average. Note also that neither
+  curve keeps climbing. Beyond roughly a third risk both turn over, so discounting the event
+  away entirely is not the most accurate choice, merely the least safe.</figcaption>
 </figure>
 
 <div class="tablewrap">{table}</div>
 <div class="tablewrap">{ptable}</div>
 <div class="col">
-  <p style="margin-top:18px">The safety cost is monotone and unavoidable: averaged over
-  scenarios, the risk of selecting an overly toxic MTD rises from {fmt(r1)}% at p = 1 to
-  {fmt(r0)}% at p = 0. Nothing about making the endpoint continuous removes that trade-off.
-  What it does is let the trade-off be set by a stated clinical belief rather than by a
-  forced binary.</p>
+  <p style="margin-top:18px">The safety cost is monotone: averaged over scenarios, the risk of
+  selecting an overly toxic MTD rises from {fmt(r1)}% at p = 1 to {fmt(r0)}% at p = 0. Nothing
+  about making the endpoint continuous removes that trade-off. What it does is let the
+  trade-off be set by a stated clinical belief rather than by a forced binary.</p>
+  <div class="callout">
+    <p class="ct">Accuracy does not simply increase as the event is discounted</p>
+    <p>Averaged over the five scenarios, accuracy peaks at <strong>p = {best_p:g}</strong>
+    ({fmt(best_c)}% correct at {fmt(best_r)}% risk) and falls away on both sides. Counting the
+    event in full costs accuracy because it holds the design below a genuinely tolerable dose;
+    discarding it entirely costs accuracy too, because the design then overshoots wherever the
+    true MTD is low. A modest, stated discount does better than either extreme — which is a
+    reasonable thing to find when the clinical assessment itself was neither 0 nor 1.</p>
+    <p>This should not be read as a recommendation to set p = {best_p:g}. The average across
+    five hypothetical scenarios is not a quantity anyone is trying to optimise, and p is meant
+    to express a belief about this event, not to be tuned. It does show that the conventional
+    binary choice is not the accuracy-maximising one under any reading.</p>
+  </div>
 </div></section>
 
 <section class="step"><div class="col">
@@ -414,9 +465,10 @@ def main() -> None:
   <p>Two things are nonetheless worth carrying forward immediately.</p>
   <ul>
     <li><strong>Correct the discounting we do adopt.</strong> If the amendment down-weights the
-    historical data at all, it should scale the event rather than the block. The simulations
-    show this is the better instrument at every value tested, and the argument for it is easier
-    to make: we are uncertain about one event, not about five patients who had none.</li>
+    historical data at all, it should scale the event rather than the block. At equal risk this
+    buys {fmt(gap_mid)} percentage points of accuracy, and the argument for it is easier to
+    make: we are uncertain about one event, not about five patients who had none. This change
+    is small, self-contained, and does not require the full attribution machinery.</li>
     <li><strong>Pursue the dosimetric attribution mapping as a separate track.</strong> The
     statistical machinery is published and citable; the radiotherapy-specific part is not, and
     that is where a real contribution would sit. This study is a well-documented motivating

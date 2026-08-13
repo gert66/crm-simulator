@@ -1,0 +1,91 @@
+scenario,series,series_label,p,true_mtd,true_mtd_label,correct_pct,too_high_pct,too_low_pct,mean_acute_tox,mean_subacute_tox,ever_reached_top_pct,sel_L0_pct,sel_L1_pct,sel_L2_pct,sel_L3_pct,sel_L4_pct
+Acute low,attribution,"Non-binary DLT (n full, y scaled)",0.0,4,L4 (5x8 Gy),79.60000000000001,0.0,20.4,2.946,3.813,90.2,0.0,0.0,1.3,19.1,79.60000000000001
+Acute low,attribution,"Non-binary DLT (n full, y scaled)",0.05,4,L4 (5x8 Gy),76.9,0.0,23.1,2.923,3.601,87.9,0.0,0.0,1.7000000000000002,21.4,76.9
+Acute low,attribution,"Non-binary DLT (n full, y scaled)",0.1,4,L4 (5x8 Gy),74.2,0.0,25.8,2.817,3.675,85.7,0.0,0.0,1.7999999999999998,24.0,74.2
+Acute low,attribution,"Non-binary DLT (n full, y scaled)",0.25,4,L4 (5x8 Gy),69.39999999999999,0.0,30.599999999999998,2.702,3.522,80.30000000000001,0.0,0.0,3.9,26.700000000000003,69.39999999999999
+Acute low,attribution,"Non-binary DLT (n full, y scaled)",0.5,4,L4 (5x8 Gy),47.699999999999996,0.0,52.300000000000004,2.345,2.953,59.0,0.0,0.0,7.000000000000001,45.300000000000004,47.699999999999996
+Acute low,attribution,"Non-binary DLT (n full, y scaled)",1.0,4,L4 (5x8 Gy),18.3,0.0,81.69999999999999,1.819,2.35,22.6,0.0,0.2,20.599999999999998,60.9,18.3
+Acute low,weight,Block discount (n and y scaled),0.0,4,L4 (5x8 Gy),72.7,0.0,27.3,2.749,3.637,84.5,0.0,0.0,4.2,23.1,72.7
+Acute low,weight,Block discount (n and y scaled),0.05,4,L4 (5x8 Gy),72.3,0.0,27.700000000000003,2.699,3.523,82.5,0.0,0.0,5.1,22.6,72.3
+Acute low,weight,Block discount (n and y scaled),0.1,4,L4 (5x8 Gy),68.30000000000001,0.0,31.7,2.637,3.396,80.2,0.0,0.1,5.1,26.5,68.30000000000001
+Acute low,weight,Block discount (n and y scaled),0.25,4,L4 (5x8 Gy),55.60000000000001,0.0,44.4,2.498,3.108,68.4,0.0,0.2,6.9,37.3,55.60000000000001
+Acute low,weight,Block discount (n and y scaled),0.5,4,L4 (5x8 Gy),42.5,0.0,57.49999999999999,2.204,2.821,50.4,0.0,0.0,10.4,47.099999999999994,42.5
+Acute low,weight,Block discount (n and y scaled),1.0,4,L4 (5x8 Gy),16.900000000000002,0.0,83.1,1.845,2.285,21.8,0.0,0.0,20.599999999999998,62.5,16.900000000000002
+Acute low,attribution_override,Non-binary DLT + escalation override,0.0,4,L4 (5x8 Gy),80.0,0.0,20.0,2.921,3.906,91.4,0.0,0.0,1.2,18.8,80.0
+Acute low,attribution_override,Non-binary DLT + escalation override,0.05,4,L4 (5x8 Gy),81.10000000000001,0.0,18.9,2.859,3.801,91.7,0.0,0.0,1.3,17.599999999999998,81.10000000000001
+Acute low,attribution_override,Non-binary DLT + escalation override,0.1,4,L4 (5x8 Gy),75.9,0.0,24.099999999999998,2.88,3.776,89.8,0.0,0.0,1.5,22.6,75.9
+Acute low,attribution_override,Non-binary DLT + escalation override,0.25,4,L4 (5x8 Gy),71.6,0.0,28.4,2.713,3.606,85.9,0.0,0.0,1.6,26.8,71.6
+Acute low,attribution_override,Non-binary DLT + escalation override,0.5,4,L4 (5x8 Gy),53.2,0.0,46.800000000000004,2.382,3.124,69.39999999999999,0.0,0.0,6.6000000000000005,40.2,53.2
+Acute low,attribution_override,Non-binary DLT + escalation override,1.0,4,L4 (5x8 Gy),26.8,0.0,73.2,1.952,2.568,47.4,0.0,0.1,17.2,55.900000000000006,26.8
+Acute middle,attribution,"Non-binary DLT (n full, y scaled)",0.0,3,L3 (5x7 Gy),48.6,38.5,12.9,4.553,3.432,72.5,0.0,0.5,12.4,48.6,38.5
+Acute middle,attribution,"Non-binary DLT (n full, y scaled)",0.05,3,L3 (5x7 Gy),48.1,35.3,16.6,4.527,3.248,67.7,0.0,0.4,16.2,48.1,35.3
+Acute middle,attribution,"Non-binary DLT (n full, y scaled)",0.1,3,L3 (5x7 Gy),50.2,33.900000000000006,15.9,4.4,3.177,66.8,0.0,0.8999999999999999,15.0,50.2,33.900000000000006
+Acute middle,attribution,"Non-binary DLT (n full, y scaled)",0.25,3,L3 (5x7 Gy),55.2,25.3,19.5,4.21,3.021,57.3,0.0,0.7000000000000001,18.8,55.2,25.3
+Acute middle,attribution,"Non-binary DLT (n full, y scaled)",0.5,3,L3 (5x7 Gy),55.7,15.1,29.2,3.556,2.616,30.2,0.0,1.2,28.000000000000004,55.7,15.1
+Acute middle,attribution,"Non-binary DLT (n full, y scaled)",1.0,3,L3 (5x7 Gy),41.3,3.3000000000000003,55.400000000000006,2.965,2.056,5.8999999999999995,0.0,3.8,51.6,41.3,3.3000000000000003
+Acute middle,weight,Block discount (n and y scaled),0.0,3,L3 (5x7 Gy),46.400000000000006,30.8,22.8,4.098,3.036,64.3,0.0,1.3,21.5,46.400000000000006,30.8
+Acute middle,weight,Block discount (n and y scaled),0.05,3,L3 (5x7 Gy),46.5,30.8,22.7,4.097,2.989,63.0,0.0,2.5,20.200000000000003,46.5,30.8
+Acute middle,weight,Block discount (n and y scaled),0.1,3,L3 (5x7 Gy),42.199999999999996,28.799999999999997,28.999999999999996,4.043,2.905,56.49999999999999,0.0,2.1999999999999997,26.8,42.199999999999996,28.799999999999997
+Acute middle,weight,Block discount (n and y scaled),0.25,3,L3 (5x7 Gy),48.1,22.400000000000002,29.5,3.601,2.648,43.3,0.0,2.0,27.500000000000004,48.1,22.400000000000002
+Acute middle,weight,Block discount (n and y scaled),0.5,3,L3 (5x7 Gy),47.099999999999994,13.100000000000001,39.800000000000004,3.297,2.305,23.7,0.0,2.8000000000000003,37.0,47.099999999999994,13.100000000000001
+Acute middle,weight,Block discount (n and y scaled),1.0,3,L3 (5x7 Gy),41.5,3.0,55.50000000000001,2.894,1.984,5.7,0.0,3.5999999999999996,51.9,41.5,3.0
+Acute middle,attribution_override,Non-binary DLT + escalation override,0.0,3,L3 (5x7 Gy),49.2,37.0,13.8,4.684,3.297,73.9,0.0,0.5,13.3,49.2,37.0
+Acute middle,attribution_override,Non-binary DLT + escalation override,0.05,3,L3 (5x7 Gy),51.300000000000004,32.4,16.3,4.629,3.326,72.6,0.0,0.5,15.8,51.300000000000004,32.4
+Acute middle,attribution_override,Non-binary DLT + escalation override,0.1,3,L3 (5x7 Gy),50.5,33.5,16.0,4.569,3.243,74.2,0.0,0.7000000000000001,15.299999999999999,50.5,33.5
+Acute middle,attribution_override,Non-binary DLT + escalation override,0.25,3,L3 (5x7 Gy),53.1,28.499999999999996,18.4,4.26,3.164,66.10000000000001,0.0,0.2,18.2,53.1,28.499999999999996
+Acute middle,attribution_override,Non-binary DLT + escalation override,0.5,3,L3 (5x7 Gy),52.300000000000004,16.400000000000002,31.3,3.697,2.612,38.800000000000004,0.0,1.0999999999999999,30.2,52.300000000000004,16.400000000000002
+Acute middle,attribution_override,Non-binary DLT + escalation override,1.0,3,L3 (5x7 Gy),41.4,6.0,52.6,3.139,2.189,23.200000000000003,0.0,2.7,49.9,41.4,6.0
+Acute high,attribution,"Non-binary DLT (n full, y scaled)",0.0,2,L2 (5x6 Gy),28.999999999999996,69.1,1.9,5.151,3.068,59.599999999999994,0.0,1.9,28.999999999999996,44.5,24.6
+Acute high,attribution,"Non-binary DLT (n full, y scaled)",0.05,2,L2 (5x6 Gy),29.9,68.8,1.3,5.154,3.002,56.699999999999996,0.0,1.3,29.9,49.3,19.5
+Acute high,attribution,"Non-binary DLT (n full, y scaled)",0.1,2,L2 (5x6 Gy),29.5,68.4,2.1,4.989,2.978,56.39999999999999,0.0,2.1,29.5,48.5,19.900000000000002
+Acute high,attribution,"Non-binary DLT (n full, y scaled)",0.25,2,L2 (5x6 Gy),37.2,60.3,2.5,4.801,2.8,44.1,0.0,2.5,37.2,46.0,14.299999999999999
+Acute high,attribution,"Non-binary DLT (n full, y scaled)",0.5,2,L2 (5x6 Gy),47.5,48.6,3.9,4.27,2.464,18.2,0.0,3.9,47.5,42.699999999999996,5.8999999999999995
+Acute high,attribution,"Non-binary DLT (n full, y scaled)",1.0,2,L2 (5x6 Gy),64.1,29.099999999999998,6.800000000000001,3.46,1.994,2.1999999999999997,0.0,6.800000000000001,64.1,27.700000000000003,1.4000000000000001
+Acute high,weight,Block discount (n and y scaled),0.0,2,L2 (5x6 Gy),36.0,59.8,4.2,4.7,2.793,59.4,0.0,4.2,36.0,40.2,19.6
+Acute high,weight,Block discount (n and y scaled),0.05,2,L2 (5x6 Gy),39.0,55.300000000000004,5.7,4.551,2.661,50.7,0.0,5.7,39.0,37.9,17.4
+Acute high,weight,Block discount (n and y scaled),0.1,2,L2 (5x6 Gy),40.8,53.900000000000006,5.3,4.423,2.608,41.9,0.0,5.3,40.8,40.6,13.3
+Acute high,weight,Block discount (n and y scaled),0.25,2,L2 (5x6 Gy),43.8,50.2,6.0,4.132,2.317,30.4,0.0,6.0,43.8,39.2,11.0
+Acute high,weight,Block discount (n and y scaled),0.5,2,L2 (5x6 Gy),52.900000000000006,41.3,5.800000000000001,3.877,2.165,16.2,0.0,5.800000000000001,52.900000000000006,34.9,6.4
+Acute high,weight,Block discount (n and y scaled),1.0,2,L2 (5x6 Gy),65.4,27.400000000000002,7.199999999999999,3.451,1.964,2.0,0.0,7.199999999999999,65.4,27.0,0.4
+Acute high,attribution_override,Non-binary DLT + escalation override,0.0,2,L2 (5x6 Gy),27.3,71.6,1.0999999999999999,5.249,3.039,65.7,0.0,1.0999999999999999,27.3,48.699999999999996,22.900000000000002
+Acute high,attribution_override,Non-binary DLT + escalation override,0.05,2,L2 (5x6 Gy),27.6,70.5,1.9,5.121,2.93,63.800000000000004,0.0,1.9,27.6,46.5,24.0
+Acute high,attribution_override,Non-binary DLT + escalation override,0.1,2,L2 (5x6 Gy),29.4,69.5,1.0999999999999999,5.056,3.044,64.0,0.0,1.0999999999999999,29.4,49.8,19.7
+Acute high,attribution_override,Non-binary DLT + escalation override,0.25,2,L2 (5x6 Gy),32.9,63.7,3.4000000000000004,4.923,2.806,52.900000000000006,0.0,3.4000000000000004,32.9,49.5,14.2
+Acute high,attribution_override,Non-binary DLT + escalation override,0.5,2,L2 (5x6 Gy),44.4,51.800000000000004,3.8,4.309,2.413,24.4,0.0,3.8,44.4,44.7,7.1
+Acute high,attribution_override,Non-binary DLT + escalation override,1.0,2,L2 (5x6 Gy),62.3,30.0,7.7,3.656,2.023,12.0,0.0,7.7,62.3,28.499999999999996,1.5
+Acute steep,attribution,"Non-binary DLT (n full, y scaled)",0.0,2,L2 (5x6 Gy),21.3,78.60000000000001,0.1,5.318,3.166,70.39999999999999,0.0,0.1,21.3,60.8,17.8
+Acute steep,attribution,"Non-binary DLT (n full, y scaled)",0.05,2,L2 (5x6 Gy),22.6,77.3,0.1,5.299,3.137,67.60000000000001,0.0,0.1,22.6,60.5,16.8
+Acute steep,attribution,"Non-binary DLT (n full, y scaled)",0.1,2,L2 (5x6 Gy),22.3,77.7,0.0,5.169,3.087,68.4,0.0,0.0,22.3,61.5,16.2
+Acute steep,attribution,"Non-binary DLT (n full, y scaled)",0.25,2,L2 (5x6 Gy),27.1,72.6,0.3,4.85,2.836,53.6,0.0,0.3,27.1,60.8,11.799999999999999
+Acute steep,attribution,"Non-binary DLT (n full, y scaled)",0.5,2,L2 (5x6 Gy),34.0,65.7,0.3,4.113,2.489,23.799999999999997,0.0,0.3,34.0,59.099999999999994,6.6000000000000005
+Acute steep,attribution,"Non-binary DLT (n full, y scaled)",1.0,2,L2 (5x6 Gy),47.8,51.6,0.6,2.985,2.098,4.3,0.0,0.6,47.8,49.6,2.0
+Acute steep,weight,Block discount (n and y scaled),0.0,2,L2 (5x6 Gy),29.299999999999997,69.89999999999999,0.8,4.825,2.929,65.2,0.0,0.8,29.299999999999997,55.50000000000001,14.399999999999999
+Acute steep,weight,Block discount (n and y scaled),0.05,2,L2 (5x6 Gy),27.200000000000003,72.2,0.6,4.68,2.877,63.0,0.0,0.6,27.200000000000003,56.49999999999999,15.7
+Acute steep,weight,Block discount (n and y scaled),0.1,2,L2 (5x6 Gy),31.2,68.2,0.6,4.57,2.784,56.89999999999999,0.0,0.6,31.2,55.50000000000001,12.7
+Acute steep,weight,Block discount (n and y scaled),0.25,2,L2 (5x6 Gy),32.0,67.30000000000001,0.7000000000000001,4.188,2.613,45.1,0.0,0.7000000000000001,32.0,55.800000000000004,11.5
+Acute steep,weight,Block discount (n and y scaled),0.5,2,L2 (5x6 Gy),34.1,65.0,0.8999999999999999,3.695,2.436,20.8,0.0,0.8999999999999999,34.1,57.49999999999999,7.5
+Acute steep,weight,Block discount (n and y scaled),1.0,2,L2 (5x6 Gy),46.6,52.6,0.8,2.984,2.143,4.3,0.0,0.8,46.6,50.4,2.1999999999999997
+Acute steep,attribution_override,Non-binary DLT + escalation override,0.0,2,L2 (5x6 Gy),21.2,78.4,0.4,5.398,3.201,73.5,0.0,0.4,21.2,56.599999999999994,21.8
+Acute steep,attribution_override,Non-binary DLT + escalation override,0.05,2,L2 (5x6 Gy),23.7,76.2,0.1,5.334,3.21,71.1,0.0,0.1,23.7,55.60000000000001,20.599999999999998
+Acute steep,attribution_override,Non-binary DLT + escalation override,0.1,2,L2 (5x6 Gy),23.200000000000003,76.3,0.5,5.395,3.107,72.39999999999999,0.0,0.5,23.200000000000003,61.4,14.899999999999999
+Acute steep,attribution_override,Non-binary DLT + escalation override,0.25,2,L2 (5x6 Gy),29.2,70.39999999999999,0.4,5.062,2.954,57.4,0.0,0.4,29.2,59.8,10.6
+Acute steep,attribution_override,Non-binary DLT + escalation override,0.5,2,L2 (5x6 Gy),30.9,69.0,0.1,4.189,2.497,31.1,0.0,0.1,30.9,62.5,6.5
+Acute steep,attribution_override,Non-binary DLT + escalation override,1.0,2,L2 (5x6 Gy),47.8,51.300000000000004,0.8999999999999999,3.387,2.322,19.2,0.0,0.8999999999999999,47.8,48.4,2.9000000000000004
+Acute shallow,attribution,"Non-binary DLT (n full, y scaled)",0.0,3,L3 (5x7 Gy),42.699999999999996,36.9,20.4,4.557,3.098,65.10000000000001,0.0,2.5,17.9,42.699999999999996,36.9
+Acute shallow,attribution,"Non-binary DLT (n full, y scaled)",0.05,3,L3 (5x7 Gy),42.699999999999996,34.699999999999996,22.6,4.511,3.107,62.8,0.0,2.9000000000000004,19.7,42.699999999999996,34.699999999999996
+Acute shallow,attribution,"Non-binary DLT (n full, y scaled)",0.1,3,L3 (5x7 Gy),42.8,32.7,24.5,4.468,3.065,61.199999999999996,0.1,4.2,20.200000000000003,42.8,32.7
+Acute shallow,attribution,"Non-binary DLT (n full, y scaled)",0.25,3,L3 (5x7 Gy),47.3,24.4,28.299999999999997,4.299,2.77,48.0,0.2,3.9,24.2,47.3,24.4
+Acute shallow,attribution,"Non-binary DLT (n full, y scaled)",0.5,3,L3 (5x7 Gy),42.6,12.9,44.5,4.028,2.435,22.900000000000002,0.3,7.8,36.4,42.6,12.9
+Acute shallow,attribution,"Non-binary DLT (n full, y scaled)",1.0,3,L3 (5x7 Gy),27.1,2.5,70.39999999999999,3.566,1.885,3.5999999999999996,1.0,17.2,52.2,27.1,2.5
+Acute shallow,weight,Block discount (n and y scaled),0.0,3,L3 (5x7 Gy),33.4,31.8,34.8,4.235,2.851,56.3,1.3,8.5,25.0,33.4,31.8
+Acute shallow,weight,Block discount (n and y scaled),0.05,3,L3 (5x7 Gy),35.9,29.9,34.2,4.171,2.79,53.800000000000004,1.7000000000000002,7.8,24.7,35.9,29.9
+Acute shallow,weight,Block discount (n and y scaled),0.1,3,L3 (5x7 Gy),34.0,26.3,39.7,4.171,2.633,49.8,2.5,11.0,26.200000000000003,34.0,26.3
+Acute shallow,weight,Block discount (n and y scaled),0.25,3,L3 (5x7 Gy),33.800000000000004,19.900000000000002,46.300000000000004,3.944,2.39,34.599999999999994,2.5,10.6,33.2,33.800000000000004,19.900000000000002
+Acute shallow,weight,Block discount (n and y scaled),0.5,3,L3 (5x7 Gy),33.7,11.3,55.00000000000001,3.844,2.08,19.0,1.6,15.299999999999999,38.1,33.7,11.3
+Acute shallow,weight,Block discount (n and y scaled),1.0,3,L3 (5x7 Gy),28.9,2.3,68.8,3.586,1.885,2.8000000000000003,1.3,16.7,50.8,28.9,2.3
+Acute shallow,attribution_override,Non-binary DLT + escalation override,0.0,3,L3 (5x7 Gy),41.199999999999996,40.5,18.3,4.494,3.247,71.3,0.0,1.7999999999999998,16.5,41.199999999999996,40.5
+Acute shallow,attribution_override,Non-binary DLT + escalation override,0.05,3,L3 (5x7 Gy),41.199999999999996,36.4,22.400000000000002,4.535,3.254,66.8,0.0,2.5,19.900000000000002,41.199999999999996,36.4
+Acute shallow,attribution_override,Non-binary DLT + escalation override,0.1,3,L3 (5x7 Gy),45.0,33.5,21.5,4.473,3.179,69.3,0.0,2.3,19.2,45.0,33.5
+Acute shallow,attribution_override,Non-binary DLT + escalation override,0.25,3,L3 (5x7 Gy),45.7,25.8,28.499999999999996,4.398,2.941,55.800000000000004,0.1,3.8,24.6,45.7,25.8
+Acute shallow,attribution_override,Non-binary DLT + escalation override,0.5,3,L3 (5x7 Gy),40.2,13.200000000000001,46.6,4.136,2.481,31.1,0.1,9.5,37.0,40.2,13.200000000000001
+Acute shallow,attribution_override,Non-binary DLT + escalation override,1.0,3,L3 (5x7 Gy),31.1,4.0,64.9,3.728,2.029,15.5,0.8999999999999999,17.4,46.6,31.1,4.0
