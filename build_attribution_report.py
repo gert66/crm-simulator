@@ -219,6 +219,25 @@ def main() -> None:
               f'<th>Correct</th><th>Too high</th></tr></thead>'
               f'<tbody>{"".join(prows)}</tbody></table>')
 
+    # SAE causality scale mapped onto fixed representative attribution probabilities
+    CAT_SCALE = [
+        ("Unrelated", 0.00), ("Unlikely", 0.05), ("Possible", 0.25),
+        ("Probable", 0.75), ("Definite", 1.00),
+    ]
+    cat_rows = []
+    for label, p in CAT_SCALE:
+        c, r = at(p), at(p, col="too_high_pct")
+        cls = ' class="rec"' if label == "Possible" else ""
+        cat_rows.append(f'<tr{cls}><td>{label}</td><td>{p:.2f}</td>'
+                        f'<td>{fmt(c)}</td><td>{fmt(r)}</td></tr>')
+    cat_table = (f'<table><caption>SAE causality tier mapped to a fixed attribution '
+                f'probability, averaged over scenarios</caption>'
+                f'<thead><tr><th>Causality tier</th><th>Attribution p</th>'
+                f'<th>Correct MTD</th><th>Too high</th></tr></thead>'
+                f'<tbody>{"".join(cat_rows)}</tbody></table>')
+    cat_possible_c = at(0.25)
+    cat_possible_r = at(0.25, col="too_high_pct")
+
     curve = build_curve_svg(attr, p_grid, "correct_pct", "Correct MTD selected")
     paired = build_paired_svg(df, p_grid)
 
@@ -419,7 +438,36 @@ def main() -> None:
 </div></section>
 
 <section class="step"><div class="col">
-  <div class="steph"><span class="num">6</span><h2>What would have to be settled first</h2></div>
+  <div class="steph"><span class="num">6</span><h2>A practical elicitation scheme: discretize to the existing causality scale</h2></div>
+  <p class="lede">Asking a safety committee to name a continuous probability invites a question
+  nobody can answer: why 0.35 and not 0.40? A coarser scheme avoids it, and one is already
+  sitting on the SAE form.</p>
+  <p>Every serious adverse event is already classified on a five-tier causality scale &mdash;
+  <em>unrelated, unlikely, possible, probable, definite</em> &mdash; the same scale used for
+  MERGE-011. Rather than inventing a new categorical system, the committee could fix a
+  representative attribution probability for each existing tier once, and apply that table
+  case by case. That turns an unanswerable question about a decimal into a classification
+  judgement clinicians already make routinely, and it reuses the discrete-score logic the
+  quasi-CRM already applies to toxicity grade &mdash; the same mechanism, aimed at causality
+  instead of severity.</p>
+</div>
+<div class="tablewrap">{cat_table}</div>
+<div class="col">
+  <p style="margin-top:18px">Discretizing costs nothing in these simulations: the five tier
+  values trace the same curve as the continuous sweep in section 4, because they are five
+  points read off it. <strong>MERGE-011 was assessed as &ldquo;possible&rdquo;</strong> &mdash;
+  which happens to be the tier with the best average accuracy, {fmt(cat_possible_c)}% correct
+  at {fmt(cat_possible_r)}% risk, not because the analysis was built to reach that conclusion
+  but because that is where the existing classification already places this event.</p>
+  <p>What this does not fix: it does not touch the quasi-likelihood issue in section 7, and it
+  narrows rather than removes the incentive to shade an assessment, since a borderline case can
+  still be pushed into a more favourable neighbouring tier. A visible jump between tiers is
+  easier to question at review than an unexplained decimal, which is the actual gain &mdash;
+  not the elimination of the underlying tension between speed and caution.</p>
+</div></section>
+
+<section class="step"><div class="col">
+  <div class="steph"><span class="num">7</span><h2>What would have to be settled first</h2></div>
   <div class="callout">
     <p class="ct">1 &middot; The quasi-likelihood is sharper than the evidence</p>
     <p>Substituting y = p is not the same as marginalising over the unknown attribution.
@@ -432,10 +480,12 @@ def main() -> None:
   <div class="callout">
     <p class="ct">2 &middot; Who assigns p, and when</p>
     <p>An assessor who knows the patient was treated at the top dose level may, without
-    intending to, shade the number. The risk exists for a binary judgement too, but a
-    continuous scale gives it more room. Any protocol use would need pre-specified criteria,
-    assessment blinded to dose level where feasible, and evidence of agreement between
-    assessors before the design could rely on it.</p>
+    intending to, shade the number, and the incentive is sharper here than for an ordinary
+    adverse-event grading: a lower attribution has an immediate, visible effect on the next
+    dosing decision. Blinding assessment to dose level, the usual mitigation, is difficult to
+    operationalise in a small radiotherapy trial where the treatment record makes the dose
+    level obvious. Section 6 discusses a coarser elicitation scheme that narrows, without
+    eliminating, this problem.</p>
   </div>
   <div class="callout">
     <p class="ct">3 &middot; Scope of what was simulated</p>
@@ -454,7 +504,7 @@ def main() -> None:
 </div></section>
 
 <section class="step"><div class="col">
-  <div class="steph"><span class="num">7</span><h2>Recommendation</h2></div>
+  <div class="steph"><span class="num">8</span><h2>Recommendation</h2></div>
   <div class="callout rec">
     <p class="ct">For the current amendment</p>
     <p><strong>Do not adopt this now.</strong> It is a larger methodological step than the
@@ -481,7 +531,7 @@ def main() -> None:
 </div></section>
 
 <section class="step"><div class="col">
-  <div class="steph"><span class="num">8</span><h2>Scenarios and settings</h2></div>
+  <div class="steph"><span class="num">9</span><h2>Scenarios and settings</h2></div>
   <p>True acute toxicity probabilities, with subacute probabilities fixed at
   {", ".join(f"{v:.2f}" for v in meta['true_subacute'])}. The true MTD is the highest level at
   or below the acute target of {meta['target_acute']:.2f}.</p>
