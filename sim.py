@@ -214,6 +214,13 @@ def tite_weights(patients, current_day, tox1_win, tox2_win, n_levels):
     A patient may carry an optional "weight" key (default 1.0) that scales its
     entire contribution to n and y — a per-patient discount factor used to
     down-weight pre-amendment (historical) observations power-prior style.
+
+    A patient may also carry an optional "attribution" key (default 1.0) that
+    scales only its contribution to y, leaving n at full weight.  This encodes
+    a non-binary DLT: the patient was fully observed (n counts in full) but the
+    event is only partly attributable to treatment (y counts as a fraction).
+    The two keys are deliberately separate — "weight" says how much this
+    observation is worth, "attribution" says how much of the event was real.
     """
     n1 = np.zeros(n_levels, dtype=float)
     y1 = np.zeros(n_levels, dtype=float)
@@ -224,6 +231,7 @@ def tite_weights(patients, current_day, tox1_win, tox2_win, n_levels):
     for p in patients:
         d  = p["dose"]
         wt = float(p.get("weight", 1.0))
+        at = float(p.get("attribution", 1.0))
 
         # ── tox1 weight ──────────────────────────────────────────────────────
         if t < p["rt_start"]:
@@ -237,7 +245,7 @@ def tite_weights(patients, current_day, tox1_win, tox2_win, n_levels):
         w1 = float(np.clip(w1, 0.0, 1.0))
         n1[d] += w1 * wt
         if p["has_tox1"] and p["tox1_day"] is not None and p["tox1_day"] <= t:
-            y1[d] += 1.0 * wt
+            y1[d] += 1.0 * wt * at
 
         # ── tox2 weight (surgery patients only) ──────────────────────────────
         if p["has_surgery"] and p["surgery_day"] is not None:
@@ -253,7 +261,7 @@ def tite_weights(patients, current_day, tox1_win, tox2_win, n_levels):
             w2 = float(np.clip(w2, 0.0, 1.0))
             n2[d] += w2 * wt
             if p["has_tox2"] and p["tox2_day"] is not None and p["tox2_day"] <= t:
-                y2[d] += 1.0 * wt
+                y2[d] += 1.0 * wt * at
 
     return n1, y1, n2, y2
 
@@ -662,6 +670,7 @@ def run_tite_crm(
     n_safe_d1=0,
     n_safe_d1_dlt=0,
     hist_weight=1.0,
+    hist_dlt_attribution=1.0,
     escalation_override_n=0,
     p_stop=1.0,
     require_full_tox1_fu_before_escalation=True,
@@ -712,6 +721,16 @@ def run_tite_crm(
       information entirely (both the DLT and the DLT-free patients).  Note this
       discounts the safe patients as well as the toxic one — it lowers the
       certainty of the historical block, it does not selectively drop the DLT.
+      Use hist_dlt_attribution instead when only the event itself is in doubt.
+
+    hist_dlt_attribution: probability (0..1) that the contested acute DLT among
+      the pre-treated patients is genuinely attributable to treatment.  Unlike
+      hist_weight this leaves n untouched and scales only y, so all six
+      pre-treated patients keep their full evidential weight while the disputed
+      event contributes only its attributable fraction.  1.0 (default) is the
+      conventional binary "it counts"; 0.0 is equivalent to never recording the
+      DLT at all.  This is the non-binary DLT of the quasi-CRM literature,
+      applied to causal attribution rather than to toxicity grade.
 
     escalation_override_n: if > 0, a protocol-level escalation override applied
       after the CRM decision (CRM phase only, never during burn-in).  When the
@@ -797,6 +816,7 @@ def run_tite_crm(
                 "tox2_day":     None,
                 "is_bridging":  False,
                 "weight":       float(hist_weight),
+                "attribution":  (float(hist_dlt_attribution) if _has_dlt else 1.0),
             })
         highest_tried = 1
 
