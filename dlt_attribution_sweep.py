@@ -24,6 +24,7 @@ import argparse
 import contextlib
 import io
 import json
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 import numpy as np
@@ -72,11 +73,36 @@ def run(true_t1, *, attribution=1.0, weight=1.0, override=0, n_sim=1000, seed=0)
             100.0 * float(np.mean(top)))
 
 
+def _cell(job):
+    """One (scenario, series, p) cell — top level so it can be sent to a worker."""
+    (scenario, true_t1, skey, slabel, kind, override, p, n_sim, seed) = job
+    tm = true_mtd_of(true_t1)
+    kwargs = dict(override=override, n_sim=n_sim, seed=seed)
+    if kind == "attribution":
+        kwargs["attribution"] = p
+    else:
+        kwargs["weight"] = p
+    sels, ac, sa, top = run(true_t1, **kwargs)
+    return {
+        "scenario": scenario, "series": skey, "series_label": slabel,
+        "p": p, "true_mtd": tm,
+        "true_mtd_label": f"L{tm} ({DOSE_LABELS[tm]})",
+        "correct_pct": 100.0 * float(np.mean(sels == tm)),
+        "too_high_pct": 100.0 * float(np.mean(sels > tm)),
+        "too_low_pct": 100.0 * float(np.mean(sels < tm)),
+        "mean_acute_tox": ac, "mean_subacute_tox": sa,
+        "ever_reached_top_pct": top,
+        **{f"sel_L{d}_pct": 100.0 * float(np.mean(sels == d))
+           for d in range(len(DOSE_LABELS))},
+    }
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--n-sim", type=int, default=1000)
     ap.add_argument("--seed", type=int, default=20260813)
     ap.add_argument("--outdir", type=Path, default=Path("dlt_attribution_sensitivity"))
+    ap.add_argument("--workers", type=int, default=4)
     args = ap.parse_args()
     args.outdir = args.outdir.resolve()
     args.outdir.mkdir(parents=True, exist_ok=True)
@@ -88,33 +114,21 @@ def main() -> None:
          dict(kind="attribution", override=3)),
     ]
 
-    rows = []
+    jobs = []
     for scenario, true_t1 in metc.ACUTE_SCENARIOS.items():
-        tm = true_mtd_of(true_t1)
         for skey, slabel, cfg in series:
             for p in P_GRID:
                 seed = abs(hash((scenario, skey, p, args.seed))) % (2**31)
-                kwargs = dict(override=cfg["override"], n_sim=args.n_sim, seed=seed)
-                if cfg["kind"] == "attribution":
-                    kwargs["attribution"] = p
-                else:
-                    kwargs["weight"] = p
-                sels, ac, sa, top = run(true_t1, **kwargs)
-                rows.append({
-                    "scenario": scenario, "series": skey, "series_label": slabel,
-                    "p": p, "true_mtd": tm,
-                    "true_mtd_label": f"L{tm} ({DOSE_LABELS[tm]})",
-                    "correct_pct": 100.0 * float(np.mean(sels == tm)),
-                    "too_high_pct": 100.0 * float(np.mean(sels > tm)),
-                    "too_low_pct": 100.0 * float(np.mean(sels < tm)),
-                    "mean_acute_tox": ac, "mean_subacute_tox": sa,
-                    "ever_reached_top_pct": top,
-                    **{f"sel_L{d}_pct": 100.0 * float(np.mean(sels == d))
-                       for d in range(len(DOSE_LABELS))},
-                })
-                print(f"{scenario:15s} {skey:22s} p={p:<5} "
-                      f"correct={rows[-1]['correct_pct']:5.1f} "
-                      f"too_high={rows[-1]['too_high_pct']:5.1f}", flush=True)
+                jobs.append((scenario, list(map(float, true_t1)), skey, slabel,
+                             cfg["kind"], cfg["override"], p, args.n_sim, seed))
+
+    rows = []
+    with ProcessPoolExecutor(max_workers=args.workers) as ex:
+        for i, row in enumerate(ex.map(_cell, jobs), start=1):
+            rows.append(row)
+            print(f"[{i:>2}/{len(jobs)}] {row['scenario']:15s} {row['series']:22s} "
+                  f"p={row['p']:<5} correct={row['correct_pct']:5.1f} "
+                  f"too_high={row['too_high_pct']:5.1f}", flush=True)
 
     df = pd.DataFrame(rows)
     csv = args.outdir / "dlt_attribution_sweep.csv"
