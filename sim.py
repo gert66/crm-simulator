@@ -715,15 +715,19 @@ def run_tite_crm(
 
     escalation_override_n: if > 0, a protocol-level escalation override applied
       after the CRM decision (CRM phase only, never during burn-in).  When the
-      model would keep the cohort at the current level or de-escalate, but at
-      least this many patients at the current level have completed full acute
-      follow-up with no tox1 DLT, escalation by exactly one level is permitted
-      anyway.  This gives the model-based design the "local memory" of the 6+3
-      rules — a dose level is judged on its own accumulated data — and prevents
-      a single early DLT from permanently locking out the upper dose levels.
-      0 (default) disables the override.  The override bypasses the model's
-      recommendation, so when EWOC is active it should be reviewed jointly with
-      the EWOC filter rather than assumed safe.
+      model would KEEP the cohort at the current level, and at least this many
+      patients at that level have completed full acute follow-up with no tox1
+      DLT, and no acute DLT has been observed at that level at all, escalation
+      by exactly one level is permitted.  This gives the model-based design the
+      "local memory" of the 6+3 rules — a dose level is judged on its own
+      accumulated data — and prevents a single early DLT from permanently
+      locking out the upper dose levels.  0 (default) disables the override.
+
+      The override never overrules a model-driven de-escalation and never fires
+      at a level where toxicity has been seen, so it can only add escalation on
+      clean local evidence.  It does bypass the model's recommendation, so when
+      EWOC is active it should be reviewed jointly with the EWOC filter rather
+      than assumed safe.
 
     require_full_tox1_fu_before_escalation: when True, burn-in escalation from
       the current dose Lx to Lx+1 is only allowed if at least cohort_size patients
@@ -898,14 +902,27 @@ def run_tite_crm(
             # accumulated enough fully-followed patients with no acute DLT,
             # allow a one-level escalation regardless — the "local memory" the
             # 6+3 rules have by construction.
-            if int(escalation_override_n) > 0 and next_level <= level:
+            #
+            # Two guards keep this from ever weakening safety:
+            #   * it fires only when the model wants to STAY (next == level).
+            #     A model-driven de-escalation is never overruled.
+            #   * it requires zero observed acute DLTs at the current level.
+            #     Local evidence must be clean, not merely mostly clean.
+            if int(escalation_override_n) > 0 and next_level == level:
+                _dlt_at_level = any(
+                    p["dose"] == level and p["has_tox1"]
+                    and p["tox1_day"] is not None
+                    and p["tox1_day"] <= float(decision_day)
+                    for p in patients
+                )
                 _clean_at_level = sum(
                     1 for p in patients
                     if p["dose"] == level
                     and float(decision_day) >= p["tox1_win_end"]
                     and not p["has_tox1"]
                 )
-                if (_clean_at_level >= int(escalation_override_n)
+                if (not _dlt_at_level
+                        and _clean_at_level >= int(escalation_override_n)
                         and level < n_levels - 1):
                     next_level = level + 1
 
