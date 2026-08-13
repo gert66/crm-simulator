@@ -406,14 +406,16 @@ def main() -> None:
                 f"({fmt(x['too_high_pct'])}% tegen {fmt(y['too_high_pct'])}% kans op een te hoge MTD)")
 
     b = agg[agg["option"] == "B"].iloc[0]
+    low_c = low[low["option"] == "C"].iloc[0]
     para5 = (
-        f"Twee dingen vallen op. Ten eerste wint de override het van downwegen: "
-        f"{cmp_phrase(e, b, 'de override', '50% downweging')}, en tegenover 25% downweging "
-        f"levert hij vergelijkbare nauwkeurigheid ({fmt(e['correct_pct'])}% tegen "
-        f"{fmt(c['correct_pct'])}%) bij een fors lager risico ({fmt(e['too_high_pct'])}% tegen "
-        f"{fmt(c['too_high_pct'])}%). Ten tweede — en dat is het opvallendst — "
-        f"{cmp_phrase(e, h, 'de override', 'het volledig negeren van de DLT')}. "
-        f"De ontwerpregel verslaat dus zelfs de variant waarin het event helemaal niet meetelt."
+        f"Twee dingen vallen op. Ten eerste is de override vrijwel gratis: "
+        f"{fmt(e['correct_pct'])}% correcte selectie tegen {fmt(a['correct_pct'])}% nu, bij "
+        f"nauwelijks meer risico ({fmt(e['too_high_pct'])}% tegen {fmt(a['too_high_pct'])}%). "
+        f"Ten tweede lost hij het Acute low probleem niet op — daar komt hij van "
+        f"{fmt(low_a['correct_pct'])}% naar {fmt(low_e['correct_pct'])}%, en meer niet. "
+        f"Alleen downweging beweegt dat scenario echt: 25% gewicht tilt Acute low naar "
+        f"{fmt(low_c['correct_pct'])}%, maar bijna verdubbelt het risico op een te hoge MTD "
+        f"({fmt(c['too_high_pct'])}% tegen {fmt(a['too_high_pct'])}%)."
     )
 
     scen_tbl = "".join(
@@ -515,6 +517,11 @@ def main() -> None:
   Dat is exact de logica die het 6+3 design al heeft, en die de METC dus al heeft goedgekeurd.
   De DLT blijft volledig meetellen; nieuwe schone data op een niveau kan zich alleen omhoog
   verdienen.</p>
+  <p>Twee grendels zorgen dat de regel de veiligheid nooit kan ondermijnen. Hij vuurt
+  <strong>alleen als het model wil blijven staan</strong> — een de-escalatie wordt nooit
+  overruled. En hij vuurt <strong>alleen als op dat niveau geen enkele acute DLT is
+  waargenomen</strong>; één toxiciteit blokkeert hem volledig. Escaleren gaat altijd met
+  precies één niveau tegelijk, net als de-escaleren.</p>
 </div></section>
 
 <section class="step"><div class="col">
@@ -529,53 +536,74 @@ def main() -> None:
   <div class="figbox">{tradeoff}</div>
   <figcaption><strong>De uitruil, gemiddeld over alle vijf scenario&rsquo;s.</strong>
   Naar boven is nauwkeuriger, naar links is veiliger — linksboven is dus het beste.
-  De override ligt gunstiger dan beide downwegingsvarianten: vergelijkbaar nauwkeurig als
-  25% downweging ({fmt(e['correct_pct'])}% tegen {fmt(c['correct_pct'])}%), maar met een
-  aanzienlijk kleiner risico op een te hoge MTD ({fmt(e['too_high_pct'])}% tegen
-  {fmt(c['too_high_pct'])}%). De twee combinatievarianten rechtsboven kopen extra
-  nauwkeurigheid met een duidelijk hoger risico.</figcaption>
+  De punten liggen vrijwel op één oplopende lijn: elke stap nauwkeuriger kost veiligheid.
+  De override (links) is de enige uitzondering — hij schuift omhoog zonder noemenswaardig
+  naar rechts te gaan, en is daarmee praktisch gratis. Alle andere winst wordt gekocht:
+  van {fmt(a['too_high_pct'])}% risico bij vol gewicht tot {fmt(h['too_high_pct'])}% wanneer
+  de DLT helemaal niet meetelt.</figcaption>
 </figure>
 
 <div class="tablewrap">{table}</div>
 <div class="col">
   <p style="margin-top:18px">{para5}</p>
   <div class="callout">
-    <p class="ct">Belangrijke consequentie</p>
-    <p>De ontwerpaanpassing levert meer op dan de uitkomst van de causaliteitsbeoordeling.
-    Zelfs als het event formeel als niet-behandelgerelateerd zou worden beoordeeld, blijft de
-    override het betere ontwerp: {fmt(e['correct_pct'])}% correcte selectie bij
-    {fmt(e['too_high_pct'])}% risico, tegen {fmt(h['correct_pct'])}% bij
-    {fmt(h['too_high_pct'])}% wanneer de DLT simpelweg niet meetelt. Het advies hangt dus
-    <strong>niet</strong> af van die beoordeling — en daarmee ook niet van een vervolgrapport
-    dat er misschien nooit komt.</p>
+    <p class="ct">Waarom de override Acute low niet oplost</p>
+    <p>De override bepaalt welke doses je <em>onderweg</em> uitprobeert, niet welke je aan het
+    eind kiest. In Acute low bereikt hij L4 in {fmt(low_e['ever_reached_top_pct'],0)}% van de
+    trials tegen {fmt(low_a['ever_reached_top_pct'],0)}% nu — een forse verbetering in
+    exploratie. Maar de finale MTD-keuze is puur modelgestuurd, en dat model blijft door de
+    DLT omlaag getrokken. Vandaar dat de correcte selectie maar van
+    {fmt(low_a['correct_pct'])}% naar {fmt(low_e['correct_pct'])}% gaat.</p>
+    <p>Wie de finale keuze wil verschuiven, moet het gewicht van de DLT in het model
+    aanpassen. Dat is geen ontwerpvraag meer maar een inhoudelijke: hoe zwaar weegt dit
+    ene event?</p>
   </div>
 </div></section>
 
 <section class="step"><div class="col">
-  <div class="steph"><span class="num">6</span><h2>Advies</h2></div>
+  <div class="steph"><span class="num">6</span><h2>Advies: twee losse beslissingen</h2></div>
+  <p class="lede">Het is verleidelijk hier één knop te zoeken, maar er liggen twee
+  onafhankelijke vragen. De eerste is technisch en heeft een duidelijk antwoord. De tweede
+  is inhoudelijk en hoort bij het team, niet bij de statistiek.</p>
+
   <div class="callout rec">
-    <p class="ct">Voorstel voor het amendement</p>
-    <p><strong>Laat de DLT volledig meetellen en voeg de escalatie-override toe</strong>
-    (optie E). Geen statistische korting op de data, maar één transparante, vooraf
-    vastgelegde ontwerpregel die de lokale veiligheidslogica van het 6+3 design behoudt.</p>
+    <p class="ct">Beslissing 1 — neem de escalatie-override op</p>
+    <p>Vrijwel gratis: {fmt(e['correct_pct'])}% correcte selectie tegen
+    {fmt(a['correct_pct'])}% nu, bij een risicotoename van {fmt(a['too_high_pct'])}% naar
+    slechts {fmt(e['too_high_pct'])}%. De regel overrulet nooit een de-escalatie en vuurt
+    nooit op een niveau waar toxiciteit is gezien, dus hij kan de veiligheid niet
+    ondermijnen. En hij is goed uit te leggen: inhoudelijk dezelfde waarborg die het
+    6+3 design al heeft.</p>
   </div>
-  <ul>
-    <li><strong>Gemiddeld nauwkeuriger dan de huidige opzet</strong>
-    ({fmt(e['correct_pct'])}% tegen {fmt(a['correct_pct'])}%) voor een beperkte toename van
-    het risico op een te hoge MTD ({fmt(e['too_high_pct'])}% tegen {fmt(a['too_high_pct'])}%).</li>
-    <li><strong>Lost het kernprobleem op:</strong> in Acute low wordt L4 weer bereikt in
-    {fmt(low_e['ever_reached_top_pct'],0)}% van de trials, tegen
-    {fmt(low_a['ever_reached_top_pct'],0)}% nu.</li>
-    <li><strong>Goed uit te leggen:</strong> de regel is inhoudelijk dezelfde
-    veiligheidswaarborg die in het huidige protocol al is goedgekeurd.</li>
-    <li><strong>Niet afhankelijk van de causaliteitsbeoordeling</strong>, en dus niet van een
-    vervolgrapport dat er misschien nooit komt.</li>
-  </ul>
+
+  <div class="callout">
+    <p class="ct">Beslissing 2 — hoe zwaar weegt deze ene DLT?</p>
+    <p>Hier zit de echte uitruil, en die is niet statistisch op te lossen. Het SAE-formulier
+    zegt &ldquo;possible&rdquo;, met ziekteprogressie als primaire differentiaaldiagnose.
+    Hoe sterk dat oordeel doorwerkt in het model is een klinische keuze:</p>
+    <ul>
+      <li><strong>Volledig gewicht</strong> — Acute low blijft op
+      {fmt(low_e['correct_pct'])}%, risico op een te hoge MTD {fmt(e['too_high_pct'])}%.
+      De veiligste optie.</li>
+      <li><strong>Half gewicht</strong> — Acute low naar
+      {fmt(low[low['option'] == 'E+B'].iloc[0]['correct_pct'])}%, risico naar
+      {fmt(agg[agg['option'] == 'E+B'].iloc[0]['too_high_pct'])}%. Sluit aan bij een
+      causaliteitsoordeel dat het ongeveer fifty-fifty houdt.</li>
+      <li><strong>Kwart gewicht</strong> — Acute low naar
+      {fmt(low[low['option'] == 'E+C'].iloc[0]['correct_pct'])}%, risico naar
+      {fmt(agg[agg['option'] == 'E+C'].iloc[0]['too_high_pct'])}%. Alleen verdedigbaar als
+      het team het event overwegend aan progressie toeschrijft.</li>
+    </ul>
+    <p>Onze rol stopt bij het zichtbaar maken van deze uitruil. Wat een acceptabel risico op
+    een te hoge MTD is, is een oordeel van het studieteam en uiteindelijk van de METC.</p>
+  </div>
+
   <h3>Voor het amendement betekent dit</h3>
   <p>Het amendement beschrijft dan niet alleen de overgang van 6+3 naar TITE-CRM, maar ook
-  expliciet hoe de bestaande L1-data meegaat en welke escalatiewaarborg daarbij hoort. Dat is
-  een sterker stuk dan het oorspronkelijke voorstel, omdat het het scenario behandelt dat zich
-  daadwerkelijk heeft voorgedaan.</p>
+  expliciet hoe de bestaande L1-data meegaat en welke escalatiewaarborg daarbij hoort — met
+  de gekozen weging onderbouwd vanuit de causaliteitsbeoordeling. Dat is een sterker stuk dan
+  het oorspronkelijke voorstel, omdat het het scenario behandelt dat zich daadwerkelijk heeft
+  voorgedaan.</p>
 </div></section>
 
 <section class="step"><div class="col">
