@@ -1,0 +1,485 @@
+<title>Two Designs, Not One</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+:root{
+  --paper:#FAFCFD; --surface:#FFFFFF; --ink:#101B26; --slate:#1E3A52;
+  --muted:#5C6B7A; --line:#DCE4EA; --line-soft:#EAEFF3;
+  --accent:#0E7C86; --accent-soft:#E3F1F2;
+  --safe:#2F7D5B; --risk:#B4472F; --warn:#8A6A1F;
+  --serif:Georgia,"Iowan Old Style","Palatino Linotype",Palatino,serif;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,Arial,sans-serif;
+  --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --paper:#0D141C; --surface:#151F29; --ink:#DCE4EB; --slate:#AFC4D4;
+    --muted:#8A9AA9; --line:#25333F; --line-soft:#1C2833;
+    --accent:#3AAEB6; --accent-soft:#14262C;
+    --safe:#5BAE84; --risk:#D97A5E; --warn:#C8A24A;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#0D141C; --surface:#151F29; --ink:#DCE4EB; --slate:#AFC4D4;
+  --muted:#8A9AA9; --line:#25333F; --line-soft:#1C2833;
+  --accent:#3AAEB6; --accent-soft:#14262C;
+  --safe:#5BAE84; --risk:#D97A5E; --warn:#C8A24A;
+}
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:var(--sans); font-size:16.5px; line-height:1.65;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:1080px;margin:0 auto;padding:0 24px 96px}
+.col{max-width:68ch}
+header.masthead{padding:64px 0 34px;border-bottom:1px solid var(--line)}
+.kicker{
+  font-family:var(--mono); font-size:11.5px; letter-spacing:.14em;
+  text-transform:uppercase; color:var(--accent); margin:0 0 16px;
+}
+h1{
+  font-family:var(--serif); font-weight:400; font-size:clamp(31px,4.4vw,46px);
+  line-height:1.14; letter-spacing:-.012em; margin:0 0 18px;
+  text-wrap:balance; color:var(--ink);
+}
+.standfirst{font-size:19px;line-height:1.6;color:var(--muted);margin:0;max-width:60ch}
+.meta{
+  display:flex;flex-wrap:wrap;gap:10px 26px;margin:26px 0 0;
+  font-family:var(--mono);font-size:11.5px;letter-spacing:.05em;
+  text-transform:uppercase;color:var(--muted);
+}
+.meta b{color:var(--ink);font-weight:600}
+section.step{padding:52px 0 0}
+.steph{display:flex;gap:16px;align-items:baseline;margin:0 0 20px}
+.num{
+  font-family:var(--mono);font-size:12px;font-weight:600;color:var(--accent);
+  border:1px solid var(--accent);border-radius:3px;padding:3px 7px;
+  flex:none;letter-spacing:.06em;
+}
+h2{
+  font-family:var(--serif);font-weight:400;font-size:clamp(23px,2.7vw,30px);
+  line-height:1.22;margin:0;letter-spacing:-.008em;text-wrap:balance;
+}
+h3{
+  font-family:var(--sans);font-size:14px;font-weight:650;letter-spacing:.02em;
+  margin:34px 0 10px;color:var(--slate);
+}
+p{margin:0 0 15px}
+a{color:var(--accent)}
+strong{font-weight:650}
+.lede{font-size:17.5px;color:var(--ink)}
+ul,ol{margin:0 0 15px;padding-left:22px}
+li{margin:0 0 8px}
+.pull{
+  border-left:2px solid var(--accent);padding:2px 0 2px 20px;margin:26px 0;
+  font-family:var(--serif);font-size:19.5px;line-height:1.5;color:var(--slate);
+}
+.callout{
+  background:var(--surface);border:1px solid var(--line);border-radius:5px;
+  padding:20px 22px;margin:26px 0;
+}
+.callout.rec{border-color:var(--accent);background:var(--accent-soft)}
+.callout .ct{
+  font-family:var(--mono);font-size:11px;letter-spacing:.13em;text-transform:uppercase;
+  color:var(--accent);margin:0 0 9px;
+}
+.callout p:last-child{margin-bottom:0}
+figure{margin:32px 0 0}
+.figbox{
+  background:var(--surface);border:1px solid var(--line);border-radius:5px;
+  padding:22px 20px 14px;overflow-x:auto;
+}
+figcaption{
+  font-size:13.5px;color:var(--muted);margin:12px 0 0;max-width:70ch;line-height:1.55;
+}
+svg.chart{display:block;width:100%;min-width:600px;height:auto;overflow:visible}
+.grid{stroke:var(--line-soft);stroke-width:1}
+.axis{stroke:var(--line);stroke-width:1}
+.tick,.leg,.cat,.val,.hint{font-family:var(--mono);fill:var(--muted)}
+.tick{font-size:10.5px}
+.cat{font-size:10.5px}
+.cat.rec{fill:var(--accent);font-weight:600}
+.val{font-size:10px;fill:var(--muted)}
+.leg{font-size:10.5px}
+.hint{font-size:10px;fill:var(--muted);letter-spacing:.08em}
+.axlbl{font-family:var(--sans);font-size:12px;fill:var(--muted)}
+.lbl{font-family:var(--sans);font-size:12.5px;fill:var(--ink)}
+.lbl.rec{fill:var(--accent);font-weight:650}
+.pt{fill:var(--surface);stroke:var(--muted);stroke-width:1.8}
+.pt.rec{fill:var(--accent);stroke:var(--accent)}
+.halo{fill:none;stroke:var(--accent);stroke-width:1;opacity:.32}
+.leader{stroke:var(--line);stroke-width:1}
+.bar.reach{fill:var(--line);stroke:var(--muted);stroke-width:.8}
+.bar.sel{fill:var(--muted)}
+.bar.sel.rec{fill:var(--accent)}
+.bar.reach.rec{fill:var(--accent-soft);stroke:var(--accent)}
+.tablewrap{overflow-x:auto;margin:30px 0 0;border:1px solid var(--line);border-radius:5px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;min-width:660px;font-size:13.5px}
+caption{
+  text-align:left;padding:16px 18px 0;font-family:var(--mono);font-size:11px;
+  letter-spacing:.12em;text-transform:uppercase;color:var(--accent);
+}
+th,td{padding:9px 14px;text-align:right;border-bottom:1px solid var(--line-soft)}
+th:first-child,td:first-child{text-align:left}
+thead th{
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;
+  color:var(--muted);font-weight:500;border-bottom:1px solid var(--line);vertical-align:bottom;
+}
+tbody td{font-family:var(--mono);font-variant-numeric:tabular-nums}
+tbody td:first-child{font-family:var(--sans)}
+tbody tr:last-child td{border-bottom:none}
+tr.rec td{background:var(--accent-soft)}
+tr.rec td:first-child{font-weight:650;color:var(--accent)}
+.good{color:var(--safe)}
+.bad{color:var(--risk)}
+.optlist{display:grid;gap:1px;background:var(--line);border:1px solid var(--line);border-radius:5px;margin:30px 0 0}
+.opt{background:var(--surface);padding:18px 20px;display:grid;grid-template-columns:auto 1fr;gap:4px 16px}
+.opt.rec{background:var(--accent-soft)}
+.opt .tag{
+  font-family:var(--mono);font-size:11.5px;font-weight:600;color:var(--accent);
+  border:1px solid var(--accent);border-radius:3px;padding:2px 7px;height:fit-content;
+}
+.opt .on{font-weight:650;font-size:15px}
+.opt .od{grid-column:2;color:var(--muted);font-size:14.5px;line-height:1.55}
+footer{margin-top:64px;padding-top:26px;border-top:1px solid var(--line);
+  font-size:13px;color:var(--muted)}
+footer p{margin:0 0 8px}
+@media (max-width:640px){
+  body{font-size:16px}
+  header.masthead{padding-top:44px}
+  .steph{gap:12px}
+}
+@media (prefers-reduced-motion:no-preference){
+  .pt,.bar{transition:none}
+}
+</style>
+<div class="wrap">
+<header class="masthead">
+  <p class="kicker">Simulator comparison &middot; MERGE dose escalation</p>
+  <h1>Why the two TITE-CRM simulators disagree, and which difference accounts for it</h1>
+  <p class="standfirst">The R and Python implementations produce substantially different
+  MTD selection rates. This note traces that gap to a single design choice, reproduces the
+  published result by adopting it, and lists what still has to be agreed before any
+  comparison of accuracy is meaningful.</p>
+  <div class="meta">
+    <span>Simulations <b>1000</b> per cell</span>
+    <span>Acute target <b>0.20</b></span>
+    <span>Subacute target <b>0.33</b></span>
+    <span>Configuration <b>no EWOC, no burn-in</b></span>
+  </div>
+</header>
+
+<section class="step"><div class="col">
+  <div class="steph"><span class="num">1</span><h2>What this note is</h2></div>
+  <p class="lede">Both groups have simulated what was meant to be the same design, and
+  reached different conclusions about how often the correct MTD is chosen. Before either
+  set of numbers can inform the amendment, we need to know whether the difference comes
+  from the code or from the design.</p>
+  <p>It comes from the design. The two programs implement genuinely different rules, and one
+  of those rules accounts for almost all of the observed gap. Nothing below is a claim that
+  either implementation is wrong; the point is that they are not yet answering the same
+  question.</p>
+  <p>The method throughout is the same: start from our configuration, switch one thing at a
+  time towards the R implementation, and measure what changes. Code and outputs are in the
+  repository (<span style="font-family:var(--mono);font-size:12px">alignment_experiment.py</span>,
+  <span style="font-family:var(--mono);font-size:12px">reproduction_check.py</span>).</p>
+</div></section>
+
+<section class="step"><div class="col">
+  <div class="steph"><span class="num">2</span><h2>The dose-selection rule accounts for the gap</h2></div>
+  <p>Four variants, each adding one difference to the previous one.</p>
+</div>
+
+<figure>
+  <div class="figbox"><svg viewBox="0 0 720 400" role="img" class="chart" aria-label="Accuracy across the four alignment variants">
+<line class="grid" x1="58" y1="326.0" x2="592" y2="326.0"/>
+<text class="tick" x="48" y="330.0" text-anchor="end">0%</text>
+<line class="grid" x1="58" y1="259.3" x2="592" y2="259.3"/>
+<text class="tick" x="48" y="263.3" text-anchor="end">10%</text>
+<line class="grid" x1="58" y1="192.7" x2="592" y2="192.7"/>
+<text class="tick" x="48" y="196.7" text-anchor="end">20%</text>
+<line class="grid" x1="58" y1="126.0" x2="592" y2="126.0"/>
+<text class="tick" x="48" y="130.0" text-anchor="end">30%</text>
+<line class="grid" x1="58" y1="59.3" x2="592" y2="59.3"/>
+<text class="tick" x="48" y="63.3" text-anchor="end">40%</text>
+<line class="axis" x1="58" y1="326" x2="592" y2="326"/>
+<path d="M124.8,65.7 L258.2,64.4 L391.8,114.8 L525.2,115.5" fill="none" stroke="var(--slate)" stroke-width="2.4" stroke-dasharray="none" stroke-linejoin="round"/>
+<circle cx="124.8" cy="65.7" r="4" fill="var(--slate)"/>
+<text class="val" x="124.8" y="54.7" text-anchor="middle" fill="var(--slate)">39.0</text>
+<circle cx="258.2" cy="64.4" r="4" fill="var(--slate)"/>
+<text class="val" x="258.2" y="53.4" text-anchor="middle" fill="var(--slate)">39.2</text>
+<circle cx="391.8" cy="114.8" r="4" fill="var(--slate)"/>
+<text class="val" x="391.8" y="103.8" text-anchor="middle" fill="var(--slate)">31.7</text>
+<circle cx="525.2" cy="115.5" r="4" fill="var(--slate)"/>
+<text class="val" x="525.2" y="104.5" text-anchor="middle" fill="var(--slate)">31.6</text>
+<text class="lbl" x="537.2" y="119.5" fill="var(--slate)">Average, five scenarios</text>
+<path d="M124.8,214.0 L258.2,157.3 L391.8,326.0 L525.2,326.0" fill="none" stroke="var(--accent)" stroke-width="2.4" stroke-dasharray="none" stroke-linejoin="round"/>
+<circle cx="124.8" cy="214.0" r="4" fill="var(--accent)"/>
+<text class="val" x="124.8" y="203.0" text-anchor="middle" fill="var(--accent)">16.8</text>
+<circle cx="258.2" cy="157.3" r="4" fill="var(--accent)"/>
+<text class="val" x="258.2" y="146.3" text-anchor="middle" fill="var(--accent)">25.3</text>
+<circle cx="391.8" cy="326.0" r="4" fill="var(--accent)"/>
+<text class="val" x="391.8" y="315.0" text-anchor="middle" fill="var(--accent)">0.0</text>
+<circle cx="525.2" cy="326.0" r="4" fill="var(--accent)"/>
+<text class="val" x="525.2" y="315.0" text-anchor="middle" fill="var(--accent)">0.0</text>
+<text class="lbl" x="537.2" y="330.0" fill="var(--accent)">Acute low</text>
+<text class="cat" x="124.8" y="346" text-anchor="middle">A</text>
+<text class="cat" x="124.8" y="360" text-anchor="middle">Our</text>
+<text class="cat" x="124.8" y="372" text-anchor="middle">implementation</text>
+<text class="cat" x="258.2" y="346" text-anchor="middle">B</text>
+<text class="cat" x="258.2" y="360" text-anchor="middle">+ final</text>
+<text class="cat" x="258.2" y="372" text-anchor="middle">MTD unrestricted</text>
+<text class="cat rec" x="391.8" y="346" text-anchor="middle">C</text>
+<text class="cat rec" x="391.8" y="360" text-anchor="middle">+ R</text>
+<text class="cat rec" x="391.8" y="372" text-anchor="middle">dose-selection rule</text>
+<text class="cat" x="525.2" y="346" text-anchor="middle">D</text>
+<text class="cat" x="525.2" y="360" text-anchor="middle">+ dfcrm default</text>
+<text class="cat" x="525.2" y="372" text-anchor="middle">prior scale</text>
+<text class="axlbl" transform="rotate(-90 14 176.0)" x="14" y="176.0" text-anchor="middle">Correct MTD selected</text>
+</svg></div>
+  <figcaption><strong>Accuracy as each difference is adopted.</strong> Removing the
+  restriction to tried doses (A&nbsp;&rarr;&nbsp;B) moves the Acute low scenario by
+  8.5 points and the average barely at all. Adopting the R dose-selection rule
+  (B&nbsp;&rarr;&nbsp;C) drops Acute low by 25.3 points, to zero, and takes the
+  average down with it. The prior scale (C&nbsp;&rarr;&nbsp;D) changes almost nothing.</figcaption>
+</figure>
+
+<div class="tablewrap"><table><caption>Correct MTD selection, switching one difference at a time (%)</caption><thead><tr><th>Variant</th><th>low</th><th>middle</th><th>high</th><th>steep</th><th>shallow</th><th>Average</th><th>Too high</th></tr></thead><tbody><tr><td><b>A</b> &middot; Our implementation</td><td>16.8</td><td>42.9</td><td>64.9</td><td>45.4</td><td>25.2</td><td><b>39.0</b></td><td>17.3</td></tr><tr><td><b>B</b> &middot; + final MTD unrestricted</td><td>25.3</td><td>44.7</td><td>59.5</td><td>35.9</td><td>30.8</td><td><b>39.2</b></td><td>21.3</td></tr><tr class="rec"><td><b>C</b> &middot; + R dose-selection rule</td><td>0.0</td><td>20.1</td><td>63.6</td><td>64.4</td><td>10.3</td><td><b>31.7</b></td><td>8.4</td></tr><tr><td><b>D</b> &middot; + dfcrm default prior scale</td><td>0.0</td><td>21.0</td><td>64.5</td><td>62.3</td><td>10.1</td><td><b>31.6</b></td><td>8.7</td></tr></tbody></table></div>
+
+<div class="col">
+  <h3>Why the rule excludes the top dose</h3>
+  <p>The acute skeleton is 0.004, 0.021, 0.066, 0.150, 0.266 against a target of 0.20.
+  <strong>The prior at L4 already exceeds the target.</strong> Under the rule &ldquo;highest
+  dose whose posterior mean is at or below target&rdquo;, L4 therefore sits outside the
+  admissible set from the very first decision, and the data would have to pull that estimate
+  below 0.20 before it can ever be chosen. With one DLT at L1 raising the whole curve, that
+  does not happen within 30 patients.</p>
+  <p>We checked whether the subacute endpoint contributes by relaxing its target to 0.99.
+  The result is unchanged at 0.0%, so this is the acute rule alone.</p>
+  <div class="callout">
+    <p class="ct">Note on the interaction with the contested DLT</p>
+    <p>This rule and the single contested toxicity at L1 compound each other. The rule makes
+    the top dose inadmissible until the estimate falls; the DLT keeps the estimate up. Either
+    on its own would be recoverable. Together they close off the top dose for the whole
+    trial.</p>
+  </div>
+</div></section>
+
+<section class="step"><div class="col">
+  <div class="steph"><span class="num">3</span><h2>Reproduction check</h2></div>
+  <p>If the rule really is the explanation, then adopting it should reproduce the published
+  distribution, not merely move in its direction. It does.</p>
+</div>
+
+<figure>
+  <div class="figbox"><svg viewBox="0 0 720 360" role="img" class="chart" aria-label="Acute low selection distribution, three series">
+<line class="grid" x1="56" y1="280.0" x2="700" y2="280.0"/>
+<text class="tick" x="46" y="284.0" text-anchor="end">0%</text>
+<line class="grid" x1="56" y1="194.7" x2="700" y2="194.7"/>
+<text class="tick" x="46" y="198.7" text-anchor="end">20%</text>
+<line class="grid" x1="56" y1="109.3" x2="700" y2="109.3"/>
+<text class="tick" x="46" y="113.3" text-anchor="end">40%</text>
+<line class="grid" x1="56" y1="24.0" x2="700" y2="24.0"/>
+<text class="tick" x="46" y="28.0" text-anchor="end">60%</text>
+<line class="axis" x1="56" y1="280" x2="700" y2="280"/>
+<rect x="81.4" y="280.0" width="26.0" height="1.0" rx="2" fill="var(--slate)"/>
+<rect x="109.4" y="280.0" width="26.0" height="1.0" rx="2" fill="var(--accent)"/>
+<rect x="137.4" y="280.0" width="26.0" height="1.0" rx="2" fill="var(--line)" stroke="var(--muted)" stroke-width="0.8"/>
+<text class="cat" x="120.4" y="300" text-anchor="middle">L0</text>
+<rect x="210.2" y="258.2" width="26.0" height="21.8" rx="2" fill="var(--slate)"/>
+<text class="val" x="223.2" y="253.2" text-anchor="middle">5</text>
+<rect x="238.2" y="265.9" width="26.0" height="14.1" rx="2" fill="var(--accent)"/>
+<text class="val" x="251.2" y="260.9" text-anchor="middle">3</text>
+<rect x="266.2" y="280.0" width="26.0" height="1.0" rx="2" fill="var(--line)" stroke="var(--muted)" stroke-width="0.8"/>
+<text class="cat" x="249.2" y="300" text-anchor="middle">L1</text>
+<rect x="339.0" y="47.5" width="26.0" height="232.5" rx="2" fill="var(--slate)"/>
+<text class="val" x="352.0" y="42.5" text-anchor="middle">54</text>
+<rect x="367.0" y="80.7" width="26.0" height="199.3" rx="2" fill="var(--accent)"/>
+<text class="val" x="380.0" y="75.7" text-anchor="middle">47</text>
+<rect x="395.0" y="184.4" width="26.0" height="95.6" rx="2" fill="var(--line)" stroke="var(--muted)" stroke-width="0.8"/>
+<text class="val" x="408.0" y="179.4" text-anchor="middle">22</text>
+<text class="cat" x="378.0" y="300" text-anchor="middle">L2</text>
+<rect x="467.8" y="108.1" width="26.0" height="171.9" rx="2" fill="var(--slate)"/>
+<text class="val" x="480.8" y="103.1" text-anchor="middle">40</text>
+<rect x="495.8" y="66.7" width="26.0" height="213.3" rx="2" fill="var(--accent)"/>
+<text class="val" x="508.8" y="61.7" text-anchor="middle">50</text>
+<rect x="523.8" y="29.5" width="26.0" height="250.5" rx="2" fill="var(--line)" stroke="var(--muted)" stroke-width="0.8"/>
+<text class="val" x="536.8" y="24.5" text-anchor="middle">59</text>
+<text class="cat" x="506.8" y="300" text-anchor="middle">L3</text>
+<rect x="596.6" y="280.0" width="26.0" height="1.0" rx="2" fill="var(--slate)"/>
+<rect x="624.6" y="280.0" width="26.0" height="1.0" rx="2" fill="var(--accent)"/>
+<rect x="652.6" y="199.4" width="26.0" height="80.6" rx="2" fill="var(--line)" stroke="var(--muted)" stroke-width="0.8"/>
+<text class="val" x="665.6" y="194.4" text-anchor="middle">19</text>
+<text class="cat rec" x="635.6" y="300" text-anchor="middle">L4</text>
+<rect x="56" y="317" width="11" height="11" rx="2" fill="var(--slate)"/>
+<text class="leg" x="72" y="326">Reported, R implementation</text>
+<rect x="284" y="317" width="11" height="11" rx="2" fill="var(--accent)"/>
+<text class="leg" x="300" y="326">Ours, R dose rule</text>
+<rect x="512" y="317" width="11" height="11" rx="2" fill="var(--line)" stroke="var(--muted)" stroke-width="0.8"/>
+<text class="leg" x="528" y="326">Ours, own rule</text>
+<text class="axlbl" x="378.0" y="352" text-anchor="middle">True MTD is L4</text>
+</svg></div>
+  <figcaption><strong>Acute low, where the true MTD is the top dose.</strong> Our own rule
+  selects L4 in 18.9% of trials. With the R rule that
+  becomes 0.0%, matching the reported
+  0.0%, and the rest of the distribution moves close to
+  the reported shape as well. The remaining differences are consistent with the other
+  design differences listed in section 5.</figcaption>
+</figure>
+
+<div class="tablewrap"><table><caption>Acute low: final dose selected (%)</caption><thead><tr><th>Series</th><th>L0</th><th>L1</th><th>L2</th><th>L3</th><th>L4</th></tr></thead><tbody><tr><td>Reported, R implementation</td><td>0.0</td><td>5.1</td><td>54.5</td><td>40.3</td><td>0.0</td></tr><tr><td>Ours, own rule</td><td>0.0</td><td>0.0</td><td>22.4</td><td>58.7</td><td>18.9</td></tr><tr class="rec"><td>Ours, R dose rule</td><td>0.0</td><td>3.3</td><td>46.7</td><td>50.0</td><td>0.0</td></tr></tbody></table></div>
+</section>
+
+<section class="step"><div class="col">
+  <div class="steph"><span class="num">4</span><h2>Errors on our side</h2></div>
+  <p class="lede">Three things we got wrong, listed before anything about the R code,
+  because two of them affect results we have already circulated.</p>
+  <div class="callout">
+    <p class="ct">1 &middot; Our subacute prior was wrong</p>
+    <p>The R code uses the exact skeletons from the 8 July message, including a subacute
+    prior of <strong>0.010</strong> at L0. Ours read 0.012. Ours was the deviating value and
+    has been corrected. The effect is negligible &mdash; trials start at L2 and rarely visit
+    L0 &mdash; but earlier outputs were generated with the wrong figure.</p>
+  </div>
+  <div class="callout">
+    <p class="ct">2 &middot; With EWOC off, our subacute endpoint does nothing</p>
+    <p>In our dose-selection function the subacute overdose probability is computed and then
+    never used when EWOC is disabled. The subacute endpoint therefore has no influence on
+    dose selection at all in that configuration &mdash; which is the configuration every
+    recent analysis of ours has run under. In the R code both endpoints always bind. This is
+    a design question, not only a coding one: should the subacute endpoint constrain dose
+    selection when EWOC is off?</p>
+  </div>
+  <div class="callout">
+    <p class="ct">3 &middot; Our 6+3 comparison was not like for like</p>
+    <p>The R example runs the rule-based design with a sample size of 50 and an expansion
+    concept (<span style="font-family:var(--mono);font-size:12px">target.patients.at.mtd = 12</span>)
+    that our implementation does not have; we gave ours 30 patients. Our figure of 2.8%
+    correct selection against the reported 32.3% should therefore <strong>not</strong> be
+    read as contradicting the R result.</p>
+  </div>
+</div></section>
+
+<section class="step"><div class="col">
+  <div class="steph"><span class="num">5</span><h2>Differences we found but have not quantified</h2></div>
+  <p>Each of these is a real difference in what is being simulated. None has been isolated
+  the way the dose rule was, so their contributions are unknown.</p>
+  <h3>Surgery is certain, and a delay can become a DLT</h3>
+  <p>In the R model every patient is operated: the surgery time matrix is initialised at
+  <span style="font-family:var(--mono);font-size:12px">operation.Time</span> for everyone.
+  Our model draws surgery from a Bernoulli with probability 0.80, and patients without
+  surgery contribute no subacute information at all.</p>
+  <p>More consequentially, a surgery delayed beyond
+  <span style="font-family:var(--mono);font-size:12px">Max.Surgery.Time</span> is
+  <strong>recorded as an acute DLT</strong>, reached through a non-DLT toxicity occurring
+  with probability 0.15 that we do not model at all. This means the realised acute toxicity
+  in the R simulation is higher than the specified
+  <span style="font-family:var(--mono);font-size:12px">P.early</span>, and so the true MTD
+  derived from <span style="font-family:var(--mono);font-size:12px">P.early</span> is
+  strictly not the true MTD of the data-generating process. That affects the interpretation
+  of every accuracy figure on both sides, and is the first thing we would want to confirm.</p>
+  <h3>The run-in phase does not escalate</h3>
+  <p>In the R code the dose is fixed at the starting level throughout the first phase and the
+  loop always runs to six patients, because the stopping condition cannot trigger before
+  patient six. Ours escalates one level per cohort until the first observed acute DLT, as
+  described in July. The two &ldquo;burn-in on/off&rdquo; comparisons therefore do not
+  measure the same thing and should not be placed side by side.</p>
+  <h3>Accrual</h3>
+  <p>The R code enrols a whole cohort at one shared entry time, with the next cohort a fixed
+  interval later; ours uses a Poisson process with individual arrivals. Within-cohort TITE
+  weights are therefore identical on the R side and not on ours. The time unit of
+  <span style="font-family:var(--mono);font-size:12px">time_para</span> is not stated
+  anywhere we could find, so we have not tried to compare the rates.</p>
+  <h3>Smaller items</h3>
+  <ul>
+    <li>De-escalation is unrestricted in the R code; ours is capped at one level per cohort.</li>
+    <li>The final MTD may be one level above the <em>last treated</em> dose &mdash; not the
+    highest ever tried &mdash; so it can be a dose nobody received, and can also exclude a
+    higher dose that was tried earlier.</li>
+    <li>A Gaussian copula links the two endpoints on the R side (set to independent in the
+    example); we do not model any dependence.</li>
+    <li>The prior scale is the dfcrm default, sqrt(1.34), against our 1.0. Same empiric
+    model; measured effect here is negligible.</li>
+    <li>Toxicity is reported as a proportion on the R side and as a count on ours. These
+    agree once converted.</li>
+  </ul>
+</div></section>
+
+<section class="step"><div class="col">
+  <div class="steph"><span class="num">6</span><h2>Two things that look like defects</h2></div>
+  <p>Offered for checking rather than asserted &mdash; both are the kind of thing that
+  survives testing precisely because it is invisible in the configurations run so far.</p>
+  <div class="callout">
+    <p class="ct">Undefined argument names</p>
+    <p><span style="font-family:var(--mono);font-size:12px">real.data.early</span> and
+    <span style="font-family:var(--mono);font-size:12px">real.data.late</span> are passed to
+    the trial function, but the parameters are named
+    <span style="font-family:var(--mono);font-size:12px">real.dlt.early</span> and
+    <span style="font-family:var(--mono);font-size:12px">real.dlt.late</span>, and the names
+    passed do not exist anywhere. This does not error today because R evaluates arguments
+    lazily and the trial function never uses them.</p>
+  </div>
+  <div class="callout">
+    <p class="ct">The run-in overwrites the fixed history's dose</p>
+    <p>The first phase assigns the starting dose to patients one through six regardless of
+    what was supplied in
+    <span style="font-family:var(--mono);font-size:12px">real.dose</span>. For the MERGE
+    configuration the two coincide, so nothing goes wrong in practice. The recorded outcomes
+    of those patients are used correctly.</p>
+  </div>
+</div></section>
+
+<section class="step"><div class="col">
+  <div class="steph"><span class="num">7</span><h2>Questions we would like to settle</h2></div>
+  <p>In order of measured or expected effect.</p>
+  <ol>
+    <li><strong>The dose-selection rule.</strong> With the current skeleton, &ldquo;highest
+    dose at or below target&rdquo; excludes L4 from the outset because the prior there is
+    already 0.266. Is that intended? This drives most of the difference and affects the whole
+    allocation, not only the final choice.</li>
+    <li><strong>Does a surgery delay beyond the maximum count as an acute DLT?</strong> If so,
+    the realised acute toxicity exceeds <span style="font-family:var(--mono);font-size:12px">P.early</span>
+    and the reference MTD needs rethinking.</li>
+    <li><strong>Should the subacute endpoint constrain dose selection</strong> when EWOC is
+    off? It does in the R code and does not in ours.</li>
+    <li><strong>Should every patient be operated,</strong> or should surgery be probabilistic
+    as in our model?</li>
+    <li><strong>May the final MTD be a dose nobody received?</strong></li>
+    <li><strong>Is the prior scale a choice or the package default?</strong></li>
+    <li><strong>Should the first phase escalate</strong> until the first DLT, or treat six
+    patients at the starting dose?</li>
+    <li><strong>Which accrual structure, time unit and 6+3 settings</strong> should the
+    amendment use?</li>
+  </ol>
+</div></section>
+
+<section class="step"><div class="col">
+  <div class="steph"><span class="num">8</span><h2>Conclusion</h2></div>
+  <div class="callout rec">
+    <p class="ct">Where this leaves the comparison</p>
+    <p>The two simulators are not two implementations of one design. They differ on the dose
+    rule, the role of the subacute endpoint, whether surgery is certain, what counts as an
+    acute DLT, the accrual structure, the run-in, the prior scale and the 6+3 settings.</p>
+    <p>Comparing accuracy percentages between them is therefore not yet meaningful, and we
+    would not use either set of numbers to argue the other is wrong.</p>
+  </div>
+  <p>What has been established is where the difference comes from, and that it can be
+  reproduced on demand. The natural next step is to agree which rules represent the intended
+  MERGE design, align both implementations on those, and re-run. Most of the alignment is
+  small: the dose rule, the prior scale and the subacute constraint are each a few lines.</p>
+  <p>A patient-level generating file for a single trial is already prepared on our side, and
+  now that the data structures on both sides are understood it can be mapped across directly.
+  Running one identical trial through both programs would confirm the alignment before any
+  larger comparison is attempted.</p>
+</div></section>
+
+<footer><div class="col">
+  <p>Generated from <span style="font-family:var(--mono);font-size:12px">alignment_experiment.py</span>
+  and <span style="font-family:var(--mono);font-size:12px">reproduction_check.py</span>,
+  1000 simulations per cell. TITE-CRM without EWOC and without burn-in, starting at L2,
+  30 patients including six with fixed history, cohort size 3, one acute DLT in the sixth
+  of those. Reported R figures are taken from the circulated slides for the corresponding
+  configuration.</p>
+  <p>This document contains aggregated simulation output only. No patient data is included.</p>
+</div></footer>
+</div>
