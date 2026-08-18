@@ -1,0 +1,21 @@
+scenario,variant,correct,too_high
+Acute low,"A onze code (argmin, restrict, sigma 1.0)",16.8,0.0
+Acute low,B + geen restrict,25.3,0.0
+Acute low,C + Sama's dosisregel,0.0,0.0
+Acute low,D + sigma sqrt(1.34),0.0,0.0
+Acute middle,"A onze code (argmin, restrict, sigma 1.0)",42.9,3.2
+Acute middle,B + geen restrict,44.7,5.3
+Acute middle,C + Sama's dosisregel,20.1,0.0
+Acute middle,D + sigma sqrt(1.34),21.0,0.0
+Acute high,"A onze code (argmin, restrict, sigma 1.0)",64.9,27.200000000000003
+Acute high,B + geen restrict,59.5,33.7
+Acute high,C + Sama's dosisregel,63.6,10.5
+Acute high,D + sigma sqrt(1.34),64.5,10.4
+Acute steep,"A onze code (argmin, restrict, sigma 1.0)",45.4,53.900000000000006
+Acute steep,B + geen restrict,35.9,63.5
+Acute steep,C + Sama's dosisregel,64.4,31.5
+Acute steep,D + sigma sqrt(1.34),62.3,33.0
+Acute shallow,"A onze code (argmin, restrict, sigma 1.0)",25.2,2.1999999999999997
+Acute shallow,B + geen restrict,30.8,4.0
+Acute shallow,C + Sama's dosisregel,10.299999999999999,0.0
+Acute shallow,D + sigma sqrt(1.34),10.100000000000001,0.0

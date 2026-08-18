@@ -438,7 +438,8 @@ def crm_choose_next(sigma, skel1, skel2,
                     n1, y1, n2, y2,
                     current_level, target1, target2,
                     ewoc_alpha=None, max_step=1, gh_n=61,
-                    enforce_guardrail=True, highest_tried=-1, n_levels=5):
+                    enforce_guardrail=True, highest_tried=-1, n_levels=5,
+                    dose_rule="argmin"):
     """
     Select the next dose level for the upcoming cohort.
 
@@ -454,7 +455,23 @@ def crm_choose_next(sigma, skel1, skel2,
       does NOT blindly seek the highest dose regardless of posterior evidence.
     """
     pm1, od1 = crm_posterior_summaries(sigma, skel1, n1, y1, target1, gh_n=gh_n)
-    _,   od2 = crm_posterior_summaries(sigma, skel2, n2, y2, target2, gh_n=gh_n)
+    pm2, od2 = crm_posterior_summaries(sigma, skel2, n2, y2, target2, gh_n=gh_n)
+
+    # "highest_below" reproduces the rule used in the R implementation: the
+    # highest dose whose posterior mean stays at or below target, applied to
+    # BOTH endpoints and combined by taking the lower of the two.  Unlike the
+    # argmin rule this makes the subacute endpoint bind on dose selection even
+    # when EWOC is off.
+    if dose_rule == "highest_below":
+        _c1 = np.where(pm1 <= float(target1))[0]
+        k1  = int(_c1.max()) if _c1.size else 0
+        _c2 = np.where(pm2 <= float(target2))[0]
+        k2  = int(_c2.max()) if _c2.size else 0
+        k   = min(k1, k2)
+        k = int(np.clip(k, current_level - int(max_step), current_level + int(max_step)))
+        if enforce_guardrail and highest_tried >= 0:
+            k = int(min(k, int(highest_tried) + 1))
+        return int(np.clip(k, 0, n_levels - 1))
 
     if ewoc_alpha is None:
         # EWOC OFF: all doses are candidates (no overdose-probability filter)
@@ -482,7 +499,8 @@ def crm_choose_next(sigma, skel1, skel2,
 def crm_select_mtd(sigma, skel1, skel2,
                    n1, y1, n2, y2,
                    target1, target2,
-                   ewoc_alpha=None, gh_n=61, restrict_to_tried=True):
+                   ewoc_alpha=None, gh_n=61, restrict_to_tried=True,
+                   dose_rule="argmin"):
     """
     Select the final MTD from the completed trial data.
 
@@ -497,8 +515,21 @@ def crm_select_mtd(sigma, skel1, skel2,
       regardless of posterior evidence.
     """
     pm1, od1 = crm_posterior_summaries(sigma, skel1, n1, y1, target1, gh_n=gh_n)
-    _,   od2 = crm_posterior_summaries(sigma, skel2, n2, y2, target2, gh_n=gh_n)
+    pm2, od2 = crm_posterior_summaries(sigma, skel2, n2, y2, target2, gh_n=gh_n)
     n_levels = len(skel1)
+
+    if dose_rule == "highest_below":
+        _c1 = np.where(pm1 <= float(target1))[0]
+        k1  = int(_c1.max()) if _c1.size else 0
+        _c2 = np.where(pm2 <= float(target2))[0]
+        k2  = int(_c2.max()) if _c2.size else 0
+        k   = min(k1, k2)
+        if restrict_to_tried:
+            tried = np.where(np.asarray(n1) > 0)[0]
+            if tried.size > 0 and k not in tried:
+                _le = tried[tried <= k]
+                k = int(_le.max()) if _le.size else int(tried.min())
+        return int(np.clip(k, 0, n_levels - 1))
 
     if ewoc_alpha is None:
         # EWOC OFF: all doses are candidates (no overdose-probability filter)
@@ -671,6 +702,7 @@ def run_tite_crm(
     n_safe_d1_dlt=0,
     hist_weight=1.0,
     hist_dlt_attribution=1.0,
+    dose_rule="argmin",
     escalation_override_n=0,
     p_stop=1.0,
     require_full_tox1_fu_before_escalation=True,
@@ -914,6 +946,7 @@ def run_tite_crm(
                 ewoc_alpha=ewoc_decision_eff, max_step=max_step, gh_n=gh_n,
                 enforce_guardrail=enforce_guardrail,
                 highest_tried=highest_tried, n_levels=n_levels,
+                dose_rule=dose_rule,
             )
 
             # ── Protocol escalation override ─────────────────────────────────
@@ -1109,6 +1142,7 @@ def run_tite_crm(
         target1, target2,
         ewoc_alpha=ewoc_final_eff, gh_n=gh_n,
         restrict_to_tried=restrict_final_to_tried,
+        dose_rule=dose_rule,
     )
     return int(selected), patients, float(study_days), trace, stopped_early
 
