@@ -27,7 +27,7 @@ with contextlib.redirect_stderr(io.StringIO()):
 DOSE_LABELS = ["5x4 Gy", "5x5 Gy", "5x6 Gy", "5x7 Gy", "5x8 Gy"]
 TRUE_SUBACUTE = [0.02, 0.05, 0.10, 0.15, 0.25]
 ACUTE_PRIOR = [0.004, 0.021, 0.066, 0.150, 0.266]
-SUBACUTE_PRIOR = [0.012, 0.036, 0.084, 0.157, 0.250]
+SUBACUTE_PRIOR = [0.010, 0.036, 0.084, 0.157, 0.250]
 ACUTE_SCENARIOS = {
     "Acute low": [0.01, 0.02, 0.06, 0.10, 0.15],
     "Acute middle": [0.01, 0.04, 0.12, 0.17, 0.27],

@@ -1,5 +1,9 @@
 # Vergelijkingschecklist: onze simulator naast Sama's R-code
 
+> **Status 18-08-2026:** Sama's code is inmiddels ontvangen en doorgenomen. De ingevulde
+> antwoorden staan in **`CODE_COMPARISON_FINDINGS.md`**. Dit document blijft staan als de
+> vragenlijst waarmee die vergelijking is gemaakt.
+
 Doel: de verschillen tussen beide implementaties systematisch vinden, zodat we weten
 of afwijkende resultaten uit de **data-generatie** of uit het **modelfitten** komen.
 
