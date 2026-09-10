@@ -1,0 +1,125 @@
+{
+  "n_sim": 3000,
+  "seed": 20260910,
+  "n_hist": 9,
+  "n_hist_dlt": 1,
+  "n_forward": 21,
+  "n_total": 30,
+  "next_level": 2,
+  "target_acute": 0.2,
+  "target_subacute": 0.33,
+  "dose_labels": [
+    "5x4 Gy",
+    "5x5 Gy",
+    "5x6 Gy",
+    "5x7 Gy",
+    "5x8 Gy"
+  ],
+  "acute_prior": [
+    0.004,
+    0.021,
+    0.066,
+    0.15,
+    0.266
+  ],
+  "subacute_prior": [
+    0.01,
+    0.036,
+    0.084,
+    0.157,
+    0.25
+  ],
+  "scenarios": {
+    "Acute low": [
+      0.01,
+      0.02,
+      0.06,
+      0.1,
+      0.15
+    ],
+    "Acute middle": [
+      0.01,
+      0.04,
+      0.12,
+      0.17,
+      0.27
+    ],
+    "Acute high": [
+      0.01,
+      0.05,
+      0.15,
+      0.22,
+      0.3
+    ],
+    "Acute steep": [
+      0.01,
+      0.02,
+      0.08,
+      0.24,
+      0.34
+    ],
+    "Acute shallow": [
+      0.1,
+      0.13,
+      0.15,
+      0.18,
+      0.24
+    ]
+  },
+  "true_subacute": [
+    0.02,
+    0.05,
+    0.1,
+    0.15,
+    0.25
+  ],
+  "common": {
+    "p_surgery": 0.8,
+    "accrual_per_month": 0.75,
+    "incl_to_rt": 21,
+    "rt_dur": 14,
+    "rt_to_surg": 42,
+    "tox1_win": 56,
+    "tox2_win": 30
+  },
+  "arms": [
+    {
+      "code": "63",
+      "design": "6+3",
+      "kind": "63",
+      "label": "Continue with 6+3 (next cohort at L2)",
+      "max_n": 21,
+      "start_level": 2
+    },
+    {
+      "code": "CRM",
+      "design": "TITE-CRM",
+      "kind": "crm",
+      "dose_rule": "argmin",
+      "label": "Switch to TITE-CRM, closest-to-target rule",
+      "n_hist": 9,
+      "max_n": 30,
+      "start_level": 2
+    },
+    {
+      "code": "CRM-HB",
+      "design": "TITE-CRM",
+      "kind": "crm",
+      "dose_rule": "highest_below",
+      "label": "Switch to TITE-CRM, highest-dose-below-target rule",
+      "n_hist": 9,
+      "max_n": 30,
+      "start_level": 1
+    },
+    {
+      "code": "CRM-OLD6",
+      "design": "TITE-CRM",
+      "kind": "crm",
+      "dose_rule": "argmin",
+      "label": "Reference: switching after 6 patients (1 DLT), as analysed in July",
+      "n_hist": 6,
+      "max_n": 27,
+      "start_level": 1
+    }
+  ]
+}
