@@ -135,6 +135,7 @@ def main() -> None:
     report_html = root / "dlt_attribution_sensitivity" / "dlt_beslisrapport.html"
     nonbinary_html = root / "dlt_attribution_sensitivity" / "nonbinary_dlt_report.html"
     comparison_html = root / "dlt_attribution_sensitivity" / "simulator_comparison.html"
+    switch_html = root / "switch_decision" / "switch_to_titecrm.html"
 
     tmp = args.outdir / "_checklist_print.html"
     tmp.write_text(md_to_html(checklist_md, "Vergelijkingschecklist"), encoding="utf-8")
@@ -143,6 +144,7 @@ def main() -> None:
     out_check = args.outdir / "Vergelijkingschecklist_Sama.pdf"
     out_nb = args.outdir / "Non-binary_DLT_note.pdf"
     out_cmp = args.outdir / "Simulator_comparison.pdf"
+    out_switch = root / "switch_decision" / "Switch_to_TITE-CRM.pdf"
 
     with sync_playwright() as p:
         b = p.chromium.launch(executable_path=CHROMIUM)
@@ -150,11 +152,12 @@ def main() -> None:
         render(pg, report_html.as_uri(), out_report, REPORT_PRINT_CSS)
         render(pg, nonbinary_html.as_uri(), out_nb, REPORT_PRINT_CSS)
         render(pg, comparison_html.as_uri(), out_cmp, REPORT_PRINT_CSS)
+        render(pg, switch_html.as_uri(), out_switch, REPORT_PRINT_CSS)
         render(pg, tmp.as_uri(), out_check, "")
         b.close()
 
     tmp.unlink(missing_ok=True)
-    for f in (out_report, out_nb, out_cmp, out_check):
+    for f in (out_report, out_nb, out_cmp, out_switch, out_check):
         print(f"Wrote {f} ({f.stat().st_size // 1024} KB)")
 
 

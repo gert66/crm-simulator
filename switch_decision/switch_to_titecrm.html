@@ -1,0 +1,555 @@
+<title>Amending to TITE-CRM</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+:root{
+  --paper:#FAFCFD; --surface:#FFFFFF; --ink:#101B26; --slate:#1E3A52;
+  --muted:#5C6B7A; --line:#DCE4EA; --line-soft:#EAEFF3;
+  --accent:#0E7C86; --accent-soft:#E3F1F2;
+  --safe:#2F7D5B; --risk:#B4472F; --warn:#8A6A1F;
+  --serif:Georgia,"Iowan Old Style","Palatino Linotype",Palatino,serif;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,Arial,sans-serif;
+  --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --paper:#0D141C; --surface:#151F29; --ink:#DCE4EB; --slate:#AFC4D4;
+    --muted:#8A9AA9; --line:#25333F; --line-soft:#1C2833;
+    --accent:#3AAEB6; --accent-soft:#14262C;
+    --safe:#5BAE84; --risk:#D97A5E; --warn:#C8A24A;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#0D141C; --surface:#151F29; --ink:#DCE4EB; --slate:#AFC4D4;
+  --muted:#8A9AA9; --line:#25333F; --line-soft:#1C2833;
+  --accent:#3AAEB6; --accent-soft:#14262C;
+  --safe:#5BAE84; --risk:#D97A5E; --warn:#C8A24A;
+}
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:var(--sans); font-size:16.5px; line-height:1.65;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:1080px;margin:0 auto;padding:0 24px 96px}
+.col{max-width:68ch}
+header.masthead{padding:64px 0 34px;border-bottom:1px solid var(--line)}
+.kicker{
+  font-family:var(--mono); font-size:11.5px; letter-spacing:.14em;
+  text-transform:uppercase; color:var(--accent); margin:0 0 16px;
+}
+h1{
+  font-family:var(--serif); font-weight:400; font-size:clamp(31px,4.4vw,46px);
+  line-height:1.14; letter-spacing:-.012em; margin:0 0 18px;
+  text-wrap:balance; color:var(--ink);
+}
+.standfirst{font-size:19px;line-height:1.6;color:var(--muted);margin:0;max-width:60ch}
+.meta{
+  display:flex;flex-wrap:wrap;gap:10px 26px;margin:26px 0 0;
+  font-family:var(--mono);font-size:11.5px;letter-spacing:.05em;
+  text-transform:uppercase;color:var(--muted);
+}
+.meta b{color:var(--ink);font-weight:600}
+section.step{padding:52px 0 0}
+.steph{display:flex;gap:16px;align-items:baseline;margin:0 0 20px}
+.num{
+  font-family:var(--mono);font-size:12px;font-weight:600;color:var(--accent);
+  border:1px solid var(--accent);border-radius:3px;padding:3px 7px;
+  flex:none;letter-spacing:.06em;
+}
+h2{
+  font-family:var(--serif);font-weight:400;font-size:clamp(23px,2.7vw,30px);
+  line-height:1.22;margin:0;letter-spacing:-.008em;text-wrap:balance;
+}
+h3{
+  font-family:var(--sans);font-size:14px;font-weight:650;letter-spacing:.02em;
+  margin:34px 0 10px;color:var(--slate);
+}
+p{margin:0 0 15px}
+a{color:var(--accent)}
+strong{font-weight:650}
+.lede{font-size:17.5px;color:var(--ink)}
+ul,ol{margin:0 0 15px;padding-left:22px}
+li{margin:0 0 8px}
+.pull{
+  border-left:2px solid var(--accent);padding:2px 0 2px 20px;margin:26px 0;
+  font-family:var(--serif);font-size:19.5px;line-height:1.5;color:var(--slate);
+}
+.callout{
+  background:var(--surface);border:1px solid var(--line);border-radius:5px;
+  padding:20px 22px;margin:26px 0;
+}
+.callout.rec{border-color:var(--accent);background:var(--accent-soft)}
+.callout .ct{
+  font-family:var(--mono);font-size:11px;letter-spacing:.13em;text-transform:uppercase;
+  color:var(--accent);margin:0 0 9px;
+}
+.callout p:last-child{margin-bottom:0}
+figure{margin:32px 0 0}
+.figbox{
+  background:var(--surface);border:1px solid var(--line);border-radius:5px;
+  padding:22px 20px 14px;overflow-x:auto;
+}
+figcaption{
+  font-size:13.5px;color:var(--muted);margin:12px 0 0;max-width:70ch;line-height:1.55;
+}
+svg.chart{display:block;width:100%;min-width:600px;height:auto;overflow:visible}
+.grid{stroke:var(--line-soft);stroke-width:1}
+.axis{stroke:var(--line);stroke-width:1}
+.tick,.leg,.cat,.val,.hint{font-family:var(--mono);fill:var(--muted)}
+.tick{font-size:10.5px}
+.cat{font-size:10.5px}
+.cat.rec{fill:var(--accent);font-weight:600}
+.val{font-size:10px;fill:var(--muted)}
+.leg{font-size:10.5px}
+.hint{font-size:10px;fill:var(--muted);letter-spacing:.08em}
+.axlbl{font-family:var(--sans);font-size:12px;fill:var(--muted)}
+.lbl{font-family:var(--sans);font-size:12.5px;fill:var(--ink)}
+.lbl.rec{fill:var(--accent);font-weight:650}
+.pt{fill:var(--surface);stroke:var(--muted);stroke-width:1.8}
+.pt.rec{fill:var(--accent);stroke:var(--accent)}
+.halo{fill:none;stroke:var(--accent);stroke-width:1;opacity:.32}
+.leader{stroke:var(--line);stroke-width:1}
+.bar.reach{fill:var(--line);stroke:var(--muted);stroke-width:.8}
+.bar.sel{fill:var(--muted)}
+.bar.sel.rec{fill:var(--accent)}
+.bar.reach.rec{fill:var(--accent-soft);stroke:var(--accent)}
+.tablewrap{overflow-x:auto;margin:30px 0 0;border:1px solid var(--line);border-radius:5px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;min-width:660px;font-size:13.5px}
+caption{
+  text-align:left;padding:16px 18px 0;font-family:var(--mono);font-size:11px;
+  letter-spacing:.12em;text-transform:uppercase;color:var(--accent);
+}
+th,td{padding:9px 14px;text-align:right;border-bottom:1px solid var(--line-soft)}
+th:first-child,td:first-child{text-align:left}
+thead th{
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;
+  color:var(--muted);font-weight:500;border-bottom:1px solid var(--line);vertical-align:bottom;
+}
+tbody td{font-family:var(--mono);font-variant-numeric:tabular-nums}
+tbody td:first-child{font-family:var(--sans)}
+tbody tr:last-child td{border-bottom:none}
+tr.rec td{background:var(--accent-soft)}
+tr.rec td:first-child{font-weight:650;color:var(--accent)}
+.good{color:var(--safe)}
+.bad{color:var(--risk)}
+.optlist{display:grid;gap:1px;background:var(--line);border:1px solid var(--line);border-radius:5px;margin:30px 0 0}
+.opt{background:var(--surface);padding:18px 20px;display:grid;grid-template-columns:auto 1fr;gap:4px 16px}
+.opt.rec{background:var(--accent-soft)}
+.opt .tag{
+  font-family:var(--mono);font-size:11.5px;font-weight:600;color:var(--accent);
+  border:1px solid var(--accent);border-radius:3px;padding:2px 7px;height:fit-content;
+}
+.opt .on{font-weight:650;font-size:15px}
+.opt .od{grid-column:2;color:var(--muted);font-size:14.5px;line-height:1.55}
+footer{margin-top:64px;padding-top:26px;border-top:1px solid var(--line);
+  font-size:13px;color:var(--muted)}
+footer p{margin:0 0 8px}
+@media (max-width:640px){
+  body{font-size:16px}
+  header.masthead{padding-top:44px}
+  .steph{gap:12px}
+}
+@media (prefers-reduced-motion:no-preference){
+  .pt,.bar{transition:none}
+}
+
+/* Text on each step is picked for >=4.5:1 against that step, not by eye:
+   on the light ramp only the darkest step takes white; on the dark ramp only
+   the two brightest steps take dark ink. */
+:root{ --d0:#D6E9EA; --d1:#A3CFD3; --d2:#68B0B7; --d3:#2C8B95; --d4:#0D626D;
+       --d0t:var(--ink); --d1t:var(--ink); --d2t:#06282C; --d3t:#04191C; --d4t:#FFFFFF; }
+@media (prefers-color-scheme:dark){ :root:not([data-theme="light"]){
+  --d0:#26383F; --d1:#2F5A63; --d2:#3B8089; --d3:#4BA6B0; --d4:#6CCBD3;
+  --d0t:var(--ink); --d1t:var(--ink); --d2t:#EAF3F5; --d3t:#04191C; --d4t:#04191C; } }
+:root[data-theme="dark"]{
+  --d0:#26383F; --d1:#2F5A63; --d2:#3B8089; --d3:#4BA6B0; --d4:#6CCBD3;
+  --d0t:var(--ink); --d1t:var(--ink); --d2t:#EAF3F5; --d3t:#04191C; --d4t:#04191C; }
+.swatch{display:inline-block;width:11px;height:11px;border-radius:2px;
+  vertical-align:-1px;margin-right:5px}
+.keyrow{display:flex;flex-wrap:wrap;gap:6px 20px;margin:14px 0 0;
+  font-family:var(--mono);font-size:11.5px;color:var(--muted)}
+</style>
+<div class="wrap">
+<header class="masthead">
+  <p class="kicker">Amendment decision &middot; MERGE dose escalation</p>
+  <h1>Switching to TITE-CRM after nine patients at L1</h1>
+  <p class="standfirst">Nine patients have been treated at 5&times;5&nbsp;Gy and one of them
+  recorded an acute DLT that could not be excluded as treatment-related. This note asks
+  whether it is sound to amend to a TITE-CRM at this point, and whether the design still
+  arrives at a defensible dose given that DLT.</p>
+  <div class="meta">
+    <span>Simulations <b>3000</b> per cell</span>
+    <span>Patients remaining <b>21</b></span>
+    <span>Acute target <b>0.20</b></span>
+    <span>Configuration <b>no EWOC, no burn-in</b></span>
+  </div>
+</header>
+
+<section class="step"><div class="col">
+  <div class="steph"><span class="num">1</span><h2>The answer, before the detail</h2></div>
+  <p class="lede">Amending is sound, and the DLT at L1 is no longer the obstacle it was in
+  July. The reason is arithmetic rather than statistical: one event in nine patients is a
+  very different observation from one in six.</p>
+  <p>The observed rate falls from 0.167 to 0.111, comfortably below the 0.20 target, and
+  eight DLT-free patients now pull the whole fitted curve down with it. That is enough to
+  move the model's recommendation off L1.</p>
+</div>
+
+<div class="callout rec">
+  <p class="ct">Recommendation</p>
+  <p><strong>Amend, and use the closest-to-target assignment rule.</strong> The model's
+  first recommendation is L2 &mdash; the same dose the 6+3 rules already permit &mdash; so
+  the amendment does not itself force a change of dose. Over the remaining 21 patients the
+  model-based design ends at L1 or lower in 0&ndash;11% of trials against 16&ndash;50% for
+  6+3, at a cost of roughly 0.5&ndash;0.9 additional acute DLTs.</p>
+</div>
+</section>
+
+<section class="step"><div class="col">
+  <div class="steph"><span class="num">2</span><h2>What the model says today</h2></div>
+  <p>This is not a simulation. It is the posterior fitted to the nine patients actually
+  treated, with the prior skeleton from the July protocol and complete acute follow-up.</p>
+</div>
+
+<figure>
+  <div class="figbox"><svg viewBox="0 0 720 400" role="img" class="chart" aria-label="Posterior acute toxicity by dose level, before and after the three additional patients at L1">
+<line class="grid" x1="60" y1="326.0" x2="570" y2="326.0"/>
+<text class="tick" x="50" y="330.0" text-anchor="end">0.0</text>
+<line class="grid" x1="60" y1="271.1" x2="570" y2="271.1"/>
+<text class="tick" x="50" y="275.1" text-anchor="end">0.1</text>
+<line class="axis" x1="60" y1="216.2" x2="570" y2="216.2" stroke-dasharray="4 4"/>
+<text class="tick" x="50" y="220.2" text-anchor="end">0.2</text>
+<line class="grid" x1="60" y1="161.3" x2="570" y2="161.3"/>
+<text class="tick" x="50" y="165.3" text-anchor="end">0.3</text>
+<line class="grid" x1="60" y1="106.4" x2="570" y2="106.4"/>
+<text class="tick" x="50" y="110.4" text-anchor="end">0.4</text>
+<line class="grid" x1="60" y1="51.5" x2="570" y2="51.5"/>
+<text class="tick" x="50" y="55.5" text-anchor="end">0.5</text>
+<text class="hint" x="578" y="220.2">TARGET 0.20</text>
+<path d="M60.0,280.8 L187.5,240.1 L315.0,186.0 L442.5,121.9 L570.0,56.1" fill="none" stroke="var(--slate)" stroke-width="2" stroke-linejoin="round"/>
+<circle cx="60.0" cy="280.8" r="4" fill="var(--slate)" stroke="var(--surface)" stroke-width="2"/>
+<circle cx="187.5" cy="240.1" r="4" fill="var(--slate)" stroke="var(--surface)" stroke-width="2"/>
+<circle cx="315.0" cy="186.0" r="4" fill="var(--slate)" stroke="var(--surface)" stroke-width="2"/>
+<circle cx="442.5" cy="121.9" r="4" fill="var(--slate)" stroke="var(--surface)" stroke-width="2"/>
+<circle cx="570.0" cy="56.1" r="4" fill="var(--slate)" stroke="var(--surface)" stroke-width="2"/>
+<text class="val" x="315.0" y="174.0" text-anchor="middle" style="fill:var(--slate)">0.255</text>
+<text class="lbl" x="582.0" y="60.1" style="fill:var(--slate)">After 6 patients</text>
+<path d="M60.0,296.4 L187.5,262.6 L315.0,213.5 L442.5,151.2 L570.0,84.0" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round"/>
+<circle cx="60.0" cy="296.4" r="4" fill="var(--accent)" stroke="var(--surface)" stroke-width="2"/>
+<circle cx="187.5" cy="262.6" r="4" fill="var(--accent)" stroke="var(--surface)" stroke-width="2"/>
+<circle cx="315.0" cy="213.5" r="5" fill="var(--accent)" stroke="var(--surface)" stroke-width="2"/>
+<circle cx="442.5" cy="151.2" r="4" fill="var(--accent)" stroke="var(--surface)" stroke-width="2"/>
+<circle cx="570.0" cy="84.0" r="4" fill="var(--accent)" stroke="var(--surface)" stroke-width="2"/>
+<text class="val" x="315.0" y="201.5" text-anchor="middle" style="fill:var(--accent)">0.205</text>
+<text class="lbl" x="582.0" y="88.0" style="fill:var(--accent)">After 9 patients</text>
+<text class="cat" x="60.0" y="346" text-anchor="middle">L0</text>
+<text class="cat" x="60.0" y="360" text-anchor="middle">5x4 Gy</text>
+<text class="cat" x="187.5" y="346" text-anchor="middle">L1</text>
+<text class="cat" x="187.5" y="360" text-anchor="middle">5x5 Gy</text>
+<text class="cat rec" x="315.0" y="346" text-anchor="middle">L2</text>
+<text class="cat rec" x="315.0" y="360" text-anchor="middle">5x6 Gy</text>
+<text class="cat" x="442.5" y="346" text-anchor="middle">L3</text>
+<text class="cat" x="442.5" y="360" text-anchor="middle">5x7 Gy</text>
+<text class="cat" x="570.0" y="346" text-anchor="middle">L4</text>
+<text class="cat" x="570.0" y="360" text-anchor="middle">5x8 Gy</text>
+<text class="axlbl" transform="rotate(-90 14 175.0)" x="14" y="175.0" text-anchor="middle">Posterior mean P(acute DLT)</text>
+<text class="hint" x="60" y="390">L2 CROSSES FROM 0.255 TO 0.205 &#8212; FROM ABOVE TARGET TO ON IT</text>
+</svg></div>
+  <figcaption><strong>The three additional patients move L2 onto the target.</strong>
+  In July the posterior put L2 at 0.255, above the 0.20 target, and the
+  design recommended staying at L1. With nine patients L2 sits at 0.205
+  &mdash; effectively on target &mdash; and the recommendation becomes L2.</figcaption>
+</figure>
+
+<div class="tablewrap"><table><caption>Posterior acute toxicity and the resulting dose, by state of the L1 data</caption><thead><tr><th>Data at L1</th><th>L0</th><th>L1</th><th>L2</th><th>L3</th><th>L4</th><th>Closest rule</th><th>Highest-below rule</th></tr></thead><tbody><tr><td>6 patients, 1 DLT (July state)</td><td>0.082</td><td>0.157</td><td>0.255</td><td>0.372</td><td>0.492</td><td>L1</td><td>L1</td></tr><tr class="rec"><td>9 patients, 1 DLT (current state)</td><td>0.054</td><td>0.115</td><td>0.205</td><td>0.318</td><td>0.441</td><td>L2</td><td>L1</td></tr><tr><td>9 patients, 0 DLT (counterfactual)</td><td>0.007</td><td>0.021</td><td>0.047</td><td>0.094</td><td>0.163</td><td>L4</td><td>L4</td></tr><tr><td>9 patients, 2 DLT (counterfactual)</td><td>0.112</td><td>0.204</td><td>0.315</td><td>0.439</td><td>0.557</td><td>L1</td><td>L0</td></tr><tr><td>12 patients, 1 DLT (if L1 grew further)</td><td>0.039</td><td>0.091</td><td>0.173</td><td>0.283</td><td>0.405</td><td>L2</td><td>L2</td></tr></tbody></table></div>
+
+<div class="col">
+  <p class="pull">The recommendation is L2 whether the contested DLT is counted at full
+  weight, at half, or not at all.</p>
+  <p>That last point is worth stating plainly to the team. In July the attribution of the
+  single contested event decided the dose. It no longer does: with nine patients on the
+  level, counting the DLT at attribution 1.0, 0.5 or 0.0 all yield L2 under the
+  closest-to-target rule. The adjudication discussion remains relevant to the trial record,
+  but it has stopped being load-bearing for the next dose decision.</p>
+</div>
+</section>
+
+<section class="step"><div class="col">
+  <div class="steph"><span class="num">3</span><h2>What the model does next</h2></div>
+  <p>A model-based design is easier to accept if the committee can see its behaviour rather
+  than be asked to trust it. The table below is exhaustive for the next cohort: every
+  possible outcome of three patients at L2, and the dose that follows. It is computed
+  directly from the posterior, not sampled.</p>
+</div>
+
+<div class="tablewrap"><table><caption>What the model does after the first cohort of three at L2</caption><thead><tr><th>Acute DLTs at L2</th><th>P(DLT) L1</th><th>P(DLT) L2</th><th>P(DLT) L3</th><th>Next dose</th><th style="text-align:left">Move</th></tr></thead><tbody><tr><td>0 of 3</td><td>0.081</td><td>0.159</td><td>0.266</td><td>L2</td><td style="text-align:left">stay at L2</td></tr><tr><td>1 of 3</td><td>0.136</td><td>0.235</td><td>0.355</td><td>L2</td><td style="text-align:left">stay at L2</td></tr><tr class="rec"><td>2 of 3</td><td>0.193</td><td>0.305</td><td>0.430</td><td>L1</td><td style="text-align:left">down to L1</td></tr><tr class="rec"><td>3 of 3</td><td>0.254</td><td>0.373</td><td>0.496</td><td>L1</td><td style="text-align:left">down to L1</td></tr></tbody></table></div>
+
+<div class="col">
+  <p>The design moves one level at a time and never skips. One DLT in three at L2 is not
+  enough to send it back down; two is. Escalation to L3 requires six DLT-free patients at
+  L2. Compared with the 6+3 rules currently in force, which stop and de-escalate on two
+  DLTs in six, this is the more conservative response to an isolated event and the less
+  conservative response to an accumulation of clean data &mdash; which is the trade the
+  amendment is really making.</p>
+</div>
+</section>
+
+<section class="step"><div class="col">
+  <div class="steph"><span class="num">4</span><h2>Two definitions of the right answer</h2></div>
+  <p>Before the simulation results, one caveat that changes how they read.</p>
+  <p>The running protocol defines the MTD as the highest dose with acute toxicity at or
+  below 0.20. A CRM with the closest-to-target rule is built to find the dose
+  <em>nearest</em> 0.20. In three of the five scenarios these are the same dose. In
+  <strong>Acute high</strong> (L2 = 0.15, L3 = 0.22) and <strong>Acute steep</strong>
+  (L2 = 0.08, L3 = 0.24) they are not: the nearest dose is L3, the highest dose under
+  target is L2.</p>
+  <p>Scoring the design against the protocol definition alone would mark it wrong for
+  meeting its own objective, so both are reported throughout. This is not a presentational
+  choice &mdash; it is a decision the amendment has to make explicitly, because the
+  assignment rule and the MTD definition must be the same rule.</p>
+</div>
+
+<div class="tablewrap"><table><caption>Correct dose selected (%), under both definitions</caption><thead><tr><th>Design &middot; definition of correct</th><th>low</th><th>middle</th><th>high</th><th>shallow</th><th>steep</th></tr></thead><tbody><tr><td>Continue 6+3 &middot; <span style="color:var(--muted)">Highest dose &le; 0.20</span></td><td>0.0</td><td>7.5</td><td>45.7</td><td>5.5</td><td>71.6</td></tr><tr><td>Continue 6+3 &middot; <span style="color:var(--muted)">Closest to 0.20</span></td><td>0.0</td><td>7.5</td><td>3.9</td><td>5.5</td><td>5.0</td></tr><tr><td>Switch to TITE-CRM &middot; <span style="color:var(--muted)">Highest dose &le; 0.20</span></td><td>18.5</td><td>45.2</td><td>60.6</td><td>35.1</td><td>44.6</td></tr><tr class="rec"><td>Switch to TITE-CRM &middot; <span style="color:var(--muted)">Closest to 0.20</span></td><td>18.5</td><td>45.2</td><td>32.3</td><td>35.1</td><td>53.3</td></tr><tr><td>TITE-CRM, R dose rule &middot; <span style="color:var(--muted)">Highest dose &le; 0.20</span></td><td>0.0</td><td>16.9</td><td>67.0</td><td>7.8</td><td>72.4</td></tr><tr><td>TITE-CRM, R dose rule &middot; <span style="color:var(--muted)">Closest to 0.20</span></td><td>0.0</td><td>16.9</td><td>9.5</td><td>7.8</td><td>23.6</td></tr></tbody></table></div>
+
+<div class="col">
+  <p>Compare the two designs within a definition, not across them. Under the protocol
+  definition the model-based design is ahead of 6+3 in four of five scenarios and behind in
+  Acute steep, where it is deliberately choosing L3. Under its own definition it is ahead
+  everywhere, by wide margins.</p>
+  <p>The bottom pair is the R implementation's rule, included here because it is the live
+  alternative. It should be read fairly: under the protocol definition it is the
+  <em>better</em> estimator in exactly the two scenarios where the definitions diverge
+  (Acute high 67.0% against
+  60.6%, Acute steep
+  72.4% against
+  44.6%), which is what a rule that never crosses the
+  target should do. What it gives up is everything else: Acute low
+  0.0%, Acute middle
+  16.9%, Acute shallow
+  7.8%.</p>
+</div>
+</section>
+
+<section class="step"><div class="col">
+  <div class="steph"><span class="num">5</span><h2>The risk that has changed hands</h2></div>
+  <p>In July the concern was that a model-based design would lock onto L1 and never escalate.
+  With 21 patients left and nine required per level, that risk now belongs to the design
+  currently in the protocol.</p>
+</div>
+
+<figure>
+  <div class="figbox"><svg viewBox="0 0 720 372" role="img" class="chart" aria-label="Probability of ending at L1 or lower, by design and scenario">
+<line class="grid" x1="56" y1="286.0" x2="700" y2="286.0"/>
+<text class="tick" x="46" y="290.0" text-anchor="end">0%</text>
+<line class="grid" x1="56" y1="198.7" x2="700" y2="198.7"/>
+<text class="tick" x="46" y="202.7" text-anchor="end">20%</text>
+<line class="grid" x1="56" y1="111.3" x2="700" y2="111.3"/>
+<text class="tick" x="46" y="115.3" text-anchor="end">40%</text>
+<line class="grid" x1="56" y1="24.0" x2="700" y2="24.0"/>
+<text class="tick" x="46" y="28.0" text-anchor="end">60%</text>
+<line class="axis" x1="56" y1="286" x2="700" y2="286"/>
+<rect x="80.8" y="215.6" width="38.6" height="70.4" rx="4" fill="var(--slate)"/>
+<text class="val" x="100.1" y="209.6" text-anchor="middle">16.1</text>
+<rect x="121.4" y="285.9" width="38.6" height="1.5" rx="4" fill="var(--accent)"/>
+<text class="val" x="140.7" y="279.9" text-anchor="middle">0.0</text>
+<text class="cat" x="120.4" y="306" text-anchor="middle">low</text>
+<rect x="209.6" y="115.6" width="38.6" height="170.4" rx="4" fill="var(--slate)"/>
+<text class="val" x="228.9" y="109.6" text-anchor="middle">39.0</text>
+<rect x="250.2" y="276.7" width="38.6" height="9.3" rx="4" fill="var(--accent)"/>
+<text class="val" x="269.5" y="270.7" text-anchor="middle">2.1</text>
+<text class="cat" x="249.2" y="306" text-anchor="middle">middle</text>
+<rect x="338.4" y="65.8" width="38.6" height="220.2" rx="4" fill="var(--slate)"/>
+<text class="val" x="357.7" y="59.8" text-anchor="middle">50.4</text>
+<rect x="379.0" y="262.4" width="38.6" height="23.6" rx="4" fill="var(--accent)"/>
+<text class="val" x="398.3" y="256.4" text-anchor="middle">5.4</text>
+<text class="cat" x="378.0" y="306" text-anchor="middle">high</text>
+<rect x="467.2" y="66.8" width="38.6" height="219.2" rx="4" fill="var(--slate)"/>
+<text class="val" x="486.5" y="60.8" text-anchor="middle">50.2</text>
+<rect x="507.8" y="236.9" width="38.6" height="49.1" rx="4" fill="var(--accent)"/>
+<text class="val" x="527.1" y="230.9" text-anchor="middle">11.2</text>
+<text class="cat" x="506.8" y="306" text-anchor="middle">shallow</text>
+<rect x="596.0" y="183.5" width="38.6" height="102.5" rx="4" fill="var(--slate)"/>
+<text class="val" x="615.3" y="177.5" text-anchor="middle">23.5</text>
+<rect x="636.6" y="285.1" width="38.6" height="1.5" rx="4" fill="var(--accent)"/>
+<text class="val" x="655.9" y="279.1" text-anchor="middle">0.2</text>
+<text class="cat" x="635.6" y="306" text-anchor="middle">steep</text>
+<rect x="56" y="323" width="11" height="11" rx="2" fill="var(--slate)"/>
+<text class="leg" x="72" y="332">Continue 6+3</text>
+<rect x="306" y="323" width="11" height="11" rx="2" fill="var(--accent)"/>
+<text class="leg" x="322" y="332">Switch to TITE-CRM</text>
+<text class="axlbl" x="378.0" y="362" text-anchor="middle">Final MTD at L1 or lower &#8212; the escalation gained nothing</text>
+</svg></div>
+  <figcaption><strong>Probability the trial ends at L1 or lower.</strong> 6+3 falls back to
+  the dose already given in 16.1&ndash;50.4%
+  of trials; the model-based design in 0.0&ndash;11.2%.
+  In Acute high, where the true toxicity at L2 is only 0.15, the chance of seeing two or
+  more DLTs among nine patients is about 40% &mdash; enough to stop 6+3 and send it back to
+  L1 half the time.</figcaption>
+</figure>
+
+<figure>
+  <div class="figbox"><svg viewBox="0 0 720 450" role="img" class="chart" aria-label="Distribution of the final selected dose, by design and scenario">
+<text class="lbl" x="0" y="17">Low</text>
+<text class="hint" x="114" y="17">MTD L4</text>
+<rect x="52.0" y="25" width="103.2" height="19" rx="3" fill="var(--d1)"/>
+<text class="val" x="103.6" y="38" text-anchor="middle" style="fill:var(--d1t)">16</text>
+<rect x="157.2" y="25" width="425.5" height="19" rx="3" fill="var(--d2)"/>
+<text class="val" x="369.9" y="38" text-anchor="middle" style="fill:var(--d2t)">66</text>
+<rect x="584.7" y="25" width="117.1" height="19" rx="3" fill="var(--d3)"/>
+<text class="val" x="643.2" y="38" text-anchor="middle" style="fill:var(--d3t)">18</text>
+<text class="hint" x="43" y="38" text-anchor="end">6+3</text>
+<rect x="52.2" y="52" width="118.6" height="19" rx="3" fill="var(--d2)"/>
+<text class="val" x="111.5" y="65" text-anchor="middle" style="fill:var(--d2t)">18</text>
+<rect x="172.8" y="52" width="408.8" height="19" rx="3" fill="var(--d3)"/>
+<text class="val" x="377.2" y="65" text-anchor="middle" style="fill:var(--d3t)">63</text>
+<rect x="583.6" y="52" width="118.4" height="19" rx="3" fill="var(--d4)"/>
+<text class="val" x="642.8" y="65" text-anchor="middle" style="fill:var(--d4t)">18</text>
+<text class="hint" x="43" y="65" text-anchor="end">CRM</text>
+<text class="lbl" x="0" y="109">Middle</text>
+<text class="hint" x="114" y="109">MTD L3</text>
+<rect x="52.0" y="117" width="252.5" height="19" rx="3" fill="var(--d1)"/>
+<text class="val" x="178.2" y="130" text-anchor="middle" style="fill:var(--d1t)">39</text>
+<rect x="306.5" y="117" width="346.4" height="19" rx="3" fill="var(--d2)"/>
+<text class="val" x="479.7" y="130" text-anchor="middle" style="fill:var(--d2t)">53</text>
+<rect x="654.9" y="117" width="47.1" height="19" rx="3" fill="var(--d3)"/>
+<text class="hint" x="43" y="130" text-anchor="end">6+3</text>
+<rect x="52.0" y="144" width="11.9" height="19" rx="3" fill="var(--d1)"/>
+<rect x="65.9" y="144" width="316.0" height="19" rx="3" fill="var(--d2)"/>
+<text class="val" x="223.9" y="157" text-anchor="middle" style="fill:var(--d2t)">49</text>
+<rect x="383.9" y="144" width="292.5" height="19" rx="3" fill="var(--d3)"/>
+<text class="val" x="530.1" y="157" text-anchor="middle" style="fill:var(--d3t)">45</text>
+<rect x="678.4" y="144" width="23.6" height="19" rx="3" fill="var(--d4)"/>
+<text class="hint" x="43" y="157" text-anchor="end">CRM</text>
+<text class="lbl" x="0" y="201">High</text>
+<text class="hint" x="114" y="201">MTD L2, CLOSEST L3</text>
+<rect x="52.0" y="209" width="326.8" height="19" rx="3" fill="var(--d1)"/>
+<text class="val" x="215.4" y="222" text-anchor="middle" style="fill:var(--d1t)">50</text>
+<rect x="380.8" y="209" width="296.0" height="19" rx="3" fill="var(--d2)"/>
+<text class="val" x="528.8" y="222" text-anchor="middle" style="fill:var(--d2t)">46</text>
+<rect x="678.8" y="209" width="23.2" height="19" rx="3" fill="var(--d3)"/>
+<text class="hint" x="43" y="222" text-anchor="end">6+3</text>
+<rect x="52.0" y="236" width="33.2" height="19" rx="3" fill="var(--d1)"/>
+<rect x="87.2" y="236" width="392.9" height="19" rx="3" fill="var(--d2)"/>
+<text class="val" x="283.7" y="249" text-anchor="middle" style="fill:var(--d2t)">61</text>
+<rect x="482.1" y="236" width="208.6" height="19" rx="3" fill="var(--d3)"/>
+<text class="val" x="586.4" y="249" text-anchor="middle" style="fill:var(--d3t)">32</text>
+<rect x="692.7" y="236" width="9.3" height="19" rx="3" fill="var(--d4)"/>
+<text class="hint" x="43" y="249" text-anchor="end">CRM</text>
+<text class="lbl" x="0" y="293">Shallow</text>
+<text class="hint" x="114" y="293">MTD L3</text>
+<rect x="52.0" y="301" width="325.3" height="19" rx="3" fill="var(--d1)"/>
+<text class="val" x="214.7" y="314" text-anchor="middle" style="fill:var(--d1t)">50</text>
+<rect x="379.3" y="301" width="287.1" height="19" rx="3" fill="var(--d2)"/>
+<text class="val" x="522.8" y="314" text-anchor="middle" style="fill:var(--d2t)">44</text>
+<rect x="668.4" y="301" width="33.6" height="19" rx="3" fill="var(--d3)"/>
+<text class="hint" x="43" y="314" text-anchor="end">6+3</text>
+<rect x="52.0" y="328" width="0.8" height="19" rx="3" fill="var(--d0)"/>
+<rect x="54.4" y="328" width="68.9" height="19" rx="3" fill="var(--d1)"/>
+<text class="val" x="88.8" y="341" text-anchor="middle" style="fill:var(--d1t)">11</text>
+<rect x="125.2" y="328" width="329.9" height="19" rx="3" fill="var(--d2)"/>
+<text class="val" x="290.2" y="341" text-anchor="middle" style="fill:var(--d2t)">51</text>
+<rect x="457.1" y="328" width="226.6" height="19" rx="3" fill="var(--d3)"/>
+<text class="val" x="570.4" y="341" text-anchor="middle" style="fill:var(--d3t)">35</text>
+<rect x="685.7" y="328" width="16.3" height="19" rx="3" fill="var(--d4)"/>
+<text class="hint" x="43" y="341" text-anchor="end">CRM</text>
+<text class="lbl" x="0" y="385">Steep</text>
+<text class="hint" x="114" y="385">MTD L2, CLOSEST L3</text>
+<rect x="52.0" y="393" width="151.0" height="19" rx="3" fill="var(--d1)"/>
+<text class="val" x="127.5" y="406" text-anchor="middle" style="fill:var(--d1t)">23</text>
+<rect x="205.0" y="393" width="464.6" height="19" rx="3" fill="var(--d2)"/>
+<text class="val" x="437.3" y="406" text-anchor="middle" style="fill:var(--d2t)">72</text>
+<rect x="671.6" y="393" width="30.4" height="19" rx="3" fill="var(--d3)"/>
+<text class="hint" x="43" y="406" text-anchor="end">6+3</text>
+<rect x="52.0" y="420" width="0.8" height="19" rx="3" fill="var(--d1)"/>
+<rect x="53.3" y="420" width="289.0" height="19" rx="3" fill="var(--d2)"/>
+<text class="val" x="197.8" y="433" text-anchor="middle" style="fill:var(--d2t)">45</text>
+<rect x="344.3" y="420" width="345.5" height="19" rx="3" fill="var(--d3)"/>
+<text class="val" x="517.1" y="433" text-anchor="middle" style="fill:var(--d3t)">53</text>
+<rect x="691.8" y="420" width="10.2" height="19" rx="3" fill="var(--d4)"/>
+<text class="hint" x="43" y="433" text-anchor="end">CRM</text>
+</svg><div class="keyrow"><span><span class="swatch" style="background:var(--d0)"></span>L0 5x4 Gy</span><span><span class="swatch" style="background:var(--d1)"></span>L1 5x5 Gy</span><span><span class="swatch" style="background:var(--d2)"></span>L2 5x6 Gy</span><span><span class="swatch" style="background:var(--d3)"></span>L3 5x7 Gy</span><span><span class="swatch" style="background:var(--d4)"></span>L4 5x8 Gy</span></div></div>
+  <figcaption><strong>Where each design finishes.</strong> Each bar is the distribution of
+  the final selected dose over 3000 simulated continuations. The 6+3 rows are
+  concentrated on L1 and L2; the model-based rows shift a substantial share to L3, and in
+  Acute low reach L4 at all.</figcaption>
+</figure>
+</section>
+
+<section class="step"><div class="col">
+  <div class="steph"><span class="num">6</span><h2>What it costs</h2></div>
+  <p>The model-based design treats patients at higher doses, so it produces more toxicity.
+  The question is how much, and whether it ever recommends something unsafe.</p>
+</div>
+
+<div class="tablewrap"><table><caption>What each design costs in toxicity</caption><thead><tr><th>Design &middot; measure</th><th>low</th><th>middle</th><th>high</th><th>shallow</th><th>steep</th></tr></thead><tbody><tr><td>Continue 6+3 &middot; <span style="color:var(--muted)">Mean acute DLTs in the 21 new patients</span></td><td>1.2</td><td>2.1</td><td>2.4</td><td>2.8</td><td>2.0</td></tr><tr><td>Continue 6+3 &middot; <span style="color:var(--muted)">True acute toxicity of the selected dose</span></td><td>0.061</td><td>0.093</td><td>0.102</td><td>0.142</td><td>0.074</td></tr><tr><td>Continue 6+3 &middot; <span style="color:var(--muted)">Selected dose has true toxicity &gt; 0.30 (%)</span></td><td>0.0</td><td>0.0</td><td>0.0</td><td>0.0</td><td>0.0</td></tr><tr><td>Switch to TITE-CRM &middot; <span style="color:var(--muted)">Mean acute DLTs in the 21 new patients</span></td><td>1.7</td><td>2.8</td><td>3.3</td><td>3.2</td><td>2.9</td></tr><tr><td>Switch to TITE-CRM &middot; <span style="color:var(--muted)">True acute toxicity of the selected dose</span></td><td>0.102</td><td>0.147</td><td>0.170</td><td>0.161</td><td>0.170</td></tr><tr><td>Switch to TITE-CRM &middot; <span style="color:var(--muted)">Selected dose has true toxicity &gt; 0.30 (%)</span></td><td>0.0</td><td>0.0</td><td>0.0</td><td>0.0</td><td>1.9</td></tr></tbody></table></div>
+
+<div class="col">
+  <p>The additional burden is roughly half to one acute DLT across the 21 remaining
+  patients. The dose finally recommended carries a true acute toxicity of
+  0.10&ndash;0.17 on average, against a 0.20 target. A dose with true toxicity above 0.30 is
+  selected in at most 1.9% of trials, and only in
+  Acute steep, where L3 sits at 0.24 and the fourth level at 0.34. There is no scenario in
+  which the amended design runs away from the data.</p>
+  <p>One asymmetry to note in the comparison: 6+3 stops early when it stops for toxicity, so
+  it uses 18.7&ndash;20.3
+  of the 21 remaining patients on average, while the model-based design always uses all 21.
+  A difference of one to two patients &mdash; not material to the comparison, but it is
+  there.</p>
+</div>
+</section>
+
+<section class="step"><div class="col">
+  <div class="steph"><span class="num">7</span><h2>The one decision still open</h2></div>
+  <p>The assignment rule matters more than anything else in this note, and the two candidate
+  rules disagree about what to do today.</p>
+  <p>Under the highest-dose-below-target rule used in the R implementation, the
+  recommendation given the current data is <strong>L1, not L2</strong>. Amending under that
+  rule would mean stepping back from the dose the 6+3 rules already permit. That rule also
+  never reaches L4 in any of the five scenarios, and in Acute shallow it ends at L1 or lower
+  in 45.2% of trials.</p>
+  <p>This is the same divergence documented in the earlier simulator-comparison note, now
+  with a concrete consequence attached. Whichever rule is adopted, the amendment must state
+  it together with the matching definition of the MTD.</p>
+</div>
+
+<div class="callout">
+  <p class="ct">To be specified in the amendment</p>
+  <p>The assignment rule (closest to target, or highest below target); the matching MTD
+  definition; the one-level step limit; the requirement that no dose above the highest yet
+  tried may be assigned; how the contested L1 DLT enters the likelihood; and whether the
+  subacute endpoint constrains dose assignment. In the configuration analysed here the
+  subacute endpoint is modelled and reported but does not drive assignment, which reflects
+  the current code and should be confirmed rather than assumed.</p>
+</div>
+</section>
+
+<section class="step"><div class="col">
+  <div class="steph"><span class="num">8</span><h2>Limits of this analysis</h2></div>
+  <ul>
+    <li>The nine treated patients are represented as nine observations at L1 with one acute
+    DLT and complete follow-up. Their surgery status is drawn from the 0.80 rate used
+    elsewhere in the simulator rather than taken from the record.</li>
+    <li>No subacute DLTs are assumed among them, per the trial team.</li>
+    <li>The 6+3 comparator restarts its level evaluation at L2 with 21 patients. It carries
+    no memory of the L1 cohort beyond the fact that L1 was passed, which is what the
+    protocol rules actually use.</li>
+    <li>Scenario probabilities are the five acute scenarios from the July report, unchanged.
+    They are assumptions, not estimates.</li>
+    <li>The differences between this simulator and the R implementation described in the
+    accompanying comparison note are unresolved. The numbers here are internally consistent;
+    they are not yet reconciled with Sama's.</li>
+  </ul>
+</div>
+</section>
+
+<footer><div class="col">
+  <p>Simulations: 3000 per design and scenario, seed 20260910.
+  Acute target 0.20, subacute target 0.33,
+  prior scale 1.0, one-level step limit, no EWOC, no burn-in, final MTD restricted to
+  tried doses.</p>
+  <p>Reproduced by <span style="font-family:var(--mono);font-size:12px">switch_decision_analysis.py</span>
+  and <span style="font-family:var(--mono);font-size:12px">switch_decision_tree.py</span>;
+  outputs in <span style="font-family:var(--mono);font-size:12px">switch_decision/</span>.</p>
+  <p>This document contains aggregated simulation output only. It contains no patient data.</p>
+</div></footer>
+</div>
