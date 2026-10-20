@@ -1,0 +1,54 @@
+{
+  "n_sim": 3000,
+  "seed": 20261020,
+  "subacute_specs": {
+    "current": {
+      "prior": [
+        0.01,
+        0.036,
+        0.084,
+        0.157,
+        0.25
+      ],
+      "true": [
+        0.02,
+        0.05,
+        0.1,
+        0.15,
+        0.25
+      ],
+      "label": "Current: RT-attributable subacute DLT"
+    },
+    "revised": {
+      "prior": [
+        0.25,
+        0.26,
+        0.27,
+        0.28,
+        0.29
+      ],
+      "true": [
+        0.25,
+        0.26,
+        0.27,
+        0.28,
+        0.29
+      ],
+      "label": "Revised: subacute DLT incl. background rate"
+    }
+  },
+  "target_acute": 0.2,
+  "target_subacute": 0.33,
+  "common": {
+    "p_surgery": 0.8,
+    "accrual_per_month": 0.75,
+    "incl_to_rt": 21,
+    "rt_dur": 14,
+    "rt_to_surg": 42,
+    "tox1_win": 56,
+    "tox2_win": 30
+  },
+  "n_hist": 9,
+  "n_hist_dlt": 1,
+  "n_total": 30
+}
