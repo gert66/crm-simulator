@@ -473,6 +473,19 @@ def crm_choose_next(sigma, skel1, skel2,
             k = int(min(k, int(highest_tried) + 1))
         return int(np.clip(k, 0, n_levels - 1))
 
+    # "min_closest" reproduces the rule stated in Appendix A section 1.3 of the
+    # amendment: fit both endpoints, take the dose closest to target for each,
+    # then assign the LOWER of the two.  Unlike the argmin rule below, this makes
+    # the subacute endpoint bind on dose assignment.
+    if dose_rule == "min_closest":
+        k1 = int(np.argmin(np.abs(pm1 - float(target1))))
+        k2 = int(np.argmin(np.abs(pm2 - float(target2))))
+        k  = min(k1, k2)
+        k = int(np.clip(k, current_level - int(max_step), current_level + int(max_step)))
+        if enforce_guardrail and highest_tried >= 0:
+            k = int(min(k, int(highest_tried) + 1))
+        return int(np.clip(k, 0, n_levels - 1))
+
     if ewoc_alpha is None:
         # EWOC OFF: all doses are candidates (no overdose-probability filter)
         candidates = np.arange(n_levels)
@@ -517,6 +530,17 @@ def crm_select_mtd(sigma, skel1, skel2,
     pm1, od1 = crm_posterior_summaries(sigma, skel1, n1, y1, target1, gh_n=gh_n)
     pm2, od2 = crm_posterior_summaries(sigma, skel2, n2, y2, target2, gh_n=gh_n)
     n_levels = len(skel1)
+
+    if dose_rule == "min_closest":
+        k1 = int(np.argmin(np.abs(pm1 - float(target1))))
+        k2 = int(np.argmin(np.abs(pm2 - float(target2))))
+        k  = min(k1, k2)
+        if restrict_to_tried:
+            tried = np.where(np.asarray(n1) > 0)[0]
+            if tried.size > 0 and k not in tried:
+                _le = tried[tried <= k]
+                k = int(_le.max()) if _le.size else int(tried.min())
+        return int(np.clip(k, 0, n_levels - 1))
 
     if dose_rule == "highest_below":
         _c1 = np.where(pm1 <= float(target1))[0]
